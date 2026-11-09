@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Outlet, useNavigate } from 'react-router-dom'
+import { Link, Outlet } from 'react-router-dom'
 import { logout } from '../../api/auth'
 import { ApiError } from '../../api/client'
 import { useAuth } from '../../store/auth'
@@ -9,14 +9,13 @@ export default function Header() {
   const ready = useAuth((state) => state.ready)
   const clear = useAuth((state) => state.clear)
   const [error, setError] = useState('')
-  const navigate = useNavigate()
 
   async function handleLogout() {
     setError('')
     try {
       await logout()
       clear()
-      navigate('/')
+      window.location.replace('/')
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : '로그아웃하지 못했습니다. 다시 시도해 주세요.')
     }
