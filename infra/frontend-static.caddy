@@ -1,0 +1,4 @@
+# 운영: 빌드 결과(frontend/dist)를 정적으로 서빙. SPA 라우팅.
+root * /srv/frontend
+try_files {path} /index.html
+file_server

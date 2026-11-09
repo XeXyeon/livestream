@@ -1,0 +1,53 @@
+# DESIGN §2.2 라우팅. 같은 파일을 운영(compose.yaml)과 로컬(compose.dev.yaml)이 함께 쓴다.
+# 다른 점은 환경변수로 넘긴다: PUBLIC_HOST(사이트 주소), FRONTEND_MODE(static | dev).
+{$PUBLIC_HOST:localhost} {
+	# MediaMTX 훅 전용 내부 API는 바깥에 노출하지 않는다 (훅은 backend:8080 으로 직접 호출).
+	@internal path /api/internal/*
+	handle @internal {
+		respond 404
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8080 {
+			flush_interval -1 # SSE
+		}
+	}
+
+	handle /ws {
+		reverse_proxy backend:8080
+	}
+
+	handle /live/* {
+		# WHIP · WHEP (세션 리소스 /whep/<id> 포함)
+		@webrtc path_regexp ^/live/[^/]+/(whip|whep)(/.*)?$
+		handle @webrtc {
+			reverse_proxy mediamtx:8889
+		}
+		# LL-HLS 재생목록 · 세그먼트
+		@hls path_regexp \.(m3u8|mp4|m4s|ts)$
+		handle @hls {
+			reverse_proxy mediamtx:8888
+		}
+		handle {
+			respond 404
+		}
+	}
+
+	handle /vod/* {
+		root * /srv/media
+		file_server
+	}
+
+	handle /uploads/* {
+		root * /srv
+		file_server
+	}
+
+	handle /tracker {
+		reverse_proxy tracker:8000
+	}
+
+	handle {
+		import /etc/caddy/frontend-{$FRONTEND_MODE:static}.caddy
+	}
+}
