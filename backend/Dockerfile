@@ -10,7 +10,9 @@ COPY src src
 RUN ./gradlew bootJar --no-daemon
 
 FROM eclipse-temurin:25-jre-alpine
-RUN addgroup -S app && adduser -S app -G app
+RUN apk add --no-cache ffmpeg \
+    && addgroup -S app && adduser -S app -G app \
+    && mkdir -p /recordings /uploads && chown app:app /recordings /uploads
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/build/libs/*-SNAPSHOT.jar app.jar
 USER app
