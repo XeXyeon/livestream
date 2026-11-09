@@ -369,7 +369,8 @@ class AuthFlowTest {
 		// 아직 컨트롤러가 없어 404지만, Security가 401로 막지 않는지(공개 매처가 열려 있는지)를 확인한다.
 		mvc.perform(get("/api/broadcasts")).andExpect(status().isNotFound());
 		mvc.perform(get("/api/broadcasts/1").header("Authorization", "Bearer " + expired)).andExpect(status().isNotFound());
-		mvc.perform(get("/api/channels/1")).andExpect(status().isNotFound());
+		// CH-1 이후 채널 조회는 컨트롤러가 있어 200(채널 1이 있을 때) 또는 404지만, 401만 아니면 된다.
+		mvc.perform(get("/api/channels/1")).andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
 		mvc.perform(get("/api/recordings")).andExpect(status().isNotFound());
 		// 로그인이 필요한 경로는 그대로 401
 		mvc.perform(get("/api/channels/me").header("Authorization", "Bearer " + expired)).andExpect(status().isUnauthorized());

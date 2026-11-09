@@ -15,7 +15,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 채널. AUTH-1에서는 가입 시 자동 생성만 한다. 조회 · 수정 · 키 재발급은 CH-1이 확장한다. */
+/** 채널. 가입 시 자동 생성(AUTH-1), 정보 수정 · 키 재발급(CH-1). */
 @Getter
 @Entity
 @Table(name = "channel", uniqueConstraints = {
@@ -63,5 +63,35 @@ public class Channel extends BaseEntity {
 		channel.widgetKey = ChannelKeys.generate();
 		channel.autoPublishRecording = true;
 		return channel;
+	}
+
+	/** null 인 인자는 바꾸지 않는다(PATCH). description 은 빈 문자열이면 지운다. 정규화 · 검증은 서비스가 끝낸 뒤 넘긴다. */
+	public void updateInfo(String name, String description, String title, Category category,
+			Boolean autoPublishRecording) {
+		if (name != null) {
+			this.name = name;
+		}
+		if (description != null) {
+			this.description = description.isEmpty() ? null : description;
+		}
+		if (title != null) {
+			this.title = title;
+		}
+		if (category != null) {
+			this.category = category;
+		}
+		if (autoPublishRecording != null) {
+			this.autoPublishRecording = autoPublishRecording;
+		}
+	}
+
+	public String rotateStreamKey() {
+		this.streamKey = ChannelKeys.generate();
+		return this.streamKey;
+	}
+
+	public String rotateWidgetKey() {
+		this.widgetKey = ChannelKeys.generate();
+		return this.widgetKey;
 	}
 }
