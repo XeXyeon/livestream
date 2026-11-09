@@ -165,7 +165,7 @@ auth/        AuthController · AuthService · RefreshToken · RefreshTokenReposi
 member/      Member · MemberRepository · MemberController(/members/me)
 channel/     Channel · Category · ChannelRepository · ChannelService · ChannelController
 broadcast/   Broadcast · BroadcastStatus · BroadcastSource · BroadcastRepository · BroadcastService · BroadcastController
-             BroadcastLifecycleService(상태 전이) · DisconnectGraceScheduler · RecommendationService
+             BroadcastLifecycleService(상태 전이) · DisconnectGraceScheduler · RecommendationService · PublishBlockRegistry(종료 뒤 publish 차단, 메모리)
 mediamtx/    MediaMtxAuthController(/internal/mediamtx/auth) · MediaMtxHookController(/ready, /not-ready, /segment-complete)
              MediaMtxClient(Control API: path 조회 · kick)
 recording/   Recording · RecordingStatus · Visibility · RecordingSegment · RecordingRepository · RecordingSegmentRepository
@@ -237,7 +237,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 - `MediaMtxClient.kickPublisher(path)`: `GET /v3/paths/get/{path}` → `source.type` · `source.id` → `POST /v3/webrtcsessions/kick/{id}` 또는 `/v3/rtmpconns/kick/{id}` (`RestClient`, 타임아웃 3초).
 - 채널당 LIVE/DISCONNECTED 방송 최대 1건은 서비스 로직 + `overridePublisher`로 보장(두 번째 연결은 MediaMTX가 기존을 끊고 ready 훅이 다시 와 같은 방송을 이어 간다).
-- 송출 중 수정 `PATCH /api/broadcasts/{id}` `{title?, category?}`: LIVE/DISCONNECTED면 방송과 **채널 방송 정보 둘 다** 갱신, ENDED면 `title`만(category 오면 400).
+- 송출 중 수정 `PATCH /api/broadcasts/{id}` `{title?, category?}`: LIVE/DISCONNECTED면 방송과 **채널 방송 정보 둘 다** 갱신, ENDED면 `title`만(category가 오면 409 `BROADCAST_NOT_LIVE`).
 
 ### 4.7 인증 (`auth`, `common/security`)
 - 가입 `POST /api/auth/signup` `{email, password(8~64), nickname(2~20)}` → 201 `{memberId}`. 채널 자동 생성(§4.3). 중복 409.
