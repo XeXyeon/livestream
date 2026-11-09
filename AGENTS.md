@@ -73,7 +73,8 @@ npx vitest run   # 아직 test 스크립트가 없다. FE-1에서 "test": "vites
 - **인증**(§6.4):
   - Access JWT는 메모리(Zustand)에만 두고, Refresh는 HttpOnly 쿠키다(`Path=/api/auth`).
   - 앱이 시작되면 `POST /api/auth/refresh`로 로그인 상태를 복구한다.
-  - 401이 오면 refresh를 한 번 하고 재시도한다. 또 401이면 로그아웃 상태로 바꾼다.
+  - 401이 오면 refresh를 한 번 하고 재시도한다. 또 401이면 로그아웃 상태로 바꾼다. 서버는 **헤더가 붙은 만료 토큰에는 공개 경로라도 401**을 주므로 이 한 가지 규칙으로 충분하다(§4.7).
+  - STOMP 연결 직전과 송출 시작 직전에는 `ensureFreshToken()`(access `exp`가 60초 안이면 먼저 refresh)을 부른다. STOMP CONNECT가 `TOKEN_EXPIRED`로 거절되면 refresh 후 재연결한다(§6.4 · §6.6).
   - 보호 경로에서 비로그인이면 `/login?next=`로 보낸다.
 - **권한:** 목록 · 상세 · 시청은 비로그인도 허용한다. 수정 · 삭제 · 종료 버튼은 응답의 `isOwner`가 참일 때만 보인다. 최종 판단은 서버가 한다.
 - **방송 상태:** `LIVE → DISCONNECTED →(60초) ENDED`. DISCONNECTED에서는 "재연결 대기" 오버레이를, ENDED에서는 종료 화면(다시보기 버튼 + 추천)을 보여 준다.

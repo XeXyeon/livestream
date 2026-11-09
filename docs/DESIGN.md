@@ -186,7 +186,7 @@ seed/        SeedRunner
 | 테이블 | 컬럼 | 제약 |
 |---|---|---|
 | `member` | `email VARCHAR(255)`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt |
-| `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | index(token_hash). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
+| `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | **unique(token_hash)**(AUTH-1에서 index → unique로 바꿈: 해시 조회 시 gap lock 데드락 방지). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
 | `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
 | `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
 | `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `vod/<uuid>.mp4` 상대 경로 |
@@ -240,11 +240,12 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 송출 중 수정 `PATCH /api/broadcasts/{id}` `{title?, category?}`: LIVE/DISCONNECTED면 방송과 **채널 방송 정보 둘 다** 갱신, ENDED면 `title`만(category가 오면 409 `BROADCAST_NOT_LIVE`).
 
 ### 4.7 인증 (`auth`, `common/security`)
-- 가입 `POST /api/auth/signup` `{email, password(8~64), nickname(2~20)}` → 201 `{memberId}`. 채널 자동 생성(§4.3). 중복 409.
+- 가입 `POST /api/auth/signup` `{email, password(8~64자, UTF-8 72바이트 이하 — BCrypt 한계), nickname(2~20)}` → 201 `{memberId}`. 채널 자동 생성(§4.3). 중복 409.
 - 로그인 `POST /api/auth/login` `{email, password}` → 200 `{accessToken, member:{id, nickname, channelId}}` + `Set-Cookie: refresh_token=<원문>; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=14d`.
-- 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회 → 만료면 401. `revoked_at IS NULL`이면 **회전**(기존 revoke + `replaced_by_id`, 새 refresh 발급 · 쿠키 교체) + 새 access. 이미 revoke됐어도 `replaced_by_id != null AND revoked_at > now - refresh-rotation-grace-seconds`면 **유예**로 보고 다시 회전해 준다(탭 두 개가 동시에 갱신해도 둘 다 살아남음). 유예 밖의 회전된 토큰이 오면 재사용 의심 → 그 회원의 refresh 토큰 **전부** revoke 후 401. 그 외 401 `TOKEN_INVALID` + 쿠키 삭제.
+- 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회 → 만료면 401. `revoked_at IS NULL`이면 **회전**(기존 revoke + `replaced_by_id`, 새 refresh 발급 · 쿠키 교체) + 응답은 로그인과 같은 `{accessToken, member}`. 이미 revoke됐어도 `replaced_by_id != null AND revoked_at > now - refresh-rotation-grace-seconds`면 **유예**로 보고 다시 회전해 준다(탭 두 개가 동시에 갱신해도 둘 다 살아남음). 유예 밖의 회전된 토큰이 오면 재사용 의심 → 그 회원의 refresh 토큰 **전부** revoke 후 401. 그 외 401 `TOKEN_INVALID` + 쿠키 삭제.
 - 로그아웃 `POST /api/auth/logout`(쿠키) → 그 회원의 refresh 토큰 **전부** revoke(`replaced_by_id` null) + 쿠키 삭제, 200. 다른 탭 · 기기도 다음 갱신부터 로그아웃된다. (access는 만료까지 유효 — 15분)
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
+- **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. (AUTH-1 구현은 만료를 익명 통과시켰으므로 BC-1 또는 그 전 작은 수정으로 바꾼다.)
 - Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
 - `/swagger-ui/**`, `/v3/api-docs/**` 공개.
 
@@ -299,7 +300,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.14 실시간 (STOMP over WebSocket, `chat`)
 - 엔드포인트 `/ws`(네이티브, `setAllowedOriginPatterns("*")` 불필요 — 같은 출처). 브로커 `SimpleBroker("/topic")`, 앱 접두어 `/app`.
-- 인증 `StompAuthInterceptor`(CONNECT): `Authorization: Bearer` 헤더가 있으면 검증해 `Principal` 설정, 없으면 익명 허용. SEND는 Principal 필수(없으면 에러 프레임).
+- 인증 `StompAuthInterceptor`(CONNECT): `Authorization: Bearer` 헤더가 있으면 검증해 `Principal` 설정 — 만료 · 위조면 CONNECT를 거절(ERROR 프레임 `message: TOKEN_EXPIRED`/`TOKEN_INVALID`), 익명으로 떨어뜨리지 않는다. 헤더가 없으면 익명 허용. SEND는 Principal 필수(없으면 에러 프레임).
 - 토픽 `/topic/broadcasts/{id}` 메시지(JSON, `type`으로 구분):
   - `chat` `{type:"chat", id(UUID), member:{id, nickname, isChannelOwner}, content, sentAt}`
   - `donation` `{type:"donation", id, donor:{nickname}, amount, message, approvedAt}`
@@ -388,6 +389,7 @@ frontend/src/
 
 ### 6.4 인증 처리 (`api/client.ts`, `store/auth.ts`)
 - 앱 시작: `POST /auth/refresh`(쿠키 자동) → 성공 시 `setAuth`, 실패는 조용히 비로그인.
+- `ensureFreshToken()`: access의 `exp`(JWT payload base64 디코드)가 **60초 안**이면 먼저 refresh. STOMP 연결 직전과 송출 시작 직전에 부른다(서버가 만료 토큰에 401을 주므로 일반 요청은 `apiFetch`의 재시도로 충분).
 - `apiFetch(path, init)`: `Authorization` 헤더 자동, 응답 401(`TOKEN_EXPIRED`/`UNAUTHENTICATED`)이면 refresh 1회 후 재시도, 또 401이면 `clear()`. 한 탭 안에서 동시에 여러 요청이 401을 받아도 refresh 호출은 **하나로 합친다**(진행 중인 refresh Promise 공유).
 - `Protected` 래퍼: 비로그인 → `/login?next=<현재>`.
 - 로그아웃: `POST /auth/logout` → `clear()` → `/`.
@@ -416,7 +418,7 @@ frontend/src/
 `components/player/Player.tsx` — props `{ broadcast, initialMode }`. 상태 `mode: 'whep'|'grid'`(초기값 `recommendedMode`), `ModeToggle`로 전환(이전 플레이어 `close()` 후 생성), `PlayerStats`는 grid일 때 "서버 n MB · 피어 m MB · 절감 k% · 피어 p명". `status` 이벤트: `DISCONNECTED` → 오버레이 "방송인 연결이 끊겼습니다. 재연결을 기다리는 중…", `ENDED` → 종료 화면(`EndedView`: 안내 · 다시보기 버튼(recording READY면 활성, 아니면 "준비 중") · `RecommendList`).
 
 ### 6.6 STOMP 클라이언트 (`ws/stomp.ts`)
-`connect(token?)` → `Client({ brokerURL: wss://<host>/ws, connectHeaders: token ? { Authorization: 'Bearer ' + token } : {} , reconnectDelay: 3000 })`. `subscribeBroadcast(id, handler)` → `/topic/broadcasts/{id}`; `sendChat(id, content)` → `/app/broadcasts/{id}/chat`. `history` 메시지는 목록 초기화에 사용. 로그인 상태가 바뀌면 재연결.
+`connect(token?)` → `Client({ brokerURL: wss://<host>/ws, connectHeaders: token ? { Authorization: 'Bearer ' + token } : {} , reconnectDelay: 3000 })`. `subscribeBroadcast(id, handler)` → `/topic/broadcasts/{id}`; `sendChat(id, content)` → `/app/broadcasts/{id}/chat`. `history` 메시지는 목록 초기화에 사용. 로그인 상태가 바뀌면 재연결. 연결 전 `ensureFreshToken()`. 서버가 만료 토큰의 CONNECT를 ERROR 프레임(`message: TOKEN_EXPIRED`)으로 거절하면 refresh 후 재연결(익명 연결로 떨어지지 않는다).
 
 ### 6.7 화면별 요소 (PLAN-1 최종 화면 목록 기준)
 - **S1 Home**: 카테고리 칩(전체 + 5), `LiveCard` 그리드(썸네일 · LIVE 배지 · 시청자 수 · 제목 · 채널명), 아래 "다시보기" 탭(`RecordingCard`). 30초 refetch.
