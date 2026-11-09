@@ -143,6 +143,8 @@ livestream/
 |---|---|---|
 | `app.grid.threshold` | 100 | 이 동시 시청자 수부터 `recommendedMode=grid` |
 | `app.broadcast.disconnect-grace-seconds` | 60 | 송출 끊김 유예 |
+| `app.broadcast.end-block-seconds` | 30 | 소유자 종료 · 유예 만료 뒤 같은 채널의 publish를 거절하는 시간(자동 재연결로 새 방송이 생기는 것 방지) |
+| `app.jwt.refresh-rotation-grace-seconds` | 10 | 회전된 refresh 토큰을 잠깐 더 받아 주는 시간(탭 여러 개 동시 갱신) |
 | `app.broadcast.viewer-broadcast-interval-seconds` | 5 | 시청자 수 이벤트 주기 |
 | `app.thumbnail.interval-seconds` | 30 | 라이브 썸네일 캡처 주기 |
 | `app.recording.retention-days` | 30 | 영상 파일 보관 |
@@ -184,7 +186,7 @@ seed/        SeedRunner
 | 테이블 | 컬럼 | 제약 |
 |---|---|---|
 | `member` | `email VARCHAR(255)`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt |
-| `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL` | index(token_hash). 토큰 원문은 쿠키에만, DB는 SHA-256 |
+| `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | index(token_hash). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
 | `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
 | `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
 | `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `vod/<uuid>.mp4` 상대 경로 |
@@ -206,11 +208,11 @@ Enum:
 | 코드 | 상태 |
 |---|---|
 | `VALIDATION_ERROR` | 400 |
-| `UNAUTHENTICATED` / `TOKEN_EXPIRED` / `TOKEN_INVALID` | 401 |
+| `UNAUTHENTICATED` / `TOKEN_EXPIRED` / `TOKEN_INVALID` / `LOGIN_FAILED`(이메일 · 비밀번호 불일치, 어느 쪽인지 알려 주지 않음) | 401 |
 | `FORBIDDEN` (소유자 · 작성자 아님) | 403 |
 | `MEMBER_NOT_FOUND` · `CHANNEL_NOT_FOUND` · `BROADCAST_NOT_FOUND` · `RECORDING_NOT_FOUND` · `POST_NOT_FOUND` · `COMMENT_NOT_FOUND` · `DONATION_NOT_FOUND` | 404 |
 | `EMAIL_DUPLICATED` · `NICKNAME_DUPLICATED` | 409 |
-| `BROADCAST_NOT_LIVE` · `BROADCAST_ALREADY_ENDED` · `RECORDING_NOT_READY` · `COMMENT_DEPTH_EXCEEDED` · `RECORDING_COMMENT_NOT_OPEN` | 409 |
+| `BROADCAST_NOT_LIVE`(채팅 · 후원 · category 수정이 LIVE/DISCONNECTED가 아닐 때) · `BROADCAST_ALREADY_ENDED`(end API를 ENDED에 부를 때) · `RECORDING_NOT_READY` · `COMMENT_DEPTH_EXCEEDED` · `RECORDING_COMMENT_NOT_OPEN` | 409 |
 | `DONATION_AMOUNT_MISMATCH` · `DONATION_ALREADY_PROCESSED` · `PAYMENT_CONFIRM_FAILED` | 400 / 409 / 502 |
 
 ### 4.5 날짜 · 시각
@@ -226,12 +228,12 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 ```
 | 입력 | 처리 |
 |---|---|
-| `POST /internal/mediamtx/ready` `{path:"live/<channelId>", sourceType, query}` | 채널 조회. 채널에 `status IN (LIVE, DISCONNECTED)` 방송이 있으면 → LIVE로 되돌리고 `disconnected_at=null`. 없으면 → 새 `broadcast`(status LIVE, title · category 채널에서 복사, source: `sourceType`이 `rtmpConn`이면 STREAM_KEY, `webRTCSession`이면 query의 `src=mobile`이면 BROWSER_MOBILE · 아니면 `src=obs`면 STREAM_KEY · 아니면 BROWSER_PC) + `recording`(RECORDING, visibility는 채널 `auto_publish_recording`에 따라 PUBLIC/PRIVATE). `BroadcastEventPublisher.status(live)` |
+| `POST /internal/mediamtx/ready` `{path:"live/<channelId>", sourceType, query}` | 채널 조회. source 판정 = `sourceType`이 `rtmpConn`이면 STREAM_KEY, `webRTCSession`이면 query `src`가 `mobile`→BROWSER_MOBILE, `obs`→STREAM_KEY, 그 외(`pc` · 없음)→BROWSER_PC. 채널에 `status IN (LIVE, DISCONNECTED)` 방송이 있으면 → LIVE로 되돌리고 `disconnected_at=null`, **`source`를 이번 판정값으로 갱신**(유예 재연결 · overridePublisher 교체로 수단이 바뀔 수 있음). 없으면 → 새 `broadcast`(status LIVE, title · category 채널에서 복사, source) + `recording`(RECORDING, visibility는 채널 `auto_publish_recording`에 따라 PUBLIC/PRIVATE). `BroadcastEventPublisher.status(live)` |
 | `POST /internal/mediamtx/not-ready` | 방송이 LIVE면 DISCONNECTED + `disconnected_at=now`, `status(disconnected)` 이벤트. 그 외 무시(멱등) |
 | `DisconnectGraceScheduler`(10초마다) | `DISCONNECTED AND disconnected_at < now - grace` → `end(broadcast, reason=GRACE_TIMEOUT)` |
-| `POST /api/broadcasts/{id}/end` (소유자) | `end(broadcast, reason=OWNER)`: LIVE/DISCONNECTED가 아니면 409. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
-| `DELETE /api/broadcasts/{id}` (소유자) | LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. 녹화 파일(vod · raw · 썸네일) 삭제, recording `FILE_DELETED`. 댓글은 recording cascade. 후원은 그대로 |
-| `end` 공통 | `status(ended)` 이벤트 → `RecordingMergeService.enqueue(recordingId)`(§4.10) → `ChatBufferService.clear(broadcastId)`(30분 뒤) |
+| `POST /api/broadcasts/{id}/end` (소유자) | `end(broadcast, reason=OWNER)`: ENDED면 409 `BROADCAST_ALREADY_ENDED`. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
+| `DELETE /api/broadcasts/{id}` (소유자) | LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. recording `FILE_DELETED`로 바꾼 **뒤** 녹화 파일(vod · raw · 썸네일) 삭제. **그 recording의 댓글은 물리 삭제**(`deleteByRecordingId`, soft delete라 cascade가 안 일어나므로). 후원은 그대로. 이후 `GET /recordings/{id}` · 댓글 엔드포인트는 broadcast가 삭제된 recording에 404 |
+| `end` 공통 | `status(ended)` 이벤트 → recording을 같은 트랜잭션에서 `PROCESSING`으로 → 커밋 뒤 `RecordingMergeService.enqueue(recordingId)`(§4.10) → `ChatBufferService.clear(broadcastId)`(30분 뒤) → **publish 차단**: `PublishBlockRegistry.block(channelId, end-block-seconds)`(메모리 `Map<channelId, Instant>`). 인증 콜백(§4.9)이 이 시간 동안 그 채널의 publish를 401로 거절해, kick당한 OBS · WhipClient의 자동 재연결이 새 방송을 만들지 못하게 한다. 차단이 끝난 뒤에도 OBS가 계속 재연결하면 **새 방송이 시작되는 것이 의도된 동작**(README · S5 안내: "사이트에서 종료한 뒤 OBS도 중지하세요") |
 
 - `MediaMtxClient.kickPublisher(path)`: `GET /v3/paths/get/{path}` → `source.type` · `source.id` → `POST /v3/webrtcsessions/kick/{id}` 또는 `/v3/rtmpconns/kick/{id}` (`RestClient`, 타임아웃 3초).
 - 채널당 LIVE/DISCONNECTED 방송 최대 1건은 서비스 로직 + `overridePublisher`로 보장(두 번째 연결은 MediaMTX가 기존을 끊고 ready 훅이 다시 와 같은 방송을 이어 간다).
@@ -240,8 +242,8 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 ### 4.7 인증 (`auth`, `common/security`)
 - 가입 `POST /api/auth/signup` `{email, password(8~64), nickname(2~20)}` → 201 `{memberId}`. 채널 자동 생성(§4.3). 중복 409.
 - 로그인 `POST /api/auth/login` `{email, password}` → 200 `{accessToken, member:{id, nickname, channelId}}` + `Set-Cookie: refresh_token=<원문>; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=14d`.
-- 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회, `revoked_at IS NULL AND expires_at > now`면 **회전**(기존 revoke, 새 refresh 발급 · 쿠키 교체) + 새 access. 아니면 401 `TOKEN_INVALID` + 쿠키 삭제.
-- 로그아웃 `POST /api/auth/logout`(쿠키) → revoke + 쿠키 삭제, 200. (access는 만료까지 유효 — 15분)
+- 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회 → 만료면 401. `revoked_at IS NULL`이면 **회전**(기존 revoke + `replaced_by_id`, 새 refresh 발급 · 쿠키 교체) + 새 access. 이미 revoke됐어도 `replaced_by_id != null AND revoked_at > now - refresh-rotation-grace-seconds`면 **유예**로 보고 다시 회전해 준다(탭 두 개가 동시에 갱신해도 둘 다 살아남음). 유예 밖의 회전된 토큰이 오면 재사용 의심 → 그 회원의 refresh 토큰 **전부** revoke 후 401. 그 외 401 `TOKEN_INVALID` + 쿠키 삭제.
+- 로그아웃 `POST /api/auth/logout`(쿠키) → 그 회원의 refresh 토큰 **전부** revoke(`replaced_by_id` null) + 쿠키 삭제, 200. 다른 탭 · 기기도 다음 갱신부터 로그아웃된다. (access는 만료까지 유효 — 15분)
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
 - Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
 - `/swagger-ui/**`, `/v3/api-docs/**` 공개.
@@ -262,14 +264,14 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
 요청(MediaMTX가 보냄): `{ "ip", "user", "password", "path", "protocol", "id", "action", "query" }`.
-- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `password == channel.stream_key`(WHIP Bearer · RTMP `?pass=` 모두 password로 들어온다 — BC-1에서 실제 확인, 안 되면 `query`의 `pass`도 본다) → 200. 아니면 401.
+- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `PublishBlockRegistry`에 차단 중이 아니고(§4.6, 차단 중이면 401), `password == channel.stream_key`(WHIP Bearer · RTMP `?pass=` 모두 password로 들어온다 — BC-1에서 실제 확인, 안 되면 `query`의 `pass`도 본다) → 200. 아니면 401.
 - `action in (read, playback)`: 200.
 - 그 외(api 등): 404(`authHTTPExclude`로 오지 않음).
 - 이 엔드포인트는 `InternalTokenFilter` 대상이 아니다(MediaMTX가 헤더를 못 붙임) — 대신 docker 내부망에서만 접근(Caddy가 `/api/internal/*`를 외부에 **노출하지 않는다**: Caddyfile에서 `/api/internal/*` → 403).
 
 ### 4.10 녹화 → 다시보기 (`recording`)
 - 조각 수집: `POST /internal/mediamtx/segment-complete` `{path, segmentPath}` → 채널의 현재(LIVE/DISCONNECTED/ENDED 직후) 방송의 recording에 `recording_segment` 추가(sequence = count+1). 방송을 못 찾으면 로그만.
-- 병합 `RecordingMergeService.enqueue(recordingId)`(`@Async`, 단일 스레드 풀): status → PROCESSING → 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: `ffprobe`로 duration, 파일 크기, status READY, raw 조각 삭제. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
+- 병합 `RecordingMergeService.enqueue(recordingId)`(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다**. 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
 - 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
 - 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
 - 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"` → `GET`은 토큰 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
@@ -320,7 +322,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `POST /auth/signup` · `/login` · `/refresh` · `/logout` | §4.7 | |
 | `GET /members/me` | 로그인 | `{id, email, nickname, channelId, createdAt}` |
 | `GET /channels/{id}` | 누구나 | `{id, name, description, category, liveBroadcastId(null 가능), recordingCount, postCount, owner:{nickname}}` |
-| `GET /channels/me` | 로그인 | 위 + `{title, streamKey, widgetKey, autoPublishRecording, currentBroadcast:{id,status}, publish:{whipUrl, rtmpUrl, rtmpStreamKey, obsWhipBearer}, widgetUrl}` — `whipUrl = {public-url}/live/{id}/whip`, `rtmpUrl = rtmp://{host}/live`, `rtmpStreamKey = "{id}?user=obs&pass={streamKey}"`, `widgetUrl = {public-url}/widget/{widgetKey}` |
+| `GET /channels/me` | 로그인 | 위 + `{title, streamKey, widgetKey, autoPublishRecording, currentBroadcast:{id,status}, publish:{whipUrl, obsWhipUrl, obsWhipBearer, rtmpUrl, rtmpStreamKey}, widgetUrl}` — `whipUrl = {public-url}/live/{id}/whip`(브라우저가 `?src=pc`/`?src=mobile`을 붙임), `obsWhipUrl = whipUrl + "?src=obs"`, `obsWhipBearer = streamKey`(OBS "Bearer 토큰" 칸에 넣을 값 그대로), `rtmpUrl = rtmp://{host}/live`, `rtmpStreamKey = "{id}?user=obs&pass={streamKey}"`, `widgetUrl = {public-url}/widget/{widgetKey}` |
 | `PATCH /channels/me` | 로그인 | `{name?, description?, title?, category?, autoPublishRecording?}` → 채널 |
 | `POST /channels/me/stream-key/rotate` | 로그인 | → `{streamKey}`. 라이브 중이면 `end` 후 재발급 |
 | `POST /channels/me/widget-key/rotate` | 로그인 | → `{widgetKey, widgetUrl}` |
@@ -372,7 +374,7 @@ frontend/src/
 | 경로 | 페이지 | 보호 | 핵심 데이터 |
 |---|---|---|---|
 | `/` | Home(S1) | — | `GET /broadcasts?status=LIVE`, `GET /recordings`, 카테고리 필터(enum 5) |
-| `/live/:channelId` | Live(S2) | — | `GET /channels/{id}` → `liveBroadcastId` → `GET /broadcasts/{id}`(5초 refetch), STOMP 구독, Player, ChatPanel, DonateDialog, 종료 화면(추천) |
+| `/live/:channelId` | Live(S2) | — | `GET /channels/{id}` → `liveBroadcastId` → `GET /broadcasts/{id}`(5초 refetch), STOMP 구독, Player, ChatPanel, DonateDialog, 종료 화면(추천). `liveBroadcastId`가 null이면 이동하지 않고 **오프라인 화면**: 채널 이름 · 소개, "지금은 방송 중이 아닙니다", 이 채널의 최근 공개 다시보기 4개(`/channels/{id}/broadcasts`), 채널 페이지 링크. 30초마다 다시 조회해 라이브가 시작되면 자동으로 플레이어로 전환 |
 | `/studio` | StudioEntry | 로그인 | `devices.ts`로 `/studio/pc` 또는 `/studio/mobile`로 replace. `?force=pc|mobile` 우선 |
 | `/studio/pc` | StudioPc(S3) | 로그인 | `GET/PATCH /channels/me`, mixer + whip, 상태, ChatPanel(읽기 + 쓰기), 후원 알림, "모바일 화면으로" |
 | `/studio/mobile` | StudioMobile(S4) | 로그인 | 카메라 미리보기(전/후면), 마이크, 방송 정보, 큰 시작/종료, "PC 화면으로" |
@@ -386,7 +388,7 @@ frontend/src/
 
 ### 6.4 인증 처리 (`api/client.ts`, `store/auth.ts`)
 - 앱 시작: `POST /auth/refresh`(쿠키 자동) → 성공 시 `setAuth`, 실패는 조용히 비로그인.
-- `apiFetch(path, init)`: `Authorization` 헤더 자동, 응답 401(`TOKEN_EXPIRED`/`UNAUTHENTICATED`)이면 refresh 1회 후 재시도, 또 401이면 `clear()`.
+- `apiFetch(path, init)`: `Authorization` 헤더 자동, 응답 401(`TOKEN_EXPIRED`/`UNAUTHENTICATED`)이면 refresh 1회 후 재시도, 또 401이면 `clear()`. 한 탭 안에서 동시에 여러 요청이 401을 받아도 refresh 호출은 **하나로 합친다**(진행 중인 refresh Promise 공유).
 - `Protected` 래퍼: 비로그인 → `/login?next=<현재>`.
 - 로그아웃: `POST /auth/logout` → `clear()` → `/`.
 
@@ -404,7 +406,7 @@ frontend/src/
 `media/whip.ts` — `class WhipClient { constructor(url, bearer) ; publish(stream) ; close() ; onState(cb) }`
 - `RTCPeerConnection({ iceServers: [] })`(같은 서버로 직접, TURN 없음), `addTransceiver(track, { direction: 'sendonly' })`, 비디오 인코딩 `maxBitrate 3_000_000`.
 - `createOffer` → `setLocalDescription` → ICE gathering 완료 대기(최대 2초) → `POST url` (`Content-Type: application/sdp`, `Authorization: Bearer <streamKey>`) → 201 + `Location` 저장 → `setRemoteDescription(answer)`.
-- `close()`: `DELETE Location` → `pc.close()`. `oniceconnectionstatechange`: `failed`/`disconnected` → `onState('reconnecting')` → 3초 간격 재시도 최대 20회(유예 60초 안) → 성공 시 `'live'`.
+- `close()`: `closed = true`(이후 재시도 중단) → `DELETE Location` → `pc.close()`. `oniceconnectionstatechange`: `failed`/`disconnected`이고 `!closed`면 `onState('reconnecting')` → 3초 간격 재시도 최대 20회(유예 60초 안) → 성공 시 `'live'`. 재시도 중 401(종료 차단)을 받으면 즉시 중단하고 `'ended'`.
 - 송출 URL은 `channels/me.publish.whipUrl + '?src=pc'`(모바일은 `?src=mobile`).
 
 `media/whep.ts` — `class WhepPlayer { attach(video, url) ; close() ; onState(cb) }`: `addTransceiver('video', recvonly)` · `('audio', recvonly)`, offer → `POST url`(헤더 없음) → answer, `ontrack`으로 `video.srcObject`. 끊기면 `'waiting'`; `status: LIVE` 이벤트가 오면 재연결.
@@ -481,10 +483,11 @@ frontend/src/
 - 완료: LIVE 방송에 30초 안에 `thumbnails/<id>.jpg` 생성, 응답 `thumbnailUrl` 반영(수동 확인). 단위 테스트는 `FfmpegRunner` mock으로 경로 갱신 로직.
 
 ### FE-2 PC 송출 스튜디오
-- 읽을 절: §6.5 mixer · whip, §6.7 S3, §4.16 `/channels/me`. Chrome 기준. 송출 시작 흐름: `PATCH /channels/me`(방송 정보) → `createPcStream` → `WhipClient.publish` → `GET /channels/me` 폴링(3초)으로 `currentBroadcast` 확인 → 라이브 표시. 종료: `POST /broadcasts/{id}/end` → `whip.close()` → `stream.stop()`.
+- 읽을 절: §6.5 mixer · whip, §6.7 S3, §4.16 `/channels/me`. Chrome 기준. 송출 시작 흐름: `PATCH /channels/me`(방송 정보) → `createPcStream` → `WhipClient.publish` → `GET /channels/me` 폴링(3초)으로 `currentBroadcast` 확인 → 라이브 표시. 종료 순서(중요): **`whip.close()` → `stream.stop()` → `POST /broadcasts/{id}/end`** — 먼저 송출을 끊어 재시도가 돌지 않게 한 뒤 서버에 종료를 알린다(서버는 어차피 30초 차단으로 2중 방어).
 - 완료: Chrome에서 화면 + 탭 소리 + 마이크 송출이 MediaMTX에 붙고(OBS 없이), 다른 브라우저 WHEP(간단 테스트 페이지 또는 FE-4)로 소리 · 화면 확인. 공유 중지 시 자동 종료.
 
 ### FE-3 모바일 송출 · 기기 감지 · 채널 설정
+- 송출 시작 · 종료 순서는 FE-2와 같다(`PATCH /channels/me` → `createMobileStream` → `WhipClient.publish(whipUrl + '?src=mobile')` → `/channels/me` 폴링 / 종료는 `whip.close()` → `stream.stop()` → `end`).
 - 읽을 절: §6.5 devices · 모바일 스트림, §6.7 S4 · S5, §6.3. iOS Safari · Android Chrome 모두 확인(HTTPS 필수 → `compose.dev` Caddy 내부 CA를 폰에 신뢰시키거나 OPS-5 뒤 운영 도메인).
 - 완료: 휴대폰에서 `/studio` → 모바일 화면 자동 → 카메라 송출 → PC에서 시청. 전/후면 전환. S5에서 키 복사 · 재발급 · OBS 문자열 · 자동 공개 토글.
 
