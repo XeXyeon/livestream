@@ -1,0 +1,556 @@
+# 그리드라이브(가칭) 설계서
+
+실시간 방송 플랫폼(라이브 송출 · 시청 웹 서비스)의 구현 기준 문서. 구현 담당 에이전트는 **이 문서와 자기 로드맵 항목만으로** 작업할 수 있어야 한다. 결정 근거는 작업 카드(`~/.work-dash/worklogs/livestream/ARCH-1.md`, `ARCH-2.md`, `PLAN-1.md`)에 있고, 이 문서와 카드가 다르면 **이 문서가 우선**한다(발견하면 설계자에게 알린다).
+
+- 마감: 2026-11-19 23:59. 1인 + AI. 범위: 공모 체크리스트 필수 + 선택 전부 + 추가 기능(채팅 · 그리드 · 스트림 키 송출 · 커뮤니티 · 알림 위젯).
+- 서비스 이름은 미정(가칭 "그리드라이브 / GridLive"). 코드 식별자에는 이름을 넣지 않는다.
+
+## 0. 구현 에이전트 사용법
+
+1. 로드맵 `~/.work-dash/roadmaps/livestream.md`에서 맡은 항목 ID를 확인하고 `/roadmap start <ID>`로 시작한다. 작업 카드 작성 규칙은 `~/.work-dash/ROADMAP-FORMAT.md`.
+2. 이 문서에서 **§9 항목별 구현 지침**의 자기 ID 절을 읽고, 거기서 가리키는 §절을 읽는다. 다른 절은 필요할 때만.
+3. 이름(테이블 · 컬럼 · 엔드포인트 · 패키지 · 파일 · 설정 키)은 이 문서의 것을 **그대로** 쓴다. 바꿔야 하면 설계자에게 묻는다.
+4. 구현과 그 테스트는 같은 커밋. 한 항목은 보통 2~4커밋(`~/.work-dash/RULES.md` 커밋 규칙).
+5. 설계에 없는 큰 판단(새 테이블, 새 외부 서비스, 흐름 변경)은 하지 말고 카드 "열린 질문"에 적고 설계자에게 묻는다.
+6. 하지 말 것: 설계 문서를 저장소에 더 만들기, 의존성 임의 추가(§9에 적힌 것만), `ddl-auto` 변경, 비밀 값 커밋.
+
+## 1. 요구사항 (공모 체크리스트 ↔ 구현)
+
+| 체크 항목 | 구현 위치 |
+|---|---|
+| PC 화면 캡처 송출 / 탭·시스템 소리 + 마이크 / 마이크 | §7.5 `mixer.ts` + `whip.ts` (FE-2) |
+| 시작 · 종료 시 송출 연결 생성 · 종료 | WHIP 연결(FE-2) · `POST /api/broadcasts/{id}/end` + kick(BC-1) |
+| 모바일 카메라 + 마이크 송출 / 시작 · 종료 | §7.5 (FE-3) |
+| 방송 정보 CRUD | `PATCH /api/channels/me`, `/api/broadcasts` (CH-1 · BC-2) |
+| 목록 · 상세, 다른 기기 수신 · 재생 | `GET /api/broadcasts`, WHEP/LL-HLS (BC-2 · FE-4 · GRID-2) |
+| 방송중 · 종료 상태, 종료 시 송출 중단 | §4.6 상태 전이 (BC-1) |
+| 영구 저장 · 재시작 후 조회 | MySQL 볼륨 (OPS-3) |
+| 가입 · 로그인 · 로그아웃 · 인증 상태 | §4.7 (AUTH-1 · FE-1) |
+| 비로그인 조회 · 시청, 등록 · 송출은 로그인 | §4.8 권한 |
+| 수정 · 삭제 · 송출 제어 시 서버 소유자 검증 | §4.8 + `OwnerAuthorizationTest` |
+| 댓글 CRUD · 작성자 검증 (선택) | §4.12 (CMT-1) — 근거는 **다시보기 댓글** |
+| 후원 요청 · 검증 저장 · 중복 승인 방지 · 내역 합계 (선택) | §4.13 (DON-1) + `DonationConfirmIdempotencyTest` |
+| 녹화 저장 · 목록 · 재생 · 영구 저장 (선택) | §4.10 (REC-1 · REC-2) |
+
+## 2. 시스템 구성
+
+```
+브라우저(React SPA)                      OBS · Larix(스트림 키)
+   │ HTTPS                                   │ RTMP 1935 / WHIP
+   ▼                                         ▼
+ Caddy(443) ──/api, /ws──▶ Spring Boot(8080) ──JDBC──▶ MySQL(3306)
+   │  ──/live/*(whip·whep·hls)──▶ MediaMTX(8889 webrtc · 8888 hls · 1935 rtmp · 8554 rtsp · 9997 api · 8189/udp ice)
+   │  ──/vod/*, /uploads/*──▶ 정적 볼륨
+   │  ──/tracker──▶ wt-tracker(8000)   ← 그리드 P2P 피어 소개
+   └──/* ──▶ 프론트 정적 빌드
+ MediaMTX ──훅(curl)·인증 콜백──▶ Spring /api/internal/mediamtx/*
+ Spring ──Control API──▶ MediaMTX :9997   Spring ──RTSP(ffmpeg)──▶ MediaMTX :8554
+ Spring ──HTTPS──▶ Toss Payments(승인)
+```
+
+### 2.1 docker compose 서비스 (`infra/compose.yaml`)
+| 서비스 | 이미지 | 포트(외부) | 볼륨 |
+|---|---|---|---|
+| `caddy` | `caddy:2` | 80, 443 | `caddy_data`, `./Caddyfile`, `media`(읽기), `uploads`(읽기), `frontend/dist` |
+| `backend` | `backend/Dockerfile`(temurin 25 + `apk add ffmpeg`) | — (내부 8080) | `media`(`/recordings`), `uploads`(`/uploads`) |
+| `mysql` | `mysql:8.4` | — (로컬 개발은 3306) | `mysql_data` |
+| `mediamtx` | `bluenviron/mediamtx:latest` | 1935/tcp, 8189/udp | `media`(`/recordings`), `./mediamtx.yml` |
+| `tracker` | `node:22-alpine` + `wt-tracker` | — (내부 8000) | — |
+
+로컬 개발: `backend`는 IDE에서 실행하고 compose는 `mysql · mediamtx · caddy · tracker`만(`compose.dev.yaml`, Caddy가 `localhost:8080` · `localhost:5173`으로 프록시). 운영: 전부 compose.
+
+### 2.2 Caddyfile 라우팅
+| 경로 | 대상 | 비고 |
+|---|---|---|
+| `/api/*` | `backend:8080` | `flush_interval -1`(SSE) |
+| `/ws` | `backend:8080` | WebSocket 업그레이드 |
+| `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`) | 경로 끝으로 분기 |
+| `/vod/*` | 정적 `/srv/media/vod` | mp4, Range |
+| `/uploads/*` | 정적 `/srv/uploads` | 썸네일 |
+| `/tracker` | `tracker:8000` | WebSocket |
+| `/*` | 정적 `/srv/frontend` + `try_files {path} /index.html` | SPA |
+
+### 2.3 MediaMTX 설정 (`infra/mediamtx.yml` 핵심)
+```yaml
+api: yes
+apiAddress: :9997
+rtsp: yes            # 썸네일 캡처용(내부)
+rtmp: yes
+hls: yes
+hlsVariant: lowLatency
+hlsPartDuration: 500ms
+hlsSegmentDuration: 1s
+hlsAlwaysRemux: yes  # 시청자 없어도 HLS 준비(그리드 전환 지연 방지)
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: [${PUBLIC_HOST}]   # 공인 IP 또는 도메인
+authMethod: http
+authHTTPAddress: http://backend:8080/api/internal/mediamtx/auth
+authHTTPExclude:
+  - action: api        # Control API는 내부망만
+  - action: metrics
+  - action: pprof
+pathDefaults:
+  overridePublisher: yes      # 두 번째 송출 연결이 기존을 교체
+  record: yes
+  recordPath: /recordings/raw/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 6h
+  recordDeleteAfter: 0s
+  runOnReady: curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH","sourceType":"$MTX_SOURCE_TYPE","query":"$MTX_QUERY"}' http://backend:8080/api/internal/mediamtx/ready
+  runOnNotReady: curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH"}' http://backend:8080/api/internal/mediamtx/not-ready
+  runOnRecordSegmentComplete: curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH","segmentPath":"$MTX_SEGMENT_PATH"}' http://backend:8080/api/internal/mediamtx/segment-complete
+paths:
+  ~^live/\d+$: {}
+```
+- 경로는 **`live/<channelId>`** 하나로 통일. 스트림 키는 경로에 넣지 않는다(시청 URL 노출 방지).
+- 인증 콜백은 publish만 검사하고 read · playback은 허용(§4.9).
+
+### 2.4 환경변수 (`.env.example`)
+```
+PUBLIC_HOST=localhost
+INTERNAL_TOKEN=change-me
+SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/livestream?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+SPRING_DATASOURCE_USERNAME=livestream
+SPRING_DATASOURCE_PASSWORD=livestream
+JWT_SECRET=32바이트_이상
+APP_MEDIAMTX_API_URL=http://mediamtx:9997
+APP_MEDIAMTX_INTERNAL_TOKEN=${INTERNAL_TOKEN}
+APP_TOSS_CLIENT_KEY=test_ck_...
+APP_TOSS_SECRET_KEY=test_sk_...
+APP_GRID_THRESHOLD=100
+APP_SEED_ENABLED=false
+APP_RECORDING_RETENTION_DAYS=30
+```
+
+## 3. 저장소 구조 (모노레포)
+```
+livestream/
+├─ backend/        Spring Boot (현재 루트의 Gradle 프로젝트를 이동)
+├─ frontend/       React + Vite + TypeScript
+├─ infra/          compose.yaml · compose.dev.yaml · Caddyfile · mediamtx.yml · tracker/ · seed/sample.mp4
+├─ docs/DESIGN.md  이 문서
+├─ .env.example
+└─ README.md       (DOC-2)
+```
+
+## 4. 백엔드
+
+### 4.1 설정값 (`application.yaml` `app.*`, 환경변수 `APP_…`로 덮어씀)
+| 키 | 기본 | 뜻 |
+|---|---|---|
+| `app.grid.threshold` | 100 | 이 동시 시청자 수부터 `recommendedMode=grid` |
+| `app.broadcast.disconnect-grace-seconds` | 60 | 송출 끊김 유예 |
+| `app.broadcast.viewer-broadcast-interval-seconds` | 5 | 시청자 수 이벤트 주기 |
+| `app.thumbnail.interval-seconds` | 30 | 라이브 썸네일 캡처 주기 |
+| `app.recording.retention-days` | 30 | 영상 파일 보관 |
+| `app.recording.dir` | `/recordings` | MediaMTX와 공유 볼륨(`raw/`, `vod/`) |
+| `app.uploads.dir` | `/uploads` | 썸네일(`thumbnails/`) |
+| `app.mediamtx.api-url` / `app.mediamtx.rtsp-url` / `app.mediamtx.internal-token` | — / `rtsp://mediamtx:8554` / — | |
+| `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
+| `app.jwt.secret` / `app.jwt.access-minutes` / `app.jwt.refresh-days` | — / 15 / 14 | 기존 `custom.jwt.secret`을 `app.jwt.secret`으로 옮긴다 |
+| `app.seed.enabled` | false | 시드 투입 |
+| `app.public-url` | `http://localhost` | 안내 문자열(WHIP URL 등)에 사용 |
+
+### 4.2 패키지 구조 (`backend/src/main/java/com/livestream/livestream`)
+```
+common/      config(SecurityConfig · WebSocketConfig · AsyncConfig · SchedulingConfig · AppProperties · JacksonConfig)
+             error(ErrorCode · ApiException · GlobalExceptionHandler · ErrorResponse)
+             security(JwtProvider · JwtAuthenticationFilter · CurrentMember · InternalTokenFilter)
+auth/        AuthController · AuthService · RefreshToken · RefreshTokenRepository · dto
+member/      Member · MemberRepository · MemberController(/members/me)
+channel/     Channel · Category · ChannelRepository · ChannelService · ChannelController
+broadcast/   Broadcast · BroadcastStatus · BroadcastSource · BroadcastRepository · BroadcastService · BroadcastController
+             BroadcastLifecycleService(상태 전이) · DisconnectGraceScheduler · RecommendationService
+mediamtx/    MediaMtxAuthController(/internal/mediamtx/auth) · MediaMtxHookController(/ready, /not-ready, /segment-complete)
+             MediaMtxClient(Control API: path 조회 · kick)
+recording/   Recording · RecordingStatus · Visibility · RecordingSegment · RecordingRepository · RecordingSegmentRepository
+             RecordingService · RecordingMergeService(ffmpeg) · RecordingRetentionScheduler · RecordingController · VideoTokenService
+thumbnail/   ThumbnailCaptureScheduler · FfmpegRunner(공용)
+chat/        ChatController(@MessageMapping) · ChatBufferService · ViewerCounter · BroadcastEventPublisher · StompAuthInterceptor · dto
+comment/     Comment · CommentRepository · CommentService · CommentController
+post/        Post · PostRepository · PostService · PostController
+donation/    Donation · DonationStatus · DonationRepository · DonationService · TossPaymentsClient · DonationController
+integration/ WidgetEventController(SSE) · WidgetEventService
+seed/        SeedRunner
+```
+계층: Controller(요청 검증 · DTO) → Service(규칙 · 트랜잭션 · 권한) → Repository(JPA). 엔티티는 Lombok `@Getter`, 생성자는 정적 팩토리, setter 없음.
+
+### 4.3 테이블 · 엔티티
+공통 컬럼: `id BIGINT AUTO_INCREMENT PK`, `created_at DATETIME(6)`, `updated_at DATETIME(6)` (`@CreatedDate`/`@LastModifiedDate`, JPA Auditing). 문자열은 `VARCHAR`, enum은 `@Enumerated(STRING)`. 유니크 · check는 `@Table(uniqueConstraints)` · `@Check`로.
+
+| 테이블 | 컬럼 | 제약 |
+|---|---|---|
+| `member` | `email VARCHAR(255)`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt |
+| `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL` | index(token_hash). 토큰 원문은 쿠키에만, DB는 SHA-256 |
+| `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
+| `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
+| `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `vod/<uuid>.mp4` 상대 경로 |
+| `recording_segment` | `recording_id FK`, `file_path VARCHAR(255)`, `sequence INT` | 조각 도착 순서 |
+| `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
+| `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | check((recording_id IS NULL) <> (post_id IS NULL)). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
+| `donation` | `broadcast_id FK`, `channel_id FK`, `donor_member_id FK`, `amount INT`, `message VARCHAR(100) NULL`, `order_id CHAR(36)`, `payment_key VARCHAR(200) NULL`, `status VARCHAR(20)`, `approved_at NULL` | unique(order_id), unique(payment_key). index(broadcast_id, status), index(channel_id, status) |
+
+Enum:
+- `Category { GAME("게임"), TALK("토크"), MUSIC("음악"), STUDY("공부"), ETC("기타") }` — 응답에는 `code`와 `label` 둘 다.
+- `BroadcastStatus { LIVE, DISCONNECTED, ENDED }`, `BroadcastSource { BROWSER_PC, BROWSER_MOBILE, STREAM_KEY }`
+- `RecordingStatus { RECORDING, PROCESSING, READY, FAILED, FILE_DELETED }`, `Visibility { PUBLIC, PRIVATE }`
+- `DonationStatus { PENDING, APPROVED, FAILED }`
+
+### 4.4 공통 응답 · 에러
+- 성공: 본문 그대로(래퍼 없음). 목록은 `{ "items": [...], "page": 0, "size": 20, "totalElements": n, "hasNext": bool }`.
+- 에러: `{ "code": "BROADCAST_NOT_LIVE", "message": "방송 중이 아닙니다" }` + HTTP 상태. `ErrorCode` enum에 코드 · 상태 · 메시지.
+
+| 코드 | 상태 |
+|---|---|
+| `VALIDATION_ERROR` | 400 |
+| `UNAUTHENTICATED` / `TOKEN_EXPIRED` / `TOKEN_INVALID` | 401 |
+| `FORBIDDEN` (소유자 · 작성자 아님) | 403 |
+| `MEMBER_NOT_FOUND` · `CHANNEL_NOT_FOUND` · `BROADCAST_NOT_FOUND` · `RECORDING_NOT_FOUND` · `POST_NOT_FOUND` · `COMMENT_NOT_FOUND` · `DONATION_NOT_FOUND` | 404 |
+| `EMAIL_DUPLICATED` · `NICKNAME_DUPLICATED` | 409 |
+| `BROADCAST_NOT_LIVE` · `BROADCAST_ALREADY_ENDED` · `RECORDING_NOT_READY` · `COMMENT_DEPTH_EXCEEDED` · `RECORDING_COMMENT_NOT_OPEN` | 409 |
+| `DONATION_AMOUNT_MISMATCH` · `DONATION_ALREADY_PROCESSED` · `PAYMENT_CONFIRM_FAILED` | 400 / 409 / 502 |
+
+### 4.5 날짜 · 시각
+DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론트.
+
+### 4.6 방송 상태 전이 (`BroadcastLifecycleService`)
+```
+(없음) ──ready 훅──▶ LIVE ──not-ready 훅──▶ DISCONNECTED ──ready 훅(유예 안)──▶ LIVE
+                      │                           │
+                      │ end API / delete API      │ 유예(60초) 경과(스케줄러 10초마다)
+                      ▼                           ▼
+                    ENDED ◀────────────────────────┘
+```
+| 입력 | 처리 |
+|---|---|
+| `POST /internal/mediamtx/ready` `{path:"live/<channelId>", sourceType, query}` | 채널 조회. 채널에 `status IN (LIVE, DISCONNECTED)` 방송이 있으면 → LIVE로 되돌리고 `disconnected_at=null`. 없으면 → 새 `broadcast`(status LIVE, title · category 채널에서 복사, source: `sourceType`이 `rtmpConn`이면 STREAM_KEY, `webRTCSession`이면 query의 `src=mobile`이면 BROWSER_MOBILE · 아니면 `src=obs`면 STREAM_KEY · 아니면 BROWSER_PC) + `recording`(RECORDING, visibility는 채널 `auto_publish_recording`에 따라 PUBLIC/PRIVATE). `BroadcastEventPublisher.status(live)` |
+| `POST /internal/mediamtx/not-ready` | 방송이 LIVE면 DISCONNECTED + `disconnected_at=now`, `status(disconnected)` 이벤트. 그 외 무시(멱등) |
+| `DisconnectGraceScheduler`(10초마다) | `DISCONNECTED AND disconnected_at < now - grace` → `end(broadcast, reason=GRACE_TIMEOUT)` |
+| `POST /api/broadcasts/{id}/end` (소유자) | `end(broadcast, reason=OWNER)`: LIVE/DISCONNECTED가 아니면 409. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
+| `DELETE /api/broadcasts/{id}` (소유자) | LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. 녹화 파일(vod · raw · 썸네일) 삭제, recording `FILE_DELETED`. 댓글은 recording cascade. 후원은 그대로 |
+| `end` 공통 | `status(ended)` 이벤트 → `RecordingMergeService.enqueue(recordingId)`(§4.10) → `ChatBufferService.clear(broadcastId)`(30분 뒤) |
+
+- `MediaMtxClient.kickPublisher(path)`: `GET /v3/paths/get/{path}` → `source.type` · `source.id` → `POST /v3/webrtcsessions/kick/{id}` 또는 `/v3/rtmpconns/kick/{id}` (`RestClient`, 타임아웃 3초).
+- 채널당 LIVE/DISCONNECTED 방송 최대 1건은 서비스 로직 + `overridePublisher`로 보장(두 번째 연결은 MediaMTX가 기존을 끊고 ready 훅이 다시 와 같은 방송을 이어 간다).
+- 송출 중 수정 `PATCH /api/broadcasts/{id}` `{title?, category?}`: LIVE/DISCONNECTED면 방송과 **채널 방송 정보 둘 다** 갱신, ENDED면 `title`만(category 오면 400).
+
+### 4.7 인증 (`auth`, `common/security`)
+- 가입 `POST /api/auth/signup` `{email, password(8~64), nickname(2~20)}` → 201 `{memberId}`. 채널 자동 생성(§4.3). 중복 409.
+- 로그인 `POST /api/auth/login` `{email, password}` → 200 `{accessToken, member:{id, nickname, channelId}}` + `Set-Cookie: refresh_token=<원문>; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=14d`.
+- 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회, `revoked_at IS NULL AND expires_at > now`면 **회전**(기존 revoke, 새 refresh 발급 · 쿠키 교체) + 새 access. 아니면 401 `TOKEN_INVALID` + 쿠키 삭제.
+- 로그아웃 `POST /api/auth/logout`(쿠키) → revoke + 쿠키 삭제, 200. (access는 만료까지 유효 — 15분)
+- Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
+- Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
+- `/swagger-ui/**`, `/v3/api-docs/**` 공개.
+
+### 4.8 권한 규칙 (서비스 계층에서 명시 검증 → `FORBIDDEN` 403)
+| 자원 · 행위 | 허용 |
+|---|---|
+| 목록 · 상세 · 시청 URL · 공개 다시보기 · 댓글 읽기 · 게시글 읽기 · 채팅 읽기(구독) · 채널 공개 정보 | 누구나 |
+| `GET/PATCH /channels/me`, 키 재발급 | 로그인(자기 채널) |
+| 방송 수정 · 종료 · 삭제 | `broadcast.channel.member_id == me` |
+| 송출(MediaMTX publish) | 스트림 키 일치(§4.9) |
+| 다시보기 공개 설정, 비공개 조회 · 재생 · video-token | `recording.broadcast.channel.member_id == me` |
+| 게시글 작성 · 수정 · 삭제 | `post.channel.member_id == me` |
+| 댓글 작성 | 로그인. 다시보기 댓글은 recording READY/FILE_DELETED(=방송 ENDED)이고 PUBLIC(PRIVATE는 주인만) |
+| 댓글 수정 · 삭제 | `comment.member_id == me`만(채널 주인도 남의 댓글 불가) |
+| 채팅 쓰기, 후원 생성 · 승인 | 로그인 + 방송 LIVE/DISCONNECTED |
+검증 헬퍼: `OwnershipGuard.requireChannelOwner(channel, me)`, `requireAuthor(comment, me)`. 테스트 `OwnerAuthorizationTest`: 다른 회원 토큰으로 수정 · 종료 · 삭제 · 공개 설정 · 게시글 · 댓글 → 403.
+
+### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
+요청(MediaMTX가 보냄): `{ "ip", "user", "password", "path", "protocol", "id", "action", "query" }`.
+- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `password == channel.stream_key`(WHIP Bearer · RTMP `?pass=` 모두 password로 들어온다 — BC-1에서 실제 확인, 안 되면 `query`의 `pass`도 본다) → 200. 아니면 401.
+- `action in (read, playback)`: 200.
+- 그 외(api 등): 404(`authHTTPExclude`로 오지 않음).
+- 이 엔드포인트는 `InternalTokenFilter` 대상이 아니다(MediaMTX가 헤더를 못 붙임) — 대신 docker 내부망에서만 접근(Caddy가 `/api/internal/*`를 외부에 **노출하지 않는다**: Caddyfile에서 `/api/internal/*` → 403).
+
+### 4.10 녹화 → 다시보기 (`recording`)
+- 조각 수집: `POST /internal/mediamtx/segment-complete` `{path, segmentPath}` → 채널의 현재(LIVE/DISCONNECTED/ENDED 직후) 방송의 recording에 `recording_segment` 추가(sequence = count+1). 방송을 못 찾으면 로그만.
+- 병합 `RecordingMergeService.enqueue(recordingId)`(`@Async`, 단일 스레드 풀): status → PROCESSING → 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: `ffprobe`로 duration, 파일 크기, status READY, raw 조각 삭제. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
+- 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
+- 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
+- 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"` → `GET`은 토큰 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
+
+### 4.11 썸네일 캡처 (`thumbnail`)
+`ThumbnailCaptureScheduler` `interval-seconds`마다 LIVE 방송 각각: `ffmpeg -rtsp_transport tcp -i {rtsp-url}/live/<channelId> -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/<broadcastId>.jpg`(타임아웃 10초, 실패는 로그). 성공 시 `broadcast.thumbnail_path = "thumbnails/<broadcastId>.jpg"`(최초 1회만 갱신; 파일은 매번 덮어씀). 응답 `thumbnailUrl = "/uploads/" + path`, null이면 프론트가 기본 이미지.
+
+### 4.12 댓글 · 게시글
+- 댓글은 한 테이블, 대상은 `recording_id` 또는 `post_id` 중 하나. `parent_id`가 있으면 parent의 `parent_id`가 null이어야 한다(아니면 409 `COMMENT_DEPTH_EXCEEDED`), parent와 같은 대상이어야 한다.
+- 삭제는 `deleted_at`(대댓글이 있는 댓글은 "삭제된 댓글입니다"로 남김, 없으면 목록에서 제외).
+- 응답 `CommentResponse { id, parentId, content(삭제면 null), deleted, author:{id, nickname, isChannelOwner}, createdAt, updatedAt }` — 평면 목록(createdAt 오름차순), 트리는 프론트.
+- 게시글: 채널 주인만 작성 · 수정 · 삭제(물리 삭제, 댓글 cascade). 본문 텍스트(최대 5,000자).
+
+### 4.13 후원 (`donation`, Toss 결제위젯 v2 · 테스트 키)
+1. `POST /api/broadcasts/{id}/donations` `{amount(1000~100000, 1000 단위 아님 허용), message(≤100, 선택)}` → 로그인 · 방송 LIVE/DISCONNECTED 검증 → `donation`(PENDING, `order_id = UUID`, channel_id = 방송 채널) → 201 `{donationId, orderId, amount, clientKey, orderName:"후원", customerName:<닉네임>}`.
+2. 프론트 결제위젯 결제 → 성공 콜백 `{paymentKey, orderId, amount}`.
+3. `POST /api/donations/confirm` `{paymentKey, orderId, amount}`(로그인, 본인 후원만):
+   - `SELECT … FOR UPDATE`로 `order_id` 행 잠금(`@Lock(PESSIMISTIC_WRITE)`).
+   - 이미 APPROVED → 200 같은 응답(멱등). FAILED → 409 `DONATION_ALREADY_PROCESSED`.
+   - `amount != donation.amount` → 400 `DONATION_AMOUNT_MISMATCH`, 상태 FAILED.
+   - `TossPaymentsClient.confirm(paymentKey, orderId, amount)`: `POST https://api.tosspayments.com/v1/payments/confirm`, `Authorization: Basic base64(secretKey + ":")`, 타임아웃 5초. 2xx → APPROVED, `payment_key`, `approved_at`; 아니면 FAILED + 502 `PAYMENT_CONFIRM_FAILED`(Toss 메시지 포함).
+   - 승인 후: `BroadcastEventPublisher.donation(...)`(STOMP) + `WidgetEventService.publish(channelId, event)`(SSE) + 채팅 버퍼에 donation 메시지.
+4. 조회: `GET /api/broadcasts/{id}/donations?page=` → `{items:[{id, donor:{nickname}, amount, message, approvedAt}], totalAmount, totalCount, …}`(APPROVED만, 공개). `GET /api/members/me/donations/received` → `{totalAmount, byBroadcast:[{broadcastId, title, startedAt, totalAmount, count}]}`.
+5. 테스트 `DonationConfirmIdempotencyTest`(Testcontainers): 같은 `{paymentKey, orderId, amount}`로 스레드 2개 동시 confirm(Toss 클라이언트는 mock, 1회 성공) → APPROVED 1건, 합계 1회, Toss 호출 1회.
+
+### 4.14 실시간 (STOMP over WebSocket, `chat`)
+- 엔드포인트 `/ws`(네이티브, `setAllowedOriginPatterns("*")` 불필요 — 같은 출처). 브로커 `SimpleBroker("/topic")`, 앱 접두어 `/app`.
+- 인증 `StompAuthInterceptor`(CONNECT): `Authorization: Bearer` 헤더가 있으면 검증해 `Principal` 설정, 없으면 익명 허용. SEND는 Principal 필수(없으면 에러 프레임).
+- 토픽 `/topic/broadcasts/{id}` 메시지(JSON, `type`으로 구분):
+  - `chat` `{type:"chat", id(UUID), member:{id, nickname, isChannelOwner}, content, sentAt}`
+  - `donation` `{type:"donation", id, donor:{nickname}, amount, message, approvedAt}`
+  - `status` `{type:"status", status:"LIVE"|"DISCONNECTED"|"ENDED", at}`
+  - `viewers` `{type:"viewers", count}`
+  - `history` `{type:"history", messages:[chat|donation …]}` — 구독 직후 그 세션에만(`convertAndSendToUser` 대신 `SessionSubscribeEvent`에서 세션 id 헤더로 전송)
+- 전송 `/app/broadcasts/{id}/chat` `{content(1~200)}` → 방송 LIVE/DISCONNECTED 확인 → 버퍼 추가 → 토픽 발행.
+- `ChatBufferService`: 방송별 `ArrayDeque`(최대 50, chat + donation), ENDED 30분 뒤 제거.
+- `ViewerCounter`: `SessionSubscribeEvent`(목적지가 `/topic/broadcasts/{id}`) · `SessionUnsubscribeEvent` · `SessionDisconnectEvent`로 방송별 세션 집합. `viewer-broadcast-interval-seconds`마다 변화가 있으면 `viewers` 발행. `count(broadcastId)`를 `GET /api/broadcasts/{id}`가 사용.
+- 서버 재시작 시 버퍼 · 카운터는 0부터(허용).
+
+### 4.15 공개 연동 SSE (`integration`)
+- `GET /api/public/widget/{widgetKey}/events`(인증 없음, `text/event-stream`): 위젯 키로 채널 조회(없으면 404). 연결 시 `event: ready` `data: {"channelId", "version":1}`. 이후 `event: donation`, `id: <donationId>`, `data: {"version":1,"id","type":"donation","broadcastId","donor":{"nickname"},"amount","message","createdAt"}`. 15초마다 `: ping` 주석.
+- `Last-Event-ID` 헤더가 오면 그 id 이후의 APPROVED 후원(채널 기준, DB 조회, 최대 100건)을 먼저 보낸다.
+- `WidgetEventService`: 채널별 `SseEmitter` 목록, 위젯 키 재발급 시 그 채널 연결 모두 `complete()`.
+
+### 4.16 REST 엔드포인트 요약 (`/api` 접두어)
+| 메서드 · 경로 | 인증 | 요청 → 응답 |
+|---|---|---|
+| `POST /auth/signup` · `/login` · `/refresh` · `/logout` | §4.7 | |
+| `GET /members/me` | 로그인 | `{id, email, nickname, channelId, createdAt}` |
+| `GET /channels/{id}` | 누구나 | `{id, name, description, category, liveBroadcastId(null 가능), recordingCount, postCount, owner:{nickname}}` |
+| `GET /channels/me` | 로그인 | 위 + `{title, streamKey, widgetKey, autoPublishRecording, currentBroadcast:{id,status}, publish:{whipUrl, rtmpUrl, rtmpStreamKey, obsWhipBearer}, widgetUrl}` — `whipUrl = {public-url}/live/{id}/whip`, `rtmpUrl = rtmp://{host}/live`, `rtmpStreamKey = "{id}?user=obs&pass={streamKey}"`, `widgetUrl = {public-url}/widget/{widgetKey}` |
+| `PATCH /channels/me` | 로그인 | `{name?, description?, title?, category?, autoPublishRecording?}` → 채널 |
+| `POST /channels/me/stream-key/rotate` | 로그인 | → `{streamKey}`. 라이브 중이면 `end` 후 재발급 |
+| `POST /channels/me/widget-key/rotate` | 로그인 | → `{widgetKey, widgetUrl}` |
+| `GET /channels/{id}/broadcasts?page=` | 누구나 | ENDED이고 recording READY·PUBLIC인 방송 기록(최신순) |
+| `GET /channels/{id}/posts?page=` · `POST /channels/me/posts` | 누구나 / 주인 | `{title, content}` |
+| `GET /broadcasts?status=LIVE&category=&page=&size=20` | 누구나 | 시청자 수 내림차순 → startedAt. `BroadcastSummary {id, title, category:{code,label}, thumbnailUrl, status, startedAt, viewerCount, channel:{id, name}}` |
+| `GET /broadcasts/{id}` | 누구나 | `BroadcastDetail = Summary + {endedAt, source, viewerCount, recommendedMode:"whep"|"grid", play:{whepUrl:"/live/{channelId}/whep", hlsUrl:"/live/{channelId}/index.m3u8"}, donationTotal, recording:{id, status, visibility}(null 가능), isOwner}` |
+| `GET /broadcasts/{id}/recommendations` | 누구나 | 다른 채널 LIVE: 같은 카테고리 → 시청자 수, 최대 4 / 없으면 최근 공개 다시보기 4 → `{lives:[Summary], recordings:[RecordingSummary]}` |
+| `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end` · `DELETE /broadcasts/{id}` | 주인 | §4.6 |
+| `GET /members/me/broadcasts?page=` | 로그인 | 내 방송 기록(삭제 제외) + recording 상태 · visibility |
+| `GET /recordings?page=&sort=recent` | 누구나 | READY · PUBLIC → `RecordingSummary {id, broadcastId, title, category, thumbnailUrl, durationSeconds, startedAt, channel:{id,name}, commentCount}` |
+| `GET /recordings/{id}` | 누구나/주인 | `{…Summary, status, visibility, videoUrl(READY·PUBLIC일 때), fileDeleted, donationTotal, isOwner}` |
+| `PATCH /recordings/{id}` | 주인 | `{visibility}` |
+| `POST /recordings/{id}/video-token` · `GET /recordings/{id}/video?token=` | 주인 | §4.10 |
+| `GET /recordings/{id}/comments` · `POST …` | 누구나 / 로그인 | §4.12 |
+| `GET /posts/{id}` · `PATCH` · `DELETE` · `GET /posts/{id}/comments` · `POST …` | | §4.12 |
+| `PATCH /comments/{id}` · `DELETE /comments/{id}` | 작성자 | |
+| `POST /broadcasts/{id}/donations` · `POST /donations/confirm` · `GET /broadcasts/{id}/donations` · `GET /members/me/donations/received` | §4.13 | |
+| `GET /public/widget/{widgetKey}/events` | 위젯 키 | §4.15 |
+| `POST /internal/mediamtx/auth` · `/ready` · `/not-ready` · `/segment-complete` | 내부 | §4.6 · §4.9 · §4.10 |
+springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
+
+### 4.17 테스트 기준
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러, 댓글 check 제약.
+- 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
+
+## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
+없을 때만 생성: 회원 `demo-streamer@example.com` / `demo-viewer@example.com`(비밀번호는 `.env.example`의 `APP_SEED_PASSWORD`, README에 기재), 채널(방송인 채널 name "데모 방송인", title "데모 방송", GAME), ENDED 방송 1(어제) + recording READY · PUBLIC(`infra/seed/sample.mp4`를 `vod/seed-sample.mp4`로 복사, duration은 ffprobe), 게시글 1("첫 공지"), 댓글 1. 시연 `.env`: `APP_GRID_THRESHOLD=2`, `APP_RECORDING_RETENTION_DAYS=365`.
+
+## 6. 프론트엔드 구조
+
+### 6.1 스택 · 의존성 (`frontend/package.json`)
+`react@19`, `react-dom`, `react-router-dom@7`, `@tanstack/react-query@5`, `zustand@5`, `tailwindcss@4`(+ `@tailwindcss/vite`), `@stomp/stompjs@7`, `hls.js@1.6`, `p2p-media-loader-hlsjs@2`, `p2p-media-loader-core@2`, `@tosspayments/tosspayments-sdk@2`, dev: `typescript`, `vite@7`, `vitest`, `@testing-library/react`, `eslint`. UI 컴포넌트 라이브러리 없음, 아이콘은 `lucide-react`.
+
+### 6.2 디렉터리
+```
+frontend/src/
+├─ main.tsx · App.tsx(라우터 · QueryClient · 부트스트랩 refresh)
+├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · types.ts(응답 타입 = §4.16)
+├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear) · player.ts(mode · stats)
+├─ media/      mixer.ts · whip.ts · whep.ts · gridPlayer.ts · devices.ts(기기 감지)
+├─ ws/         stomp.ts(연결 · 구독 · 전송, 토큰 헤더)
+├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · common/(Button · Input · Modal · Spinner · Thumbnail)
+├─ pages/      Home · Live · StudioEntry · StudioPc · StudioMobile · StudioSettings · Video · Login · Signup · Me · Channel · Post · Widget
+└─ styles/     index.css(Tailwind)
+```
+
+### 6.3 라우트 ↔ 화면
+| 경로 | 페이지 | 보호 | 핵심 데이터 |
+|---|---|---|---|
+| `/` | Home(S1) | — | `GET /broadcasts?status=LIVE`, `GET /recordings`, 카테고리 필터(enum 5) |
+| `/live/:channelId` | Live(S2) | — | `GET /channels/{id}` → `liveBroadcastId` → `GET /broadcasts/{id}`(5초 refetch), STOMP 구독, Player, ChatPanel, DonateDialog, 종료 화면(추천) |
+| `/studio` | StudioEntry | 로그인 | `devices.ts`로 `/studio/pc` 또는 `/studio/mobile`로 replace. `?force=pc|mobile` 우선 |
+| `/studio/pc` | StudioPc(S3) | 로그인 | `GET/PATCH /channels/me`, mixer + whip, 상태, ChatPanel(읽기 + 쓰기), 후원 알림, "모바일 화면으로" |
+| `/studio/mobile` | StudioMobile(S4) | 로그인 | 카메라 미리보기(전/후면), 마이크, 방송 정보, 큰 시작/종료, "PC 화면으로" |
+| `/studio/settings` | StudioSettings(S5) | 로그인 | 채널 이름 · 소개, 스트림 키(복사 · 재발급 확인), OBS 안내(WHIP/RTMP 문자열 복사), 위젯 URL(복사 · 재발급), 자동 공개 토글 |
+| `/videos/:recordingId` | Video(S6) | — | `GET /recordings/{id}`, `<video>`, 댓글, 공개 설정(주인), 보관 만료 안내 |
+| `/login` · `/signup` | Login · Signup(S7) | — | `?next=` 복귀 |
+| `/me` | Me(S8) | 로그인 | `GET /members/me/broadcasts`(제목 수정 · 삭제 · 공개 설정), `GET /members/me/donations/received`, 로그아웃 |
+| `/channel/:channelId` | Channel(S9) | — | 탭 홈(라이브면 Live로 링크 · 소개) · 다시보기(`/channels/{id}/broadcasts`) · 커뮤니티(`/channels/{id}/posts`, 주인이면 글쓰기) |
+| `/posts/:postId` | Post(S10) | — | 게시글 · 댓글 |
+| `/widget/:widgetKey` | Widget(S11) | — | 레이아웃 없음 · 투명 배경, SSE 구독, 알림 카드 + `speechSynthesis` |
+
+### 6.4 인증 처리 (`api/client.ts`, `store/auth.ts`)
+- 앱 시작: `POST /auth/refresh`(쿠키 자동) → 성공 시 `setAuth`, 실패는 조용히 비로그인.
+- `apiFetch(path, init)`: `Authorization` 헤더 자동, 응답 401(`TOKEN_EXPIRED`/`UNAUTHENTICATED`)이면 refresh 1회 후 재시도, 또 401이면 `clear()`.
+- `Protected` 래퍼: 비로그인 → `/login?next=<현재>`.
+- 로그아웃: `POST /auth/logout` → `clear()` → `/`.
+
+### 6.5 미디어 모듈
+`media/devices.ts`
+- `isMobileDevice() = typeof navigator.mediaDevices?.getDisplayMedia !== 'function' || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)`.
+
+`media/mixer.ts` — `createPcStream({ screen: true, mic: deviceId | null })`
+1. `display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true })` — 사용자가 탭/화면을 고르고 "탭 소리 공유" 체크 가능. `display.getAudioTracks().length === 0`이면 `warnings.push('NO_SYSTEM_AUDIO')`.
+2. `mic = await getUserMedia({ audio: { deviceId, echoCancellation: true, noiseSuppression: true } })`(선택 해제 가능).
+3. `AudioContext` → 각 오디오 트랙을 `createMediaStreamSource` → `GainNode`(마이크 · 시스템 각각 볼륨) → `MediaStreamAudioDestinationNode` → 오디오 트랙 1개.
+4. 반환 `{ stream: MediaStream(비디오 1 + 오디오 1), warnings, setMicGain, setSystemGain, stop() }`. `display` 비디오 트랙 `ended`(사용자가 공유 중지)면 `onEnded` 콜백 → 스튜디오가 송출 종료.
+- 모바일 `createMobileStream({ facing: 'user'|'environment' })` = `getUserMedia({ video: { facingMode, width: 1280, height: 720 }, audio: true })`. 전환은 트랙 교체(`RTCRtpSender.replaceTrack`).
+
+`media/whip.ts` — `class WhipClient { constructor(url, bearer) ; publish(stream) ; close() ; onState(cb) }`
+- `RTCPeerConnection({ iceServers: [] })`(같은 서버로 직접, TURN 없음), `addTransceiver(track, { direction: 'sendonly' })`, 비디오 인코딩 `maxBitrate 3_000_000`.
+- `createOffer` → `setLocalDescription` → ICE gathering 완료 대기(최대 2초) → `POST url` (`Content-Type: application/sdp`, `Authorization: Bearer <streamKey>`) → 201 + `Location` 저장 → `setRemoteDescription(answer)`.
+- `close()`: `DELETE Location` → `pc.close()`. `oniceconnectionstatechange`: `failed`/`disconnected` → `onState('reconnecting')` → 3초 간격 재시도 최대 20회(유예 60초 안) → 성공 시 `'live'`.
+- 송출 URL은 `channels/me.publish.whipUrl + '?src=pc'`(모바일은 `?src=mobile`).
+
+`media/whep.ts` — `class WhepPlayer { attach(video, url) ; close() ; onState(cb) }`: `addTransceiver('video', recvonly)` · `('audio', recvonly)`, offer → `POST url`(헤더 없음) → answer, `ontrack`으로 `video.srcObject`. 끊기면 `'waiting'`; `status: LIVE` 이벤트가 오면 재연결.
+
+`media/gridPlayer.ts` — `createGridPlayer(video, hlsUrl, { trackerUrl, onStats })`: `HlsJsP2PEngine`(p2p-media-loader) + `Hls({ lowLatencyMode: true, liveSyncDuration: 1.5 })`, `announceTrackers: [wss://<host>/tracker]`, swarm id = hlsUrl. 통계: `onChunkDownloaded(bytes, source: 'http'|'p2p')`, `onChunkUploaded(bytes)` → 누적 → `onStats({ httpBytes, p2pDownBytes, p2pUpBytes, peers })`. **GRID-1 PoC에서 API 이름을 실제 라이브러리 버전으로 맞춘다.**
+
+`components/player/Player.tsx` — props `{ broadcast, initialMode }`. 상태 `mode: 'whep'|'grid'`(초기값 `recommendedMode`), `ModeToggle`로 전환(이전 플레이어 `close()` 후 생성), `PlayerStats`는 grid일 때 "서버 n MB · 피어 m MB · 절감 k% · 피어 p명". `status` 이벤트: `DISCONNECTED` → 오버레이 "방송인 연결이 끊겼습니다. 재연결을 기다리는 중…", `ENDED` → 종료 화면(`EndedView`: 안내 · 다시보기 버튼(recording READY면 활성, 아니면 "준비 중") · `RecommendList`).
+
+### 6.6 STOMP 클라이언트 (`ws/stomp.ts`)
+`connect(token?)` → `Client({ brokerURL: wss://<host>/ws, connectHeaders: token ? { Authorization: 'Bearer ' + token } : {} , reconnectDelay: 3000 })`. `subscribeBroadcast(id, handler)` → `/topic/broadcasts/{id}`; `sendChat(id, content)` → `/app/broadcasts/{id}/chat`. `history` 메시지는 목록 초기화에 사용. 로그인 상태가 바뀌면 재연결.
+
+### 6.7 화면별 요소 (PLAN-1 최종 화면 목록 기준)
+- **S1 Home**: 카테고리 칩(전체 + 5), `LiveCard` 그리드(썸네일 · LIVE 배지 · 시청자 수 · 제목 · 채널명), 아래 "다시보기" 탭(`RecordingCard`). 30초 refetch.
+- **S2 Live**: 상단 Player(16:9, 모바일은 세로 비율 자동), 제목 · 채널 링크 · 시청자 수 · 카테고리, 우측(모바일은 하단) ChatPanel(비로그인은 입력창 대신 "로그인하고 채팅하기"), 후원 버튼 → `DonateDialog`(금액 1,000/5,000/10,000 + 직접 입력, 메시지 100자) → Toss 결제위젯 → confirm. 후원 발생 시 `DonationBanner`(플레이어 위 5초) + 채팅 강조.
+- **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
+- **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
+- **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**, **S10 Post**: §6.3.
+- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`; `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생.
+
+## 7. 인프라 세부 (OPS-3 · OPS-5)
+- `backend/Dockerfile`: 현재 Dockerfile 유지 + 런타임 스테이지에 `RUN apk add --no-cache ffmpeg`.
+- `infra/tracker/Dockerfile`: `node:22-alpine`, `npm i -g wt-tracker`, `CMD wt-tracker --port 8000`(설정 파일로 `websocket.path: /tracker`).
+- MySQL: `livestream` DB, 볼륨 `mysql_data`. `ddl-auto: update`.
+- Caddy: 도메인(`PUBLIC_HOST`)으로 자동 HTTPS. 로컬은 `localhost`(내부 CA).
+- 포트 개방(운영): 80, 443/tcp, 1935/tcp(RTMP), 8189/udp(WebRTC).
+
+## 8. 미확인 위험 · PoC (구현 항목에서 먼저 확인)
+| 위험 | 어디서 | 안 되면 |
+|---|---|---|
+| LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 | GRID-1 | `hlsVariant: mpegts`/일반 fMP4 HLS(3~6초)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
+| iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
+| MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지 | BC-1 | `?pass=<key>` 쿼리로 전달하고 콜백에서 `query` 파싱 |
+| OBS 브라우저 소스에서 `speechSynthesis` 동작 | WID-1 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
+| 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
+
+## 9. 항목별 구현 지침 (로드맵 ID)
+
+각 항목의 "읽을 절"과 "완료 기준". 의존성 추가는 여기 적힌 것만.
+
+### OPS-2 모노레포 구조
+- 읽을 절: §3. 루트의 Gradle 프로젝트 전부(`build.gradle`, `settings.gradle`, `gradle/`, `gradlew*`, `src/`, `Dockerfile`, `.dockerignore`)를 `backend/`로 `git mv`. `frontend/`는 `npm create vite@latest frontend -- --template react-ts` + §6.1 의존성 + Tailwind 설정 + 빈 라우터. `infra/` 빈 디렉터리 + README 한 줄. 루트 `.gitignore` 갱신(`frontend/node_modules`, `frontend/dist`, `.env`).
+- 완료: `cd backend && ./gradlew test` 통과, `cd frontend && npm run build` 성공. 커밋 2개(이동 / 프론트 생성).
+
+### OPS-3 로컬 실행 환경
+- 읽을 절: §2.1~2.4, §7. `infra/compose.yaml`, `compose.dev.yaml`, `Caddyfile`, `mediamtx.yml`, `tracker/`, `.env.example`. `application.yaml`에 §4.1 `app.*` 전부(기본값) + `AppProperties`(`@ConfigurationProperties("app")`).
+- 완료: `docker compose -f infra/compose.dev.yaml up`로 MySQL · MediaMTX · Caddy · tracker가 뜨고, IDE에서 backend 실행 후 `https://localhost/api/...`가 프록시되며, OBS로 `rtmp://localhost/live` + `1?user=obs&pass=x`가 MediaMTX에 닿는다(인증 콜백은 BC-1 전이라 `authMethod: internal`로 잠시 두고 주석으로 표시).
+
+### AUTH-1 회원가입 · 로그인 · 갱신 · 로그아웃
+- 읽을 절: §4.2 common/auth/member, §4.3 member · refresh_token · channel(자동 생성만, 나머지 채널 로직은 CH-1), §4.4, §4.7, §4.8의 공개 경로. `channel` 엔티티는 여기서 만든다(CH-1이 확장).
+- 완료: 가입 → 로그인 → `/members/me` → refresh 회전 → 로그아웃 후 refresh 401 통합 테스트. 중복 409 테스트.
+
+### FE-1 프론트 기반
+- 읽을 절: §6.1~6.4, S7. `App.tsx` 라우터(모든 경로를 placeholder 페이지로), `api/client.ts`, `store/auth.ts`, `Header`(로그인 상태 · 방송하기 버튼 → `/studio`), `Protected`, Login · Signup 페이지.
+- 완료: 가입 · 로그인 · 새로고침 후 로그인 유지(refresh) · 로그아웃이 브라우저에서 동작. vitest로 `client.ts` 401 갱신 1회 테스트.
+
+### GRID-1 그리드 PoC
+- 읽을 절: §2.3 HLS 설정, §6.5 gridPlayer, §8. `frontend/poc/grid.html`(독립 페이지)로 OBS → MediaMTX LL-HLS를 hls.js + p2p-media-loader로 브라우저 3개에서 재생, 피어 간 바이트 교환이 통계에 잡히는지, 지연(초)을 측정. iOS Safari에서 소리 확인.
+- 완료: 카드에 측정 결과(지연 · 피어 교환 여부 · 사용한 라이브러리 API 이름)와 §8의 대응 결정을 적는다. 설계자에게 결과 보고. 코드는 `frontend/poc/`에 남긴다.
+
+### CH-1 채널 · 방송 정보 · 스트림 키 API
+- 읽을 절: §4.3 channel, §4.16 `/channels/*`(broadcasts · posts 목록 제외). 키 생성은 `SecureRandom` 32 hex. `publish` 안내 문자열은 `app.public-url`로.
+- 완료: `GET/PATCH /channels/me`, 재발급 2개, `GET /channels/{id}`(liveBroadcastId는 BC-1 전까지 null) 통합 테스트 + 다른 회원 403.
+
+### BC-1 방송 상태 전이 · MediaMTX 연동
+- 읽을 절: §4.6, §4.9, §4.3 broadcast · recording(생성만), §2.3, §8 Bearer 위험. `MediaMtxClient`(`RestClient`), 훅 컨트롤러, `InternalTokenFilter`, `DisconnectGraceScheduler`, `BroadcastEventPublisher`(CHAT-1 전에는 인터페이스 + 로그 구현).
+- 완료: 통합 테스트 — ready → LIVE 생성, not-ready → DISCONNECTED, 유예 안 ready → 같은 방송 LIVE, 유예 경과 → ENDED, end API → kick 호출(mock) · 다른 회원 403, 인증 콜백 publish 키 일치/불일치. 실제 OBS · 브라우저 WHIP로 수동 확인(Bearer 전달 여부 카드에 기록). `mediamtx.yml`을 `authMethod: http`로 전환.
+
+### BC-2 방송 목록 · 상세 · 수정 · 삭제 · 추천 API
+- 읽을 절: §4.6 수정 · 삭제, §4.16 `/broadcasts*`, `/members/me/broadcasts`, `/channels/{id}/broadcasts`, `RecommendationService`. `viewerCount`는 `ViewerCounter` 인터페이스(CHAT-1 전에는 0) · `recommendedMode = count >= threshold ? grid : whep`.
+- 완료: 목록 정렬 · 카테고리 필터 · 상세 · 추천 규칙 · PATCH(LIVE면 채널도 갱신, ENDED면 title만) · DELETE(soft, 파일 삭제 호출 mock) 테스트 + 403.
+
+### BC-3 라이브 썸네일 자동 캡처
+- 읽을 절: §4.11, `FfmpegRunner`(프로세스 실행 · 타임아웃 공용, REC-1과 공유 — 먼저 끝나는 쪽이 만든다).
+- 완료: LIVE 방송에 30초 안에 `thumbnails/<id>.jpg` 생성, 응답 `thumbnailUrl` 반영(수동 확인). 단위 테스트는 `FfmpegRunner` mock으로 경로 갱신 로직.
+
+### FE-2 PC 송출 스튜디오
+- 읽을 절: §6.5 mixer · whip, §6.7 S3, §4.16 `/channels/me`. Chrome 기준. 송출 시작 흐름: `PATCH /channels/me`(방송 정보) → `createPcStream` → `WhipClient.publish` → `GET /channels/me` 폴링(3초)으로 `currentBroadcast` 확인 → 라이브 표시. 종료: `POST /broadcasts/{id}/end` → `whip.close()` → `stream.stop()`.
+- 완료: Chrome에서 화면 + 탭 소리 + 마이크 송출이 MediaMTX에 붙고(OBS 없이), 다른 브라우저 WHEP(간단 테스트 페이지 또는 FE-4)로 소리 · 화면 확인. 공유 중지 시 자동 종료.
+
+### FE-3 모바일 송출 · 기기 감지 · 채널 설정
+- 읽을 절: §6.5 devices · 모바일 스트림, §6.7 S4 · S5, §6.3. iOS Safari · Android Chrome 모두 확인(HTTPS 필수 → `compose.dev` Caddy 내부 CA를 폰에 신뢰시키거나 OPS-5 뒤 운영 도메인).
+- 완료: 휴대폰에서 `/studio` → 모바일 화면 자동 → 카메라 송출 → PC에서 시청. 전/후면 전환. S5에서 키 복사 · 재발급 · OBS 문자열 · 자동 공개 토글.
+
+### FE-4 홈 · 시청 화면 기본 모드
+- 읽을 절: §6.5 whep · Player(grid 제외), §6.7 S1 · S2(채팅 · 후원 제외), §4.16. 종료 · 유예 오버레이는 `GET /broadcasts/{id}` 5초 폴링으로(STOMP는 FE-5에서 교체).
+- 완료: 홈 목록 · 필터, 카드 → 시청 → WHEP 자동 재생, 방송 종료 시 종료 화면 + 추천, 다시보기 버튼(REC-2 전엔 비활성).
+
+### GRID-2 그리드 모드 플레이어 · 자동 전환
+- 읽을 절: §6.5 gridPlayer · Player, §2.1 tracker, GRID-1 카드 결과. `ModeToggle`, `PlayerStats`, 초기 모드 = `recommendedMode`.
+- 완료: 기기 3대에서 그리드 모드 통계에 피어 바이트가 올라가고, `APP_GRID_THRESHOLD=2`일 때 세 번째 시청자가 그리드로 시작. 토글로 양방향 전환.
+
+### CHAT-1 STOMP 채팅 · 이벤트 · 시청자 수
+- 읽을 절: §4.14, §4.6 이벤트 발행 지점. 의존성 `spring-boot-starter-websocket`. `BroadcastEventPublisher` 실구현, `ViewerCounter` 실구현(BC-2 연결).
+- 완료: 통합 테스트(STOMP 클라이언트): 익명 구독 · history 수신, 로그인 전송 · 브로드캐스트, 익명 전송 거부, 구독 수 카운트. 버퍼 50 초과 시 오래된 것 제거.
+
+### FE-5 채팅 UI
+- 읽을 절: §6.6, §6.7 S2 · S3 ChatPanel. FE-4의 폴링을 STOMP `status` · `viewers`로 교체(폴링은 30초 백업).
+- 완료: 두 브라우저 간 실시간 채팅, 입장 시 최근 메시지, 비로그인 입력 차단, 방송인 배지.
+
+### DON-1 후원 API
+- 읽을 절: §4.13, §4.3 donation. `TossPaymentsClient` 인터페이스 + `RestClient` 구현. 테스트 `DonationConfirmIdempotencyTest`.
+- 완료: 생성 → confirm(mock 성공) → APPROVED · 이벤트 발행 · 목록 · 합계, 금액 불일치 400, 동시 2요청 멱등, 비라이브 409.
+
+### FE-6 후원 UI
+- 읽을 절: §6.7 S2 DonateDialog · DonationBanner, S8 받은 후원, §4.13 1~3. Toss 결제위젯 v2 SDK(테스트 클라이언트 키), 결제 성공 URL은 `/live/:channelId?payment=success&paymentKey=&orderId=&amount=`로 돌아와 confirm 호출.
+- 완료: 테스트 카드로 결제 → 채팅 강조 + 배너 + 스튜디오 알림, 마이페이지 방송별 합계.
+
+### WID-1 위젯 키 SSE · 알림 위젯
+- 읽을 절: §4.15, §6.7 S11, §8 TTS 위험. README 연동 문서 초안(이벤트 형식 · curl 예시)은 `docs/`가 아니라 README 절로(DOC-2가 합침) — 이 항목에서는 카드에 적어 둔다.
+- 완료: curl로 SSE 수신, 후원 시 위젯에 카드 + TTS(일반 Chrome), OBS 브라우저 소스 TTS 동작 여부 카드에 기록, `Last-Event-ID` 복구.
+
+### REC-1 녹화 세그먼트 수집 · 병합 · 정리
+- 읽을 절: §4.10, §4.3 recording · recording_segment, `FfmpegRunner`, §2.3 record 설정.
+- 완료: 실제 송출 → 종료 → `vod/<uuid>.mp4` 생성 · READY(수동), 재연결로 조각 2개일 때 병합(수동), 단위 테스트(mock ffmpeg: 조각 0 → FAILED, 성공 → READY), 보관 스케줄러 테스트(시계 주입).
+
+### REC-2 다시보기 API
+- 읽을 절: §4.16 `/recordings*`, `/channels/{id}/broadcasts`, §4.10 서빙 · 토큰, §4.8.
+- 완료: 공개 목록 · 상세 · 비공개 주인만 · video-token → Range 응답(206) 테스트, 공개 설정 변경 403.
+
+### CMT-1 댓글 API
+- 읽을 절: §4.12, §4.3 comment, §4.8. 다시보기 · 게시글 두 엔드포인트 묶음이 같은 서비스.
+- 완료: 작성 · 대댓글 · 깊이 초과 409 · 다른 대상 parent 400 · 수정 · 삭제(작성자만, 대댓글 있으면 표시 유지) · 라이브 중 다시보기 댓글 409 · 비공개 다시보기 댓글 403 테스트.
+
+### POST-1 커뮤니티 게시글 API
+- 읽을 절: §4.12 게시글, §4.16 `/posts*`, `/channels/{id}/posts`.
+- 완료: 주인만 작성 · 수정 · 삭제(403 테스트), 목록 최신순, 삭제 시 댓글 cascade.
+
+### FE-7 다시보기 · 마이페이지 · 채널 페이지
+- 읽을 절: §6.3 · §6.7 S6 · S8 · S9(커뮤니티 탭은 FE-8). 비공개 재생은 video-token 흐름.
+- 완료: 종료된 방송 → 다시보기 재생(공개 · 비공개 주인), 마이페이지 제목 수정 · 삭제 · 공개 설정 · 받은 후원, 채널 페이지 홈 · 다시보기 탭.
+
+### FE-8 댓글 · 커뮤니티 UI
+- 읽을 절: §6.7 S6 댓글 · S9 커뮤니티 탭 · S10. `CommentList`는 평면 목록을 parentId로 2단 트리로.
+- 완료: 다시보기 댓글 · 대댓글 · 수정 · 삭제(작성자만 버튼), 게시글 작성(주인) · 댓글.
+
+### OPS-4 시드 데이터 · 시연 설정
+- 읽을 절: §5. `infra/seed/sample.mp4`(10초, 저작권 없는 직접 녹화).
+- 완료: `APP_SEED_ENABLED=true`로 기동하면 계정 · 다시보기 · 게시글이 보이고, 두 번 기동해도 중복 없음(테스트).
+
+### OPS-5 배포
+- 읽을 절: §2, §7, ARCH-1 카드 "맥미니 대체 조사"(호스트는 사용자 결정 대기). 운영 `compose.yaml`로 전체 기동, 도메인 HTTPS, 포트 개방, `webrtcAdditionalHosts`.
+- 완료: 외부 기기(LTE)에서 가입 · 송출 · 시청 · 채팅이 동작. 서버 재시작 후 데이터 유지 확인.
+
+### DOC-2 README
+- 읽을 절: PLAN-1 카드 "확정 사항 14"(시연 12단계) · §1 체크 대응 · §4.15 연동 문서. 절: 서비스 URL · 테스트 계정 · 로컬 실행 · 운영 배포 · 기능 확인 절차(12단계, 각 단계에 체크 항목 표기) · 소유자 검증 · 멱등 테스트 이름 · 공개 연동 문서 · 아키텍처 요약(이 문서 링크).
+- 완료: 처음 보는 사람이 README만으로 로컬 실행 · 시연 순서를 따라갈 수 있다(설계자가 검토).
+
+### OPS-6 최종 리허설
+- 완료: 시연 12단계를 운영 URL에서 끝까지 수행, 발견한 문제는 이슈 파일에, 막는 것은 즉시 수정.
