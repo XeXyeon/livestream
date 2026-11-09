@@ -79,7 +79,7 @@ npx vitest run   # 아직 test 스크립트가 없다. FE-1에서 "test": "vites
 - **방송 상태:** `LIVE → DISCONNECTED →(60초) ENDED`. DISCONNECTED에서는 "재연결 대기" 오버레이를, ENDED에서는 종료 화면(다시보기 버튼 + 추천)을 보여 준다.
 - **송출 URL:**
   - 송출: `channels/me.publish.whipUrl + '?src=pc'`(모바일은 `?src=mobile`), `Authorization: Bearer <streamKey>`
-  - 종료: `POST /api/broadcasts/{id}/end` → `whip.close()` → `stream.stop()`
+  - 종료 순서: **`whip.close()` → `stream.stop()` → `POST /api/broadcasts/{id}/end`** (송출을 먼저 끊어 자동 재시도가 돌지 않게 한 뒤 서버에 알린다. 서버는 종료 뒤 30초 동안 같은 채널의 송출을 거절한다 — §4.6 · §6.5 · §9 FE-2)
 - **에러 응답:** `{ code, message }`. 화면 문구는 `message`를 쓰고, 분기는 `code`로 한다.
 
 ## 7. 커밋
