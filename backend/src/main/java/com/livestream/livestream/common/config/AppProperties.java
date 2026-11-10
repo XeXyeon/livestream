@@ -57,6 +57,12 @@ public record AppProperties(
 
 	/** 토스페이먼츠 테스트 키 */
 	public record Toss(String clientKey, String secretKey) {
+
+		/** 설정 덤프 · 로그에 시크릿 키가 찍히지 않게 가린다. */
+		@Override
+		public String toString() {
+			return "Toss[clientKey=" + clientKey + ", secretKey=" + (secretKey == null || secretKey.isBlank() ? "(없음)" : "****") + "]";
+		}
 	}
 
 	/**
