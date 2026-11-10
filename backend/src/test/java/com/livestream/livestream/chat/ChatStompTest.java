@@ -53,6 +53,7 @@ class ChatStompTest {
 	@Autowired BroadcastLifecycleService lifecycle;
 	@Autowired BroadcastRepository broadcastRepository;
 	@Autowired SessionViewerCounter viewerCounter;
+	@Autowired BroadcastEventPublisher eventPublisher;
 	@MockitoBean MediaMtxClient mediaMtxClient;
 
 	private final WebSocketStompClient client = newClient();
@@ -213,6 +214,30 @@ class ChatStompTest {
 		// 상세 API 도 같은 값을 쓴다
 		mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/broadcasts/" + broadcastId))
 				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.viewerCount").value(1));
+	}
+
+	@Test
+	void 승인된_후원은_토픽으로_가고_history_에도_남는다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		long broadcastId = startBroadcast(streamer);
+		StompSession a = connect(null);
+		BlockingQueue<Map<String, Object>> q = subscribe(a, topic(broadcastId));
+		poll(q);
+		settle();
+
+		eventPublisher.donation(broadcastId, com.livestream.livestream.chat.dto.DonationMessage.of(
+				7L, "후원자", 5000, "응원", Instant.parse("2026-11-10T07:00:00Z")));
+		Map<String, Object> donation = pollType(q, "donation");
+		assertThat(((Number) donation.get("id")).longValue()).isEqualTo(7L);
+		assertThat(donation.get("amount")).isEqualTo(5000);
+		assertThat(donation.get("approvedAt")).isEqualTo("2026-11-10T07:00:00Z");
+		@SuppressWarnings("unchecked") Map<String, Object> donor = (Map<String, Object>) donation.get("donor");
+		assertThat(donor.get("nickname")).isEqualTo("후원자");
+
+		StompSession b = connect(null);
+		@SuppressWarnings("unchecked") List<Map<String, Object>> history =
+				(List<Map<String, Object>>) poll(subscribe(b, topic(broadcastId))).get("messages");
+		assertThat(history).extracting(m -> m.get("type")).containsExactly("donation");
 	}
 
 	// ---------- 도우미 ----------

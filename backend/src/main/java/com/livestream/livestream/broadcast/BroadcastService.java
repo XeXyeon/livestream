@@ -20,6 +20,7 @@ import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
 import com.livestream.livestream.common.tx.AfterCommit;
+import com.livestream.livestream.donation.DonationRepository;
 import com.livestream.livestream.recording.Recording;
 import com.livestream.livestream.recording.RecordingRepository;
 import com.livestream.livestream.recording.RecordingService;
@@ -64,6 +65,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	private final BroadcastLifecycleService lifecycle;
 	private final RecommendationService recommendationService;
 	private final ViewerCounter viewerCounter;
+	private final DonationRepository donationRepository;
 	private final AppProperties props;
 
 	// ---------- 조회 ----------
@@ -200,13 +202,12 @@ public class BroadcastService implements LiveBroadcastLookup {
 		Long channelId = b.getChannel().getId();
 		Recording recording = recordingRepository.findByBroadcastId(b.getId()).orElse(null);
 		boolean isOwner = me != null && b.getChannel().getMember().getId().equals(me.id());
-		// TODO(DON-1): donationTotal = 승인된 후원 합계
 		return new BroadcastDetail(b.getId(), b.getTitle(), CategoryResponse.of(b.getCategory()),
 				BroadcastSummary.thumbnailUrl(b.getThumbnailPath()), b.getStatus().name(), b.getStartedAt(), viewers,
 				new BroadcastSummary.ChannelRef(channelId, b.getChannel().getName()), b.getEndedAt(),
 				b.getSource().name(), viewers >= props.grid().threshold() ? "grid" : "whep",
 				new BroadcastDetail.Play("/live/" + channelId + "/whep", "/live/" + channelId + "/index.m3u8"),
-				0, RecordingRef.of(recording), isOwner);
+				donationRepository.sumApprovedByBroadcast(b.getId()), RecordingRef.of(recording), isOwner);
 	}
 
 	private Map<Long, Recording> recordingsOf(List<Broadcast> broadcasts) {

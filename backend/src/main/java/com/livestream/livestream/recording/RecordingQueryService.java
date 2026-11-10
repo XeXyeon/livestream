@@ -5,6 +5,7 @@ import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
+import com.livestream.livestream.donation.DonationRepository;
 import com.livestream.livestream.recording.dto.RecordingDetail;
 import com.livestream.livestream.recording.dto.RecordingSummary;
 import com.livestream.livestream.recording.dto.VideoTokenResponse;
@@ -27,6 +28,7 @@ public class RecordingQueryService {
 	private final RecordingRepository recordingRepository;
 	private final VideoTokenService videoTokenService;
 	private final RecordingFiles files;
+	private final DonationRepository donationRepository;
 
 	/** GET /recordings?sort=recent — 공개(READY · PUBLIC) 다시보기, 방송 시작 최신순. 정렬은 recent 하나뿐이다. */
 	@Transactional(readOnly = true)
@@ -105,8 +107,8 @@ public class RecordingQueryService {
 		}
 	}
 
-	private static RecordingDetail toDetail(Recording r, boolean owner) {
-		// TODO(CMT-1): commentCount, TODO(DON-1): donationTotal
-		return RecordingDetail.of(r, 0, 0, owner);
+	private RecordingDetail toDetail(Recording r, boolean owner) {
+		// TODO(CMT-1): commentCount
+		return RecordingDetail.of(r, 0, donationRepository.sumApprovedByBroadcast(r.getBroadcast().getId()), owner);
 	}
 }

@@ -1,6 +1,7 @@
 package com.livestream.livestream.chat;
 
 import com.livestream.livestream.broadcast.BroadcastStatus;
+import com.livestream.livestream.chat.dto.DonationMessage;
 import java.time.Instant;
 
 /**
@@ -11,4 +12,7 @@ public interface BroadcastEventPublisher {
 
 	/** {@code {type:"status", status, at}} */
 	void status(Long broadcastId, BroadcastStatus status, Instant at);
+
+	/** 승인된 후원: 채팅 버퍼(history)에 넣고 {@code {type:"donation", …}} 를 보낸다. */
+	void donation(Long broadcastId, DonationMessage message);
 }
