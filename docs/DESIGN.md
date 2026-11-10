@@ -65,7 +65,7 @@
 | `/api/*` | `backend:8080` | `flush_interval -1`(SSE) |
 | `/ws` | `backend:8080` | WebSocket 업그레이드 |
 | `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`) | 경로 끝으로 분기 |
-| `/vod/*` | 정적 `/srv/media/vod` | mp4, Range |
+| `/vod/*` | 정적 `/srv/media/vod` | mp4, Range. **공개 영상만** 이 폴더에 있다. 비공개 영상은 `/srv/media/private`에 있어 Caddy가 내주지 않는다(§4.10) |
 | `/uploads/*` | 정적 `/srv/uploads` | 썸네일 |
 | `/tracker` | `tracker:8000` | WebSocket |
 | `/*` | 정적 `/srv/frontend` + `try_files {path} /index.html` | SPA |
@@ -148,7 +148,7 @@ livestream/
 | `app.broadcast.viewer-broadcast-interval-seconds` | 5 | 시청자 수 이벤트 주기 |
 | `app.thumbnail.interval-seconds` | 30 | 라이브 썸네일 캡처 주기 |
 | `app.recording.retention-days` | 30 | 영상 파일 보관 |
-| `app.recording.dir` | `/recordings` | MediaMTX와 공유 볼륨(`raw/`, `vod/`) |
+| `app.recording.dir` | `/recordings` | MediaMTX와 공유 볼륨(`raw/` 조각, `vod/` 공개 영상 — Caddy 정적, `private/` 비공개 영상 — Spring만 읽음). 세 폴더가 같은 볼륨이라 이동은 rename 한 번이다 |
 | `app.uploads.dir` | `/uploads` | 썸네일(`thumbnails/`) |
 | `app.mediamtx.api-url` / `app.mediamtx.rtsp-url` / `app.mediamtx.internal-token` | — / `rtsp://mediamtx:8554` / — | |
 | `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
@@ -190,7 +190,7 @@ seed/        SeedRunner
 | `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | **unique(token_hash)**(AUTH-1에서 index → unique로 바꿈: 해시 조회 시 gap lock 데드락 방지). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
 | `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
 | `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
-| `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `vod/<uuid>.mp4` 상대 경로 |
+| `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `app.recording.dir` 기준 상대 경로로 **지금 파일이 있는 곳**을 가리킨다: PUBLIC이면 `vod/<uuid>.mp4`, PRIVATE면 `private/<uuid>.mp4`(§4.10) |
 | `recording_segment` | `recording_id FK`, `file_path VARCHAR(255)`, `sequence INT` | 조각 도착 순서 |
 | `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
 | `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | check((recording_id IS NULL) <> (post_id IS NULL)). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
@@ -266,7 +266,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
 요청(MediaMTX가 보냄): `{ "ip", "user", "password", "path", "protocol", "id", "action", "query" }`.
-- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `PublishBlockRegistry`에 차단 중이 아니고(§4.6, 차단 중이면 401), 키는 **`password` → `token` → `query`의 `pass`** 순서로 찾아 `channel.stream_key`와 비교(최근 MediaMTX는 WHIP Bearer를 `token` 필드로 보낸다; 실제로 어느 칸으로 오는지는 수동 확인 결과를 BC-1 카드에 기록) → 200. 아니면 401.
+- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `PublishBlockRegistry`에 차단 중이 아니고(§4.6, 차단 중이면 401), 키는 **`password` → `token` → `query`의 `pass`** 순서로 찾아 `channel.stream_key`와 비교(확인됨 2026-11-10, BC-1 카드 "검증": MediaMTX v1.21.3은 WHIP `Authorization: Bearer`를 `token` 칸으로, RTMP `?user=obs&pass=`를 `password` 칸으로 보낸다 — ffmpeg 9.0.2의 WHIP muxer · RTMP로 확인, 실제 OBS 앱 · 브라우저는 FE-2 · OPS-5에서 확인) → 200. 아니면 401.
 - **query 문자 제한:** `query`에 `[A-Za-z0-9._~=&%+-]` 밖의 문자가 있으면 키가 맞아도 401. `runOnReady`가 `$MTX_QUERY`를 셸 작은따옴표 · JSON 문자열 안에 그대로 넣으므로, 따옴표 등이 들어오면 셸 명령이 깨지거나 `"path"` 키를 덧붙여 다른 채널의 ready 훅을 흉내 낼 수 있다(가입만 하면 누구나 스트림 키를 받으므로 키 검사만으로는 못 막음).
 - `action in (read, playback)`: 200.
 - 그 외(api 등): 404(`authHTTPExclude`로 오지 않음).
@@ -274,10 +274,12 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.10 녹화 → 다시보기 (`recording`)
 - 조각 수집: `POST /internal/mediamtx/segment-complete` `{path, segmentPath}` → 채널의 현재(LIVE/DISCONNECTED/ENDED 직후) 방송의 recording에 `recording_segment` 추가(sequence = count+1). 방송을 못 찾으면 로그만.
-- 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다** — 진행 중 방송을 삭제하면 `BroadcastEndedEvent`가 recording이 이미 FILE_DELETED인 채로 발행되므로 이 검사는 필수. recording을 잠글 때는 삭제와 같은 **channel → broadcast → recording** 순서(데드락 방지). 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
+- 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다** — 진행 중 방송을 삭제하면 `BroadcastEndedEvent`가 recording이 이미 FILE_DELETED인 채로 발행되므로 이 검사는 필수. recording을 잠글 때는 삭제와 같은 **channel → broadcast → recording** 순서(데드락 방지). 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/private/<uuid>.mp4`(**항상 `private/`에 먼저 쓴다** — READY가 되기 전에는 어떤 주소로도 노출되지 않게) → 성공: 저장 직전 새 트랜잭션에서 recording을 잠그고 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고, 그때의 `visibility`가 PUBLIC이면 파일을 `vod/<uuid>.mp4`로 옮긴 뒤(`Files.move` `ATOMIC_MOVE`, 같은 볼륨이라 rename) `file_path`에 옮긴 뒤 경로를 적는다. raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
 - 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
 - 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
-- 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"`. 이 토큰의 서명 키는 **access 토큰 키와 분리**(`app.jwt.secret`에서 SHA-256으로 파생, `aud=recording-video`) — 같은 키를 쓰면 `sub=recordingId`인 토큰이 같은 id의 회원 access 토큰으로 통과할 수 있다. `GET`은 토큰(aud 포함) 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
+- 공개 설정 변경 `PATCH /recordings/{id} {visibility}`(주인): recording을 `PESSIMISTIC_WRITE`로 잠그고(§4.6 잠금 순서의 마지막 자리라 단독 잠금이어도 순서와 어긋나지 않는다) ① status가 READY면 파일을 반대 폴더로 옮기고(`vod/` ↔ `private/`, 같은 파일명, `ATOMIC_MOVE`) `file_path`를 옮긴 뒤 경로로, `visibility`를 새 값으로 바꾼다 — 이동이 실패하면 예외로 트랜잭션을 되돌린다(500 `FILE_MOVE_FAILED`) ② READY가 아니면(RECORDING · PROCESSING · FAILED · FILE_DELETED) `visibility`만 바꾼다(PROCESSING은 병합이 READY로 바꿀 때 그 값으로 폴더를 고른다). 같은 값으로 바꾸는 요청은 아무것도 하지 않고 200. 이렇게 해야 공개였다가 비공개로 바꾼 영상이 예전 `/vod/<uuid>.mp4` 주소로 열리지 않는다(REC-2#1) — Caddy는 `vod/`만 내주므로 옮긴 순간부터 그 주소는 404다.
+- 파일을 찾는 모든 곳(`RecordingFiles`: 재생 GET · 삭제 · 보관 정리)은 `file_path`를 그대로 쓴다. 이동 뒤 DB 커밋만 실패하는 드문 경우를 위해, `file_path`에 파일이 없으면 다른 vod 폴더(`vod/` ↔ `private/`)의 같은 파일명을 한 번 더 찾고, 찾으면 `file_path`를 그 경로로 고친다.
+- 서빙: PUBLIC → `videoUrl = "/" + file_path`(= `/vod/<uuid>.mp4`, Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"`. 이 토큰의 서명 키는 **access 토큰 키와 분리**(`app.jwt.secret`에서 SHA-256으로 파생, `aud=recording-video`) — 같은 키를 쓰면 `sub=recordingId`인 토큰이 같은 id의 회원 access 토큰으로 통과할 수 있다. `GET`은 토큰(aud 포함) 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
 
 ### 4.11 썸네일 캡처 (`thumbnail`)
 `ThumbnailCaptureScheduler` `interval-seconds`마다 LIVE 방송 각각: `ffmpeg -rtsp_transport tcp -i {rtsp-url}/live/<channelId> -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/<broadcastId>.tmp.jpg`(타임아웃 10초, 실패는 로그) → 성공하면 **원자적으로 `<broadcastId>.jpg`로 rename**(Caddy가 쓰다 만 파일을 서빙하지 않게). 캡처가 끝난 뒤 방송이 LIVE가 아니거나 삭제됐으면 결과 파일을 버린다. `broadcast.thumbnail_path = "thumbnails/<broadcastId>.jpg"`는 `UPDATE … WHERE thumbnail_path IS NULL`로 처음 한 번만 채운다(파일은 매번 덮어씀). 응답 `thumbnailUrl = "/uploads/" + path`, null이면 프론트가 기본 이미지.
@@ -444,7 +446,7 @@ frontend/src/
 |---|---|---|
 | LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 | GRID-1 | `hlsVariant: mpegts`/일반 fMP4 HLS(3~6초)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
-| MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지 | BC-1 | `?pass=<key>` 쿼리로 전달하고 콜백에서 `query` 파싱 |
+| ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
 | OBS 브라우저 소스에서 `speechSynthesis` 동작 | WID-1 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
@@ -527,11 +529,11 @@ frontend/src/
 
 ### REC-1 녹화 세그먼트 수집 · 병합 · 정리
 - 읽을 절: §4.10, §4.3 recording · recording_segment, `FfmpegRunner`, §2.3 record 설정.
-- 완료: 실제 송출 → 종료 → `vod/<uuid>.mp4` 생성 · READY(수동), 재연결로 조각 2개일 때 병합(수동), 단위 테스트(mock ffmpeg: 조각 0 → FAILED, 성공 → READY), 보관 스케줄러 테스트(시계 주입).
+- 완료: 실제 송출 → 종료 → 병합 결과가 `private/<uuid>.mp4`에 생기고 READY 시점에 `autoPublishRecording`에 따라 `vod/`로 옮겨지거나 `private/`에 남음(수동), 재연결로 조각 2개일 때 병합(수동), 단위 테스트(mock ffmpeg: 조각 0 → FAILED, 성공 → READY + PUBLIC이면 `vod/`로 이동 · PRIVATE면 `private/` 유지), 보관 스케줄러 테스트(시계 주입, 두 폴더 모두 삭제).
 
 ### REC-2 다시보기 API
 - 읽을 절: §4.16 `/recordings*`, `/channels/{id}/broadcasts`, §4.10 서빙 · 토큰, §4.8.
-- 완료: 공개 목록 · 상세 · 비공개 주인만 · video-token → Range 응답(206) 테스트, 공개 설정 변경 403.
+- 완료: 공개 목록 · 상세 · 비공개 주인만 · video-token → Range 응답(206) 테스트, 공개 설정 변경 403. **공개 → 비공개 변경 시 파일이 `vod/` → `private/`로 옮겨지고 `file_path`가 바뀌는 테스트**(임시 디렉터리), 되돌릴 때 반대 방향, READY가 아니면 파일 이동 없이 visibility만. 수동: 비공개로 바꾼 뒤 예전 `/vod/<uuid>.mp4`가 404(REC-2#1).
 
 ### CMT-1 댓글 API
 - 읽을 절: §4.12, §4.3 comment, §4.8. 다시보기 · 게시글 두 엔드포인트 묶음이 같은 서비스.
