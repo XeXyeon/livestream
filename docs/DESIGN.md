@@ -228,12 +228,12 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 ```
 | 입력 | 처리 |
 |---|---|
-| `POST /internal/mediamtx/ready` `{path:"live/<channelId>", sourceType, query}` | 채널 조회. source 판정 = `sourceType`이 `rtmpConn`이면 STREAM_KEY, `webRTCSession`이면 query `src`가 `mobile`→BROWSER_MOBILE, `obs`→STREAM_KEY, 그 외(`pc` · 없음)→BROWSER_PC. 채널에 `status IN (LIVE, DISCONNECTED)` 방송이 있으면 → LIVE로 되돌리고 `disconnected_at=null`, **`source`를 이번 판정값으로 갱신**(유예 재연결 · overridePublisher 교체로 수단이 바뀔 수 있음). 없으면 → 새 `broadcast`(status LIVE, title · category 채널에서 복사, source) + `recording`(RECORDING, visibility는 채널 `auto_publish_recording`에 따라 PUBLIC/PRIVATE). `BroadcastEventPublisher.status(live)` |
-| `POST /internal/mediamtx/not-ready` | 방송이 LIVE면 DISCONNECTED + `disconnected_at=now`, `status(disconnected)` 이벤트. 그 외 무시(멱등) |
+| `POST /internal/mediamtx/ready` `{path:"live/<channelId>", sourceType, query}` | 채널 조회. source 판정 = `sourceType`이 `rtmpConn`이면 STREAM_KEY, `webRTCSession`이면 query `src`가 `mobile`→BROWSER_MOBILE, `obs`→STREAM_KEY, 그 외(`pc` · 없음)→BROWSER_PC. 채널에 `status IN (LIVE, DISCONNECTED)` 방송이 있으면 → LIVE로 되돌리고 `disconnected_at=null`, **`source`를 이번 판정값으로 갱신**(유예 재연결 · overridePublisher 교체로 수단이 바뀔 수 있음). 없으면 → 새 `broadcast`(status LIVE, title · category 채널에서 복사, source) + `recording`(RECORDING, visibility는 채널 `auto_publish_recording`에 따라 PUBLIC/PRIVATE). `BroadcastEventPublisher.status(live)`. **늦게 온 훅 거르기:** 진행 중 방송이 없고 `PublishBlockRegistry`가 차단 중이면 새 방송을 만들지 않고 무시(종료 직전 들어온 ready) |
+| `POST /internal/mediamtx/not-ready` | 먼저 MediaMTX `GET /v3/paths/get/live/<channelId>`로 **송출자가 아직 붙어 있으면 무시**(훅 순서가 뒤바뀌어 송출 중 방송이 끊긴 것으로 처리되는 것 방지). 방송이 LIVE면 DISCONNECTED + `disconnected_at=now`, `status(disconnected)` 이벤트. 그 외 무시(멱등) |
 | `DisconnectGraceScheduler`(10초마다) | `DISCONNECTED AND disconnected_at < now - grace` → `end(broadcast, reason=GRACE_TIMEOUT)` |
-| `POST /api/broadcasts/{id}/end` (소유자) | `end(broadcast, reason=OWNER)`: ENDED면 409 `BROADCAST_ALREADY_ENDED`. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
+| `POST /api/broadcasts/{id}/end` (소유자) → **204** | `end(broadcast, reason=OWNER)`: ENDED면 409 `BROADCAST_ALREADY_ENDED`. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
 | `DELETE /api/broadcasts/{id}` (소유자) | LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. recording `FILE_DELETED`로 바꾼 **뒤** 녹화 파일(vod · raw · 썸네일) 삭제. **그 recording의 댓글은 물리 삭제**(`deleteByRecordingId`, soft delete라 cascade가 안 일어나므로). 후원은 그대로. 이후 `GET /recordings/{id}` · 댓글 엔드포인트는 broadcast가 삭제된 recording에 404 |
-| `end` 공통 | `status(ended)` 이벤트 → recording을 같은 트랜잭션에서 `PROCESSING`으로 → 커밋 뒤 `RecordingMergeService.enqueue(recordingId)`(§4.10) → `ChatBufferService.clear(broadcastId)`(30분 뒤) → **publish 차단**: `PublishBlockRegistry.block(channelId, end-block-seconds)`(메모리 `Map<channelId, Instant>`). 인증 콜백(§4.9)이 이 시간 동안 그 채널의 publish를 401로 거절해, kick당한 OBS · WhipClient의 자동 재연결이 새 방송을 만들지 못하게 한다. 차단이 끝난 뒤에도 OBS가 계속 재연결하면 **새 방송이 시작되는 것이 의도된 동작**(README · S5 안내: "사이트에서 종료한 뒤 OBS도 중지하세요") |
+| `end` 공통 | 트랜잭션 안: ENDED + `ended_at`, recording을 `PROCESSING`으로. **커밋 뒤** 순서대로: ① **publish 차단** `PublishBlockRegistry.block(channelId, end-block-seconds)`(메모리 `Map<channelId, Instant>`) ② kick(LIVE였을 때) ③ `status(ended)` 이벤트 ④ `BroadcastEndedEvent(broadcastId, channelId, recordingId)` 발행(`ApplicationEventPublisher`). REC-1의 병합 enqueue(§4.10)와 CHAT-1의 버퍼 정리(§4.14)는 이 이벤트의 `@EventListener`로 붙는다(BC-1은 이벤트만 발행). 인증 콜백(§4.9)이 이 시간 동안 그 채널의 publish를 401로 거절해, kick당한 OBS · WhipClient의 자동 재연결이 새 방송을 만들지 못하게 한다. 차단이 끝난 뒤에도 OBS가 계속 재연결하면 **새 방송이 시작되는 것이 의도된 동작**(README · S5 안내: "사이트에서 종료한 뒤 OBS도 중지하세요") |
 
 - `MediaMtxClient.kickPublisher(path)`: `GET /v3/paths/get/{path}` → `source.type` · `source.id` → `POST /v3/webrtcsessions/kick/{id}` 또는 `/v3/rtmpconns/kick/{id}` (`RestClient`, 타임아웃 3초).
 - 채널당 LIVE/DISCONNECTED 방송 최대 1건은 서비스 로직 + `overridePublisher`로 보장(두 번째 연결은 MediaMTX가 기존을 끊고 ready 훅이 다시 와 같은 방송을 이어 간다).
@@ -245,7 +245,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 갱신 `POST /api/auth/refresh`(쿠키) → 토큰 해시 조회 → 만료면 401. `revoked_at IS NULL`이면 **회전**(기존 revoke + `replaced_by_id`, 새 refresh 발급 · 쿠키 교체) + 응답은 로그인과 같은 `{accessToken, member}`. 이미 revoke됐어도 `replaced_by_id != null AND revoked_at > now - refresh-rotation-grace-seconds`면 **유예**로 보고 다시 회전해 준다(탭 두 개가 동시에 갱신해도 둘 다 살아남음). 유예 밖의 회전된 토큰이 오면 재사용 의심 → 그 회원의 refresh 토큰 **전부** revoke 후 401. 그 외 401 `TOKEN_INVALID` + 쿠키 삭제.
 - 로그아웃 `POST /api/auth/logout`(쿠키) → 그 회원의 refresh 토큰 **전부** revoke(`replaced_by_id` null) + 쿠키 삭제, 200. 다른 탭 · 기기도 다음 갱신부터 로그아웃된다. (access는 만료까지 유효 — 15분)
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
-- **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. (AUTH-1 구현은 만료를 익명 통과시켰으므로 BC-1 또는 그 전 작은 수정으로 바꾼다.)
+- **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. **예외: `/api/auth/**`는 필터가 검사하지 않는다** — 로그아웃 · 로그인 · refresh는 만료된 access가 헤더에 남아 있어도 처리돼야 한다(`apiFetch`가 `/auth/` 경로에서는 refresh 재시도를 하지 않으므로, 여기서 401을 주면 refresh 쿠키가 폐기되지 않은 채 로그아웃이 실패한다). BC-1(334dd03)에서 구현됨.
 - Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
 - `/swagger-ui/**`, `/v3/api-docs/**` 공개.
 
@@ -265,14 +265,15 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
 요청(MediaMTX가 보냄): `{ "ip", "user", "password", "path", "protocol", "id", "action", "query" }`.
-- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `PublishBlockRegistry`에 차단 중이 아니고(§4.6, 차단 중이면 401), `password == channel.stream_key`(WHIP Bearer · RTMP `?pass=` 모두 password로 들어온다 — BC-1에서 실제 확인, 안 되면 `query`의 `pass`도 본다) → 200. 아니면 401.
+- `action == "publish"`: `path`가 `live/<channelId>` 형식이고 채널 존재, `PublishBlockRegistry`에 차단 중이 아니고(§4.6, 차단 중이면 401), 키는 **`password` → `token` → `query`의 `pass`** 순서로 찾아 `channel.stream_key`와 비교(최근 MediaMTX는 WHIP Bearer를 `token` 필드로 보낸다; 실제로 어느 칸으로 오는지는 수동 확인 결과를 BC-1 카드에 기록) → 200. 아니면 401.
+- **query 문자 제한:** `query`에 `[A-Za-z0-9._~=&%+-]` 밖의 문자가 있으면 키가 맞아도 401. `runOnReady`가 `$MTX_QUERY`를 셸 작은따옴표 · JSON 문자열 안에 그대로 넣으므로, 따옴표 등이 들어오면 셸 명령이 깨지거나 `"path"` 키를 덧붙여 다른 채널의 ready 훅을 흉내 낼 수 있다(가입만 하면 누구나 스트림 키를 받으므로 키 검사만으로는 못 막음).
 - `action in (read, playback)`: 200.
 - 그 외(api 등): 404(`authHTTPExclude`로 오지 않음).
 - 이 엔드포인트는 `InternalTokenFilter` 대상이 아니다(MediaMTX가 헤더를 못 붙임) — 대신 docker 내부망에서만 접근(Caddy가 `/api/internal/*`를 외부에 **노출하지 않는다**: Caddyfile에서 `/api/internal/*` → 403).
 
 ### 4.10 녹화 → 다시보기 (`recording`)
 - 조각 수집: `POST /internal/mediamtx/segment-complete` `{path, segmentPath}` → 채널의 현재(LIVE/DISCONNECTED/ENDED 직후) 방송의 recording에 `recording_segment` 추가(sequence = count+1). 방송을 못 찾으면 로그만.
-- 병합 `RecordingMergeService.enqueue(recordingId)`(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다**. 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
+- 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다**. 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
 - 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
 - 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
 - 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"` → `GET`은 토큰 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
@@ -308,7 +309,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
   - `viewers` `{type:"viewers", count}`
   - `history` `{type:"history", messages:[chat|donation …]}` — 구독 직후 그 세션에만(`convertAndSendToUser` 대신 `SessionSubscribeEvent`에서 세션 id 헤더로 전송)
 - 전송 `/app/broadcasts/{id}/chat` `{content(1~200)}` → 방송 LIVE/DISCONNECTED 확인 → 버퍼 추가 → 토픽 발행.
-- `ChatBufferService`: 방송별 `ArrayDeque`(최대 50, chat + donation), ENDED 30분 뒤 제거.
+- `ChatBufferService`: 방송별 `ArrayDeque`(최대 50, chat + donation). `BroadcastEndedEvent`(§4.6) `@EventListener`에서 30분 뒤 제거 예약.
 - `ViewerCounter`: `SessionSubscribeEvent`(목적지가 `/topic/broadcasts/{id}`) · `SessionUnsubscribeEvent` · `SessionDisconnectEvent`로 방송별 세션 집합. `viewer-broadcast-interval-seconds`마다 변화가 있으면 `viewers` 발행. `count(broadcastId)`를 `GET /api/broadcasts/{id}`가 사용.
 - 서버 재시작 시 버퍼 · 카운터는 0부터(허용).
 
@@ -332,7 +333,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `GET /broadcasts?status=LIVE&category=&page=&size=20` | 누구나 | 시청자 수 내림차순 → startedAt. `BroadcastSummary {id, title, category:{code,label}, thumbnailUrl, status, startedAt, viewerCount, channel:{id, name}}` |
 | `GET /broadcasts/{id}` | 누구나 | `BroadcastDetail = Summary + {endedAt, source, viewerCount, recommendedMode:"whep"|"grid", play:{whepUrl:"/live/{channelId}/whep", hlsUrl:"/live/{channelId}/index.m3u8"}, donationTotal, recording:{id, status, visibility}(null 가능), isOwner}` |
 | `GET /broadcasts/{id}/recommendations` | 누구나 | 다른 채널 LIVE: 같은 카테고리 → 시청자 수, 최대 4 / 없으면 최근 공개 다시보기 4 → `{lives:[Summary], recordings:[RecordingSummary]}` |
-| `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end` · `DELETE /broadcasts/{id}` | 주인 | §4.6 |
+| `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end`(204) · `DELETE /broadcasts/{id}`(204) | 주인 | §4.6 |
 | `GET /members/me/broadcasts?page=` | 로그인 | 내 방송 기록(삭제 제외) + recording 상태 · visibility |
 | `GET /recordings?page=&sort=recent` | 누구나 | READY · PUBLIC → `RecordingSummary {id, broadcastId, title, category, thumbnailUrl, durationSeconds, startedAt, channel:{id,name}, commentCount}` |
 | `GET /recordings/{id}` | 누구나/주인 | `{…Summary, status, visibility, videoUrl(READY·PUBLIC일 때), fileDeleted, donationTotal, isOwner}` |
