@@ -1,10 +1,13 @@
 package com.livestream.livestream.broadcast;
 
+import com.livestream.livestream.channel.Category;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -43,4 +46,29 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 			  and b.disconnectedAt < :before and b.deletedAt is null
 			""")
 	List<Long> findDisconnectedBefore(Instant before);
+
+	/** 목록용: 상태 · 카테고리(null 이면 전체). 진행 중 방송은 수가 적어 시청자 수 정렬을 메모리에서 한다. */
+	@Query("""
+			select b from Broadcast b join fetch b.channel
+			where b.status = :status and b.deletedAt is null and (:category is null or b.category = :category)
+			""")
+	List<Broadcast> findAllByStatus(BroadcastStatus status, Category category);
+
+	/** 추천: 같은 카테고리의 다른 채널 LIVE 방송. */
+	@Query("""
+			select b from Broadcast b join fetch b.channel c
+			where b.status = com.livestream.livestream.broadcast.BroadcastStatus.LIVE and b.deletedAt is null
+			  and b.category = :category and c.id <> :excludeChannelId
+			""")
+	List<Broadcast> findLiveForRecommendation(Category category, Long excludeChannelId);
+
+	/** 내 방송 기록(삭제 제외), 최신순. */
+	@Query(value = """
+			select b from Broadcast b join fetch b.channel c
+			where c.member.id = :memberId and b.deletedAt is null
+			order by b.startedAt desc, b.id desc
+			""", countQuery = """
+			select count(b) from Broadcast b where b.channel.member.id = :memberId and b.deletedAt is null
+			""")
+	Page<Broadcast> findMine(Long memberId, Pageable pageable);
 }

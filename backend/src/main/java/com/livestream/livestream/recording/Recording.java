@@ -63,6 +63,12 @@ public class Recording extends BaseEntity {
 		return r;
 	}
 
+	/** 방송 삭제: 진행 중인 병합은 이 상태를 보고 결과를 버린다(§4.10). 파일은 커밋 뒤 지운다. */
+	public void markFileDeleted(Instant now) {
+		this.status = RecordingStatus.FILE_DELETED;
+		this.fileDeletedAt = now;
+	}
+
 	/** 방송 종료: 녹화 중이었으면 병합 대기(PROCESSING)로. 그 외 상태는 그대로 둔다. */
 	public void markProcessing() {
 		if (status == RecordingStatus.RECORDING) {

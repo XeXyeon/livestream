@@ -93,6 +93,20 @@ public class Broadcast extends BaseEntity {
 		this.endedAt = now;
 	}
 
+	/** PATCH: null 인 인자는 바꾸지 않는다. 검증 · 상태 규칙은 서비스가 끝낸 뒤 넘긴다. */
+	void updateInfo(String title, Category category) {
+		if (title != null) {
+			this.title = title;
+		}
+		if (category != null) {
+			this.category = category;
+		}
+	}
+
+	void markDeleted(Instant now) {
+		this.deletedAt = now;
+	}
+
 	public boolean isDeleted() {
 		return deletedAt != null;
 	}

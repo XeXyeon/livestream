@@ -8,6 +8,7 @@ import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
+import com.livestream.livestream.common.tx.AfterCommit;
 import com.livestream.livestream.mediamtx.MediaMtxClient;
 import com.livestream.livestream.recording.Recording;
 import com.livestream.livestream.recording.RecordingRepository;
@@ -21,8 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 방송 상태 전이 (DESIGN §4.6): ready → LIVE, not-ready → DISCONNECTED, 유예 안 ready → LIVE, end · 유예 만료 → ENDED.
@@ -178,7 +177,8 @@ public class BroadcastLifecycleService {
 	 * status(ended) 이벤트 → {@link BroadcastEndedEvent}(녹화 병합 · 채팅 버퍼 정리).
 	 * 차단을 kick 보다 먼저 걸어, kick 당한 송출자의 자동 재연결이 인증 콜백에서 거절되게 한다.
 	 */
-	private void end(Broadcast b, EndReason reason) {
+	/** 호출 쪽이 채널 · 방송 행을 잠근 뒤 부른다(BroadcastService 삭제도 쓴다). */
+	void end(Broadcast b, EndReason reason) {
 		boolean wasLive = b.getStatus() == BroadcastStatus.LIVE;
 		Instant now = Instant.now();
 		b.end(now);
@@ -214,24 +214,7 @@ public class BroadcastLifecycleService {
 		afterCommit("상태 이벤트", () -> eventPublisher.status(broadcastId, status, at));
 	}
 
-	/** 커밋 뒤 실행. 실패는 로그만 남긴다(이미 커밋된 상태 전이를 되돌리지 않는다). 트랜잭션 밖이면 바로 실행. */
 	private static void afterCommit(String what, Runnable action) {
-		Runnable safe = () -> {
-			try {
-				action.run();
-			} catch (RuntimeException e) {
-				log.warn("{} 실패(무시): {}", what, e.toString());
-			}
-		};
-		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-			safe.run();
-			return;
-		}
-		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-			@Override
-			public void afterCommit() {
-				safe.run();
-			}
-		});
+		AfterCommit.run(what, action);
 	}
 }
