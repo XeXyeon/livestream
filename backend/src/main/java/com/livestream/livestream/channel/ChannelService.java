@@ -11,6 +11,7 @@ import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
+import com.livestream.livestream.post.PostRepository;
 import java.net.URI;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -34,6 +35,7 @@ public class ChannelService {
 	private final AppProperties props;
 	private final ObjectProvider<LiveBroadcastTerminator> liveBroadcastTerminators;
 	private final LiveBroadcastLookup liveBroadcastLookup;
+	private final PostRepository postRepository;
 
 	@Transactional(readOnly = true)
 	public ChannelResponse getPublic(Long channelId) {
@@ -116,9 +118,8 @@ public class ChannelService {
 		return 0;
 	}
 
-	/** TODO(POST-1): 커뮤니티 글 수. */
 	private long postCount(Channel channel) {
-		return 0;
+		return postRepository.countByChannelId(channel.getId());
 	}
 
 	// ---- 안내 문자열 ----
