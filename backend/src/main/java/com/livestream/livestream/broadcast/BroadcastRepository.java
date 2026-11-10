@@ -10,7 +10,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 
@@ -71,4 +73,25 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 			select count(b) from Broadcast b where b.channel.member.id = :memberId and b.deletedAt is null
 			""")
 	Page<Broadcast> findMine(Long memberId, Pageable pageable);
+
+	// ---------- BC-3 썸네일 ----------
+
+	/** 썸네일 캡처 대상: 삭제되지 않은 LIVE 방송의 (방송 id, 채널 id). */
+	@Query("""
+			select new com.livestream.livestream.broadcast.LiveBroadcastRef(b.id, b.channel.id) from Broadcast b
+			where b.status = com.livestream.livestream.broadcast.BroadcastStatus.LIVE and b.deletedAt is null
+			""")
+	List<LiveBroadcastRef> findLiveRefs();
+
+	@Query("""
+			select count(b) > 0 from Broadcast b
+			where b.id = :id and b.status = com.livestream.livestream.broadcast.BroadcastStatus.LIVE and b.deletedAt is null
+			""")
+	boolean isLive(Long id);
+
+	/** 처음 성공했을 때만 경로를 채운다(이후 캡처는 파일만 덮어씀). 삭제된 방송은 건드리지 않는다. */
+	@Modifying(clearAutomatically = true, flushAutomatically = true)
+	@Transactional
+	@Query("update Broadcast b set b.thumbnailPath = :path where b.id = :id and b.thumbnailPath is null and b.deletedAt is null")
+	int assignThumbnailPathIfAbsent(Long id, String path);
 }

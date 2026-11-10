@@ -9,6 +9,10 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/livestream?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
     username: ${SPRING_DATASOURCE_USERNAME:livestream}
     password: ${SPRING_DATASOURCE_PASSWORD:livestream}
+  task:
+    scheduling:
+      pool:
+        size: 4 # 유예 종료 · 썸네일 캡처(방송당 최대 10초) · 녹화 보관 스케줄러가 서로를 막지 않게
   jpa:
     hibernate:
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
