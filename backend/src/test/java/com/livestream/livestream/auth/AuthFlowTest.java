@@ -362,19 +362,33 @@ class AuthFlowTest {
 	}
 
 	@Test
-	void 공개_경로는_토큰이_없거나_만료돼도_401이_아니다() throws Exception {
+	void 공개_경로는_토큰이_없으면_통과하고_만료_위조_토큰이면_401() throws Exception {
 		byte[] secret = props.jwt().secret().getBytes(StandardCharsets.UTF_8);
 		String expired = Jwts.builder().subject("1").expiration(Date.from(Instant.now().minusSeconds(60)))
 				.signWith(Keys.hmacShaKeyFor(secret)).compact();
-		// 아직 컨트롤러가 없어 404지만, Security가 401로 막지 않는지(공개 매처가 열려 있는지)를 확인한다.
-		mvc.perform(get("/api/broadcasts")).andExpect(status().isNotFound());
-		mvc.perform(get("/api/broadcasts/1").header("Authorization", "Bearer " + expired)).andExpect(status().isNotFound());
-		// CH-1 이후 채널 조회는 컨트롤러가 있어 200(채널 1이 있을 때) 또는 404지만, 401만 아니면 된다.
+		// 토큰이 없으면 공개 경로는 Security가 막지 않는다(컨트롤러가 없으면 404, 있으면 200/404).
 		mvc.perform(get("/api/channels/1")).andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
-		mvc.perform(get("/api/recordings")).andExpect(status().isNotFound());
+		mvc.perform(get("/api/recordings")).andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
+		// 헤더가 있는데 만료 · 위조면 공개 경로라도 401 — 프론트가 refresh 후 재시도하게 한다(§4.7, 이슈 AUTH-1#3).
+		mvc.perform(get("/api/channels/1").header("Authorization", "Bearer " + expired))
+				.andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("TOKEN_EXPIRED"));
+		mvc.perform(get("/api/broadcasts/1").header("Authorization", "Bearer garbage"))
+				.andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("TOKEN_INVALID"));
+		// /api/auth/** 는 access 를 보지 않는다: 만료 access 를 붙인 로그아웃도 성공해야 refresh 쿠키가 폐기된다.
+		String refresh = signupAndLogin();
+		mvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + expired)
+				.cookie(new jakarta.servlet.http.Cookie("refresh_token", refresh)))
+				.andExpect(status().isOk());
+		mvc.perform(post("/api/auth/refresh").cookie(new jakarta.servlet.http.Cookie("refresh_token", refresh)))
+				.andExpect(status().isUnauthorized());
+		// Bearer 가 아닌 Authorization 헤더는 JWT로 보지 않는다(익명).
+		mvc.perform(get("/api/channels/1").header("Authorization", "Basic Zm9vOmJhcg=="))
+				.andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
 		// 로그인이 필요한 경로는 그대로 401
-		mvc.perform(get("/api/channels/me").header("Authorization", "Bearer " + expired)).andExpect(status().isUnauthorized());
-		mvc.perform(post("/api/broadcasts/1/end")).andExpect(status().isUnauthorized());
+		mvc.perform(get("/api/channels/me").header("Authorization", "Bearer " + expired))
+				.andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("TOKEN_EXPIRED"));
+		mvc.perform(post("/api/broadcasts/1/end")).andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
 	}
 
 	@Test
