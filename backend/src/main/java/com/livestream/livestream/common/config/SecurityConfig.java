@@ -53,6 +53,7 @@ public class SecurityConfig {
 						.requestMatchers(HttpMethod.GET,
 								"/api/channels/*", "/api/channels/*/broadcasts", "/api/channels/*/posts",
 								"/api/broadcasts", "/api/broadcasts/*", "/api/broadcasts/*/recommendations",
+								"/api/broadcasts/*/donations",
 								"/api/recordings", "/api/recordings/*", "/api/recordings/*/comments",
 								// 비공개 다시보기 재생: <video> 는 Authorization 헤더를 못 붙여 재생 토큰(쿼리)으로 검사한다(§4.10).
 								"/api/recordings/*/video",
