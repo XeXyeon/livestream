@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface RecordingRepository extends JpaRepository<Recording, Long> {
@@ -46,11 +47,56 @@ public interface RecordingRepository extends JpaRepository<Recording, Long> {
 	@Query("""
 			select r from Recording r join fetch r.broadcast b join fetch b.channel
 			where b.id <> :excludeBroadcastId and b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
 			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
 			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
 			order by b.startedAt desc, b.id desc
 			""")
 	List<Recording> findRecentPublic(Long excludeBroadcastId, Pageable limit);
+
+	// ---------- REC-2 다시보기 API ----------
+
+	/** 공개 다시보기 전체(GET /recordings), 방송 시작 최신순. 조건은 {@link #findPublicByChannel} 과 같다. */
+	@Query(value = """
+			select r from Recording r join fetch r.broadcast b join fetch b.channel c
+			where b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
+			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
+			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
+			order by b.startedAt desc, b.id desc
+			""", countQuery = """
+			select count(r) from Recording r join r.broadcast b
+			where b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
+			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
+			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
+			""")
+	Page<Recording> findPublic(Pageable pageable);
+
+	/** 채널 페이지의 recordingCount: {@link #findPublicByChannel} 과 같은 조건의 수. */
+	@Query("""
+			select count(r) from Recording r join r.broadcast b
+			where b.channel.id = :channelId and b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
+			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
+			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
+			""")
+	long countPublicByChannel(Long channelId);
+
+	/** 상세 · 소유자 확인용: 방송 · 채널 · 주인까지 함께 읽는다. 삭제된 방송의 다시보기는 없음으로 본다. */
+	@Query("""
+			select r from Recording r join fetch r.broadcast b join fetch b.channel c join fetch c.member
+			where r.id = :id and b.deletedAt is null
+			""")
+	Optional<Recording> findActive(Long id);
+
+	/**
+	 * 공개 설정만 바꾼다. 엔티티를 고쳐 flush 하면 모든 컬럼을 다시 쓰므로, 그 사이 병합이 커밋한 READY · file_path 를
+	 * 오래된 값으로 덮어쓸 수 있다. 그래서 이 컬럼만 갱신하는 쿼리를 쓴다.
+	 */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("update Recording r set r.visibility = :visibility, r.updatedAt = :now where r.id = :id")
+	int updateVisibility(Long id, Visibility visibility, Instant now);
 
 	// ---------- REC-1 녹화 병합 · 보관 ----------
 

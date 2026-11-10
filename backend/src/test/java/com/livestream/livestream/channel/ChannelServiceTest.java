@@ -8,6 +8,7 @@ import com.livestream.livestream.common.config.AppProperties;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.member.Member;
 import com.livestream.livestream.post.PostRepository;
+import com.livestream.livestream.recording.RecordingRepository;
 import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,8 @@ class ChannelServiceTest {
 		ObjectProvider<LiveBroadcastTerminator> none = mock(ObjectProvider.class);
 		when(none.orderedStream()).thenReturn(Stream.empty());
 		AppProperties props = new AppProperties(null, null, null, null, null, null, null, null, null, publicUrl);
-		return new ChannelService(repo, props, none, channelId -> Optional.empty(), mock(PostRepository.class));
+		return new ChannelService(repo, props, none, channelId -> Optional.empty(), mock(PostRepository.class),
+				mock(RecordingRepository.class));
 	}
 
 	private Channel channel() {

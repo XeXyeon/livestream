@@ -12,6 +12,7 @@ import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
 import com.livestream.livestream.post.PostRepository;
+import com.livestream.livestream.recording.RecordingRepository;
 import java.net.URI;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -36,6 +37,7 @@ public class ChannelService {
 	private final ObjectProvider<LiveBroadcastTerminator> liveBroadcastTerminators;
 	private final LiveBroadcastLookup liveBroadcastLookup;
 	private final PostRepository postRepository;
+	private final RecordingRepository recordingRepository;
 
 	@Transactional(readOnly = true)
 	public ChannelResponse getPublic(Long channelId) {
@@ -113,9 +115,9 @@ public class ChannelService {
 		return liveBroadcastLookup.findOngoingOf(channel.getId());
 	}
 
-	/** TODO(REC-2): READY · PUBLIC 다시보기 수. */
+	/** 공개 다시보기 수: GET /channels/{id}/broadcasts 와 같은 조건(ENDED · READY · PUBLIC · 삭제 제외). */
 	private long recordingCount(Channel channel) {
-		return 0;
+		return recordingRepository.countPublicByChannel(channel.getId());
 	}
 
 	private long postCount(Channel channel) {
