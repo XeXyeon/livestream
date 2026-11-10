@@ -241,7 +241,9 @@ class ChannelApiTest {
 				for (Future<String> f : futures) {
 					f.get();
 				}
-				me(a).andExpect(jsonPath("$.streamKey").value(rotated.get()));
+				// rotated.get()을 먼저 기다린다. 인자로 넘기면 me(a) 요청이 재발급 완료 전에 나갈 수 있다.
+				String rotatedKey = rotated.get();
+				me(a).andExpect(jsonPath("$.streamKey").value(rotatedKey));
 			}
 		} finally {
 			pool.shutdownNow();
