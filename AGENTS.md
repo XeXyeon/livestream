@@ -60,6 +60,10 @@ npm run build    # tsc -b + vite build
 npm run lint
 npx vitest run   # 아직 test 스크립트가 없다. FE-1에서 "test": "vitest run"을 추가해도 된다
 ```
+- **테스트 범위:** 작업 중에는 바꾼 파일과 그것을 import하는 곳의 테스트만 돌린다. 전체(`npx vitest run`)는 푸시 · PR 직전에 한 번.
+  - 바꾼 파일 기준: `npx vitest related --run <바꾼 파일…>`
+  - 폴더 하나: `npx vitest run src/<폴더>`
+  - `api/types.ts` · 공용 훅 · 라우터를 바꿨으면 `npm run build`(tsc -b)로 타입 영향까지 본다.
 - 로컬에서 백엔드와 붙이는 방법:
   - **OPS-3 이후:** `docker compose -f infra/compose.dev.yaml up`으로 띄우고, IDE에서 backend(8080)를 실행한 뒤 **`https://localhost`**로 접속한다. Caddy가 `/api` · `/ws` · `/live/*`를 각 서버로, 나머지를 5173으로 프록시한다(§2.1 · §2.2).
   - **OPS-3 전:** `vite.config.ts`에 `server.proxy`(`/api`, `/ws` → `http://localhost:8080`)를 두고 개발해도 된다. 설정만 추가하고 새 의존성은 넣지 않는다.
