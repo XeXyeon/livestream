@@ -277,7 +277,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다** — 진행 중 방송을 삭제하면 `BroadcastEndedEvent`가 recording이 이미 FILE_DELETED인 채로 발행되므로 이 검사는 필수. recording을 잠글 때는 삭제와 같은 **channel → broadcast → recording** 순서(데드락 방지). 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
 - 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
 - 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
-- 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"` → `GET`은 토큰 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
+- 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"`. 이 토큰의 서명 키는 **access 토큰 키와 분리**(`app.jwt.secret`에서 SHA-256으로 파생, `aud=recording-video`) — 같은 키를 쓰면 `sub=recordingId`인 토큰이 같은 id의 회원 access 토큰으로 통과할 수 있다. `GET`은 토큰(aud 포함) 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
 
 ### 4.11 썸네일 캡처 (`thumbnail`)
 `ThumbnailCaptureScheduler` `interval-seconds`마다 LIVE 방송 각각: `ffmpeg -rtsp_transport tcp -i {rtsp-url}/live/<channelId> -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/<broadcastId>.tmp.jpg`(타임아웃 10초, 실패는 로그) → 성공하면 **원자적으로 `<broadcastId>.jpg`로 rename**(Caddy가 쓰다 만 파일을 서빙하지 않게). 캡처가 끝난 뒤 방송이 LIVE가 아니거나 삭제됐으면 결과 파일을 버린다. `broadcast.thumbnail_path = "thumbnails/<broadcastId>.jpg"`는 `UPDATE … WHERE thumbnail_path IS NULL`로 처음 한 번만 채운다(파일은 매번 덮어씀). 응답 `thumbnailUrl = "/uploads/" + path`, null이면 프론트가 기본 이미지.
@@ -301,7 +301,9 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 5. 테스트 `DonationConfirmIdempotencyTest`(Testcontainers): 같은 `{paymentKey, orderId, amount}`로 스레드 2개 동시 confirm(Toss 클라이언트는 mock, 1회 성공) → APPROVED 1건, 합계 1회, Toss 호출 1회.
 
 ### 4.14 실시간 (STOMP over WebSocket, `chat`)
-- 엔드포인트 `/ws`(네이티브, `setAllowedOriginPatterns("*")` 불필요 — 같은 출처). 브로커 `SimpleBroker("/topic")`, 앱 접두어 `/app`.
+- 엔드포인트 `/ws`(네이티브, `setAllowedOriginPatterns("*")` 불필요 — 같은 출처). 브로커 `enableSimpleBroker("/topic", "/queue")`, user 접두어 `/user`, 앱 접두어 `/app`.
+- **목적지 제한(보안):** 클라이언트 SEND는 `/app/**`만, SUBSCRIBE는 `/topic/broadcasts/{숫자}`와 `/user/queue/errors`만 허용. 그 외는 ERROR 프레임(그대로 두면 `/topic/broadcasts/{id}`로 직접 SEND해 가짜 chat · donation을 뿌릴 수 있다).
+- **전송 실패 전달:** 로그인 사용자의 SEND가 규칙 위반(방송이 LIVE/DISCONNECTED 아님 → `BROADCAST_NOT_LIVE`, 내용 1~200자 위반 → `VALIDATION_ERROR`)이면 연결을 끊지 않고 `@SendToUser("/queue/errors")`로 그 세션에만 `{code, message}`를 보낸다. ERROR 프레임(연결 종료, `message` 헤더 = 코드)은 CONNECT의 `TOKEN_EXPIRED`/`TOKEN_INVALID`와 익명 SEND의 `UNAUTHENTICATED`, 허용되지 않은 목적지에만 쓴다.
 - 인증 `StompAuthInterceptor`(CONNECT): `Authorization: Bearer` 헤더가 있으면 검증해 `Principal` 설정 — 만료 · 위조면 CONNECT를 거절(ERROR 프레임 `message: TOKEN_EXPIRED`/`TOKEN_INVALID`), 익명으로 떨어뜨리지 않는다. 헤더가 없으면 익명 허용. SEND는 Principal 필수(없으면 에러 프레임).
 - 토픽 `/topic/broadcasts/{id}` 메시지(JSON, `type`으로 구분):
   - `chat` `{type:"chat", id(UUID), member:{id, nickname, isChannelOwner}, content, sentAt}`
@@ -420,7 +422,7 @@ frontend/src/
 `components/player/Player.tsx` — props `{ broadcast, initialMode }`. 상태 `mode: 'whep'|'grid'`(초기값 `recommendedMode`), `ModeToggle`로 전환(이전 플레이어 `close()` 후 생성), `PlayerStats`는 grid일 때 "서버 n MB · 피어 m MB · 절감 k% · 피어 p명". `status` 이벤트: `DISCONNECTED` → 오버레이 "방송인 연결이 끊겼습니다. 재연결을 기다리는 중…", `ENDED` → 종료 화면(`EndedView`: 안내 · 다시보기 버튼(recording READY면 활성, 아니면 "준비 중") · `RecommendList`).
 
 ### 6.6 STOMP 클라이언트 (`ws/stomp.ts`)
-`connect(token?)` → `Client({ brokerURL: wss://<host>/ws, connectHeaders: token ? { Authorization: 'Bearer ' + token } : {} , reconnectDelay: 3000 })`. `subscribeBroadcast(id, handler)` → `/topic/broadcasts/{id}`; `sendChat(id, content)` → `/app/broadcasts/{id}/chat`. `history` 메시지는 목록 초기화에 사용. 로그인 상태가 바뀌면 재연결. 연결 전 `ensureFreshToken()`. 서버가 만료 토큰의 CONNECT를 ERROR 프레임(`message: TOKEN_EXPIRED`)으로 거절하면 refresh 후 재연결(익명 연결로 떨어지지 않는다).
+`connect(token?)` → `Client({ brokerURL: wss://<host>/ws, connectHeaders: token ? { Authorization: 'Bearer ' + token } : {} , reconnectDelay: 3000 })`. `subscribeBroadcast(id, handler)` → `/topic/broadcasts/{id}`; `sendChat(id, content)` → `/app/broadcasts/{id}/chat`. `history` 메시지는 목록 초기화에 사용. 로그인 상태면 `/user/queue/errors`도 구독해 `{code, message}`를 채팅 입력창 아래 안내로 표시(연결은 유지됨). 로그인 상태가 바뀌면 재연결. 연결 전 `ensureFreshToken()`. 서버가 만료 토큰의 CONNECT를 ERROR 프레임(`message: TOKEN_EXPIRED`)으로 거절하면 refresh 후 재연결(익명 연결로 떨어지지 않는다).
 
 ### 6.7 화면별 요소 (PLAN-1 최종 화면 목록 기준)
 - **S1 Home**: 카테고리 칩(전체 + 5), `LiveCard` 그리드(썸네일 · LIVE 배지 · 시청자 수 · 제목 · 채널명), 아래 "다시보기" 탭(`RecordingCard`). 30초 refetch.
