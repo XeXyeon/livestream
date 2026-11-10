@@ -17,4 +17,12 @@ public interface ChannelRepository extends JpaRepository<Channel, Long> {
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select c from Channel c where c.member.id = :memberId")
 	Optional<Channel> findByMemberIdForUpdate(Long memberId);
+
+	/**
+	 * 방송 상태 전이(BC-1)용. 같은 채널의 ready · not-ready 훅 · 종료 · 유예 만료가 직렬로 돌게 채널 행을 잠근다
+	 * (훅 두 개가 동시에 와서 방송이 2건 생기는 것 방지). 잠금 순서는 항상 channel → broadcast.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select c from Channel c where c.id = :id")
+	Optional<Channel> findByIdForUpdate(Long id);
 }

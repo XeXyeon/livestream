@@ -23,7 +23,7 @@ class ChannelServiceTest {
 		ObjectProvider<LiveBroadcastTerminator> none = mock(ObjectProvider.class);
 		when(none.orderedStream()).thenReturn(Stream.empty());
 		AppProperties props = new AppProperties(null, null, null, null, null, null, null, null, null, publicUrl);
-		return new ChannelService(repo, props, none);
+		return new ChannelService(repo, props, none, channelId -> Optional.empty());
 	}
 
 	private Channel channel() {

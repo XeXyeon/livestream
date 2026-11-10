@@ -12,6 +12,7 @@ import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
 import java.net.URI;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
@@ -32,13 +33,15 @@ public class ChannelService {
 	private final ChannelRepository channelRepository;
 	private final AppProperties props;
 	private final ObjectProvider<LiveBroadcastTerminator> liveBroadcastTerminators;
+	private final LiveBroadcastLookup liveBroadcastLookup;
 
 	@Transactional(readOnly = true)
 	public ChannelResponse getPublic(Long channelId) {
 		Channel channel = channelRepository.findById(channelId)
 				.orElseThrow(() -> new ApiException(ErrorCode.CHANNEL_NOT_FOUND));
+		Long liveBroadcastId = currentBroadcast(channel).map(MyChannelResponse.CurrentBroadcast::id).orElse(null);
 		return new ChannelResponse(channel.getId(), channel.getName(), channel.getDescription(),
-				CategoryResponse.of(channel.getCategory()), liveBroadcastId(channel), recordingCount(channel),
+				CategoryResponse.of(channel.getCategory()), liveBroadcastId, recordingCount(channel),
 				postCount(channel), new ChannelResponse.Owner(channel.getMember().getNickname()));
 	}
 
@@ -60,7 +63,7 @@ public class ChannelService {
 		return toMine(channel);
 	}
 
-	/** 라이브 중이면 먼저 방송을 종료(BC-1 훅)한 뒤 새 키를 발급한다. 옛 키는 즉시 무효다. */
+	/** 라이브 중이면 먼저 방송을 종료(BC-1 훅: end · 커밋 뒤 kick)한 뒤 새 키를 발급한다. 옛 키는 즉시 무효다. */
 	@Transactional
 	public StreamKeyResponse rotateStreamKey(MemberPrincipal me) {
 		Channel channel = findMine(me, true);
@@ -90,11 +93,12 @@ public class ChannelService {
 	private MyChannelResponse toMine(Channel channel) {
 		Long id = channel.getId();
 		String whipUrl = baseUrl() + "/live/" + id + "/whip";
+		MyChannelResponse.CurrentBroadcast current = currentBroadcast(channel).orElse(null);
 		return new MyChannelResponse(id, channel.getName(), channel.getDescription(),
-				CategoryResponse.of(channel.getCategory()), liveBroadcastId(channel), recordingCount(channel),
+				CategoryResponse.of(channel.getCategory()), current == null ? null : current.id(), recordingCount(channel),
 				postCount(channel), new ChannelResponse.Owner(channel.getMember().getNickname()),
 				channel.getTitle(), channel.getStreamKey(), channel.getWidgetKey(), channel.isAutoPublishRecording(),
-				currentBroadcast(channel),
+				current,
 				new MyChannelResponse.Publish(whipUrl, whipUrl + "?src=obs", channel.getStreamKey(),
 						"rtmp://" + rtmpHost() + "/live", id + "?user=obs&pass=" + channel.getStreamKey()),
 				widgetUrl(channel.getWidgetKey()));
@@ -102,14 +106,9 @@ public class ChannelService {
 
 	// ---- 다른 도메인이 아직 없는 값. 해당 항목이 이 메서드들을 채운다. ----
 
-	/** TODO(BC-1): status IN (LIVE, DISCONNECTED)이고 deleted_at IS NULL인 방송 id. */
-	private Long liveBroadcastId(Channel channel) {
-		return null;
-	}
-
-	/** TODO(BC-1): {id, status}. liveBroadcastId와 같은 방송이다. */
-	private MyChannelResponse.CurrentBroadcast currentBroadcast(Channel channel) {
-		return null;
+	/** 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송 {id, status}. liveBroadcastId 도 이 방송의 id다. */
+	private Optional<MyChannelResponse.CurrentBroadcast> currentBroadcast(Channel channel) {
+		return liveBroadcastLookup.findOngoingOf(channel.getId());
 	}
 
 	/** TODO(REC-2): READY · PUBLIC 다시보기 수. */
