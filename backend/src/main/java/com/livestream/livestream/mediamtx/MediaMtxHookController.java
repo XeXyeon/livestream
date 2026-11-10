@@ -3,6 +3,7 @@ package com.livestream.livestream.mediamtx;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.livestream.livestream.broadcast.BroadcastLifecycleService;
 import com.livestream.livestream.broadcast.BroadcastSource;
+import com.livestream.livestream.recording.RecordingSegmentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * MediaMTX runOnReady · runOnNotReady 훅 (DESIGN §2.3 · §4.6). {@code X-Internal-Token} 필수(InternalTokenFilter).
+ * MediaMTX runOnReady · runOnNotReady · runOnRecordSegmentComplete 훅 (DESIGN §2.3 · §4.6 · §4.10). {@code X-Internal-Token} 필수(InternalTokenFilter).
  * 응답 코드는 MediaMTX 가 보지 않으므로, 해석할 수 없는 경로는 로그만 남기고 204.
  */
 @Slf4j
@@ -26,6 +27,7 @@ public class MediaMtxHookController {
 
 	private final BroadcastLifecycleService lifecycle;
 	private final MediaMtxClient mediaMtxClient;
+	private final RecordingSegmentService recordingSegmentService;
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record ReadyHook(String path, String sourceType, String query) {
@@ -33,6 +35,10 @@ public class MediaMtxHookController {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record NotReadyHook(String path) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record SegmentCompleteHook(String path, String segmentPath) {
 	}
 
 	@Operation(summary = "runOnReady 훅", description = "새 방송 LIVE 또는 유예 중 방송 재개")
@@ -63,6 +69,18 @@ public class MediaMtxHookController {
 			return ResponseEntity.noContent().build();
 		}
 		lifecycle.onNotReady(channelId);
+		return ResponseEntity.noContent().build();
+	}
+
+	@Operation(summary = "runOnRecordSegmentComplete 훅", description = "채널의 현재 방송 recording 에 녹화 조각 추가")
+	@PostMapping("/segment-complete")
+	public ResponseEntity<Void> segmentComplete(@RequestBody SegmentCompleteHook hook) {
+		Long channelId = MediaMtxPaths.channelIdOf(hook.path());
+		if (channelId == null) {
+			log.warn("segment-complete 훅: 해석할 수 없는 경로");
+			return ResponseEntity.noContent().build();
+		}
+		recordingSegmentService.onSegmentComplete(channelId, hook.segmentPath());
 		return ResponseEntity.noContent().build();
 	}
 

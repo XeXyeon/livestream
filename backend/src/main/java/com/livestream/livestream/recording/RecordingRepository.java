@@ -1,6 +1,7 @@
 package com.livestream.livestream.recording;
 
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -50,4 +51,26 @@ public interface RecordingRepository extends JpaRepository<Recording, Long> {
 			order by b.startedAt desc, b.id desc
 			""")
 	List<Recording> findRecentPublic(Long excludeBroadcastId, Pageable limit);
+
+	// ---------- REC-1 녹화 병합 · 보관 ----------
+
+	/** 병합 결과 저장 · 조각 추가 직전에 잠가 읽는다(방송 삭제의 FILE_DELETED 와 겹치지 않게). */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select r from Recording r where r.id = :id")
+	Optional<Recording> findByIdForUpdate(Long id);
+
+	/** 채널의 가장 최근 방송의 recording id (조각 훅이 붙일 곳). 삭제된 방송도 포함한다(늦게 온 조각 파일 정리용). */
+	@Query("select r.id from Recording r join r.broadcast b where b.channel.id = :channelId order by b.id desc")
+	List<Long> findLatestIdByChannel(Long channelId, Pageable limit);
+
+	/** 보관 기간이 지난 READY 다시보기 id. */
+	@Query("""
+			select r.id from Recording r
+			where r.status = com.livestream.livestream.recording.RecordingStatus.READY and r.createdAt < :before
+			""")
+	List<Long> findReadyCreatedBefore(Instant before);
+
+	/** 병합 대기 중인 녹화 id (재시작 뒤 다시 줄 세우기). */
+	@Query("select r.id from Recording r where r.status = com.livestream.livestream.recording.RecordingStatus.PROCESSING")
+	List<Long> findProcessingIds();
 }

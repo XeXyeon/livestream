@@ -19,7 +19,8 @@ public class RecordingService {
 	/**
 	 * 방송 삭제 뒤(커밋 뒤) 파일을 지운다: vod(recording.file_path, recording.dir 기준) · 썸네일(uploads 기준).
 	 * 각 경로는 기준 디렉터리 밖을 가리키면 지우지 않는다. 실패는 로그만 남긴다.
-	 * TODO(REC-1): recording_segment 의 raw 조각도 여기서 지운다.
+	 * raw 조각은 여기서 지우지 않는다: 병합(RecordingMergeService)이 FILE_DELETED 를 보고 조각 파일 · 행을 지우고,
+	 * 늦게 온 조각은 RecordingSegmentService 가 바로 지운다(REC-1).
 	 *
 	 * @param vodFilePath   {@code vod/<uuid>.mp4}, 없으면 null
 	 * @param thumbnailPath {@code thumbnails/<broadcastId>.jpg}, 없으면 null

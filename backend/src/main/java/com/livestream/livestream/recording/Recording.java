@@ -75,4 +75,27 @@ public class Recording extends BaseEntity {
 			status = RecordingStatus.PROCESSING;
 		}
 	}
+
+	/** 병합 성공(REC-1). 호출 전에 status 가 PROCESSING 인지 확인한다. */
+	public void markReady(String filePath, Integer durationSeconds, long sizeBytes) {
+		this.status = RecordingStatus.READY;
+		this.filePath = filePath;
+		this.durationSeconds = durationSeconds;
+		this.sizeBytes = sizeBytes;
+		this.failureReason = null;
+	}
+
+	/** 병합 실패(REC-1). 사유는 앞 200자만 남긴다. */
+	public void markFailed(String reason) {
+		this.status = RecordingStatus.FAILED;
+		this.failureReason = reason == null ? null
+				: reason.codePointCount(0, reason.length()) <= FAILURE_REASON_MAX ? reason
+				: reason.substring(0, reason.offsetByCodePoints(0, FAILURE_REASON_MAX));
+	}
+
+	public boolean isProcessing() {
+		return status == RecordingStatus.PROCESSING;
+	}
+
+	private static final int FAILURE_REASON_MAX = 200;
 }
