@@ -154,6 +154,7 @@ livestream/
 | `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
 | `app.jwt.secret` / `app.jwt.access-minutes` / `app.jwt.refresh-days` | — / 15 / 14 | 기존 `custom.jwt.secret`을 `app.jwt.secret`으로 옮긴다 |
 | `app.seed.enabled` | false | 시드 투입 |
+| `spring.task.scheduling.pool.size` | 4 | 기본 스케줄러가 스레드 1개라 썸네일 캡처(방송당 최대 10초)가 유예 종료 · 보관 정리 스케줄러를 막지 않게 |
 | `app.public-url` | `http://localhost` | 안내 문자열(WHIP URL 등)에 사용 |
 
 ### 4.2 패키지 구조 (`backend/src/main/java/com/livestream/livestream`)
@@ -232,7 +233,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `POST /internal/mediamtx/not-ready` | 먼저 MediaMTX `GET /v3/paths/get/live/<channelId>`로 **송출자가 아직 붙어 있으면 무시**(훅 순서가 뒤바뀌어 송출 중 방송이 끊긴 것으로 처리되는 것 방지). 방송이 LIVE면 DISCONNECTED + `disconnected_at=now`, `status(disconnected)` 이벤트. 그 외 무시(멱등) |
 | `DisconnectGraceScheduler`(10초마다) | `DISCONNECTED AND disconnected_at < now - grace` → `end(broadcast, reason=GRACE_TIMEOUT)` |
 | `POST /api/broadcasts/{id}/end` (소유자) → **204** | `end(broadcast, reason=OWNER)`: ENDED면 409 `BROADCAST_ALREADY_ENDED`. ENDED + `ended_at` 저장 **후** `MediaMtxClient.kickPublisher("live/<channelId>")`(LIVE였을 때만). kick 실패는 로그만(이미 ENDED라 이후 훅은 무시) |
-| `DELETE /api/broadcasts/{id}` (소유자) | LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. recording `FILE_DELETED`로 바꾼 **뒤** 녹화 파일(vod · raw · 썸네일) 삭제. **그 recording의 댓글은 물리 삭제**(`deleteByRecordingId`, soft delete라 cascade가 안 일어나므로). 후원은 그대로. 이후 `GET /recordings/{id}` · 댓글 엔드포인트는 broadcast가 삭제된 recording에 404 |
+| `DELETE /api/broadcasts/{id}` (소유자) → 204 | **잠금 순서 channel → broadcast → recording**(`PESSIMISTIC_WRITE`로 recording을 읽는다 — 일반 SELECT는 RR 스냅숏이라 병합이 막 커밋한 READY · file_path를 FILE_DELETED 갱신이 덮어써 고아 vod가 남는다). LIVE/DISCONNECTED면 먼저 `end`. `deleted_at=now`. recording `FILE_DELETED`로 바꾼 **뒤** 녹화 파일(vod · raw · 썸네일 — `thumbnail_path`가 아직 null이어도 `thumbnails/<id>.jpg`는 지운다) 삭제. **그 recording의 댓글은 물리 삭제**(`deleteByRecordingId`, soft delete라 cascade가 안 일어나므로). 후원은 그대로. 이후 `GET /recordings/{id}` · 댓글 엔드포인트는 broadcast가 삭제된 recording에 404 |
 | `end` 공통 | 트랜잭션 안: ENDED + `ended_at`, recording을 `PROCESSING`으로. **커밋 뒤** 순서대로: ① **publish 차단** `PublishBlockRegistry.block(channelId, end-block-seconds)`(메모리 `Map<channelId, Instant>`) ② kick(LIVE였을 때) ③ `status(ended)` 이벤트 ④ `BroadcastEndedEvent(broadcastId, channelId, recordingId)` 발행(`ApplicationEventPublisher`). REC-1의 병합 enqueue(§4.10)와 CHAT-1의 버퍼 정리(§4.14)는 이 이벤트의 `@EventListener`로 붙는다(BC-1은 이벤트만 발행). 인증 콜백(§4.9)이 이 시간 동안 그 채널의 publish를 401로 거절해, kick당한 OBS · WhipClient의 자동 재연결이 새 방송을 만들지 못하게 한다. 차단이 끝난 뒤에도 OBS가 계속 재연결하면 **새 방송이 시작되는 것이 의도된 동작**(README · S5 안내: "사이트에서 종료한 뒤 OBS도 중지하세요") |
 
 - `MediaMtxClient.kickPublisher(path)`: `GET /v3/paths/get/{path}` → `source.type` · `source.id` → `POST /v3/webrtcsessions/kick/{id}` 또는 `/v3/rtmpconns/kick/{id}` (`RestClient`, 타임아웃 3초).
@@ -273,13 +274,13 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.10 녹화 → 다시보기 (`recording`)
 - 조각 수집: `POST /internal/mediamtx/segment-complete` `{path, segmentPath}` → 채널의 현재(LIVE/DISCONNECTED/ENDED 직후) 방송의 recording에 `recording_segment` 추가(sequence = count+1). 방송을 못 찾으면 로그만.
-- 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다**. 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
+- 병합은 `BroadcastEndedEvent`(§4.6)의 `@EventListener`가 `RecordingMergeService.enqueue(event.recordingId())`를 부르며 시작(`@Async`, 단일 스레드 풀): 시작 시 recording을 다시 읽어 **status가 PROCESSING이 아니면(삭제로 FILE_DELETED 등) 아무것도 하지 않고 끝낸다** — 진행 중 방송을 삭제하면 `BroadcastEndedEvent`가 recording이 이미 FILE_DELETED인 채로 발행되므로 이 검사는 필수. recording을 잠글 때는 삭제와 같은 **channel → broadcast → recording** 순서(데드락 방지). 조각이 0개면 FAILED(`NO_SEGMENTS`) → `ffmpeg -f concat -safe 0 -i list.txt -c copy -movflags +faststart <dir>/vod/<uuid>.mp4` → 성공: 저장 직전 새 트랜잭션에서 status를 다시 확인해 PROCESSING일 때만 READY(duration은 `ffprobe`, 파일 크기)로 바꾸고 raw 조각 삭제; 그 사이 FILE_DELETED가 됐으면 만든 vod 파일을 지운다. 실패: FAILED + `failure_reason`(앞 200자). 타임아웃 10분.
 - 재시도: `POST /api/recordings/{id}/retry-merge`(소유자, FAILED일 때) — 선택 구현.
 - 보관 `RecordingRetentionScheduler` 매일 04:00: `READY AND created_at < now - retention` → vod 파일 삭제, `FILE_DELETED`, `file_deleted_at`.
 - 서빙: PUBLIC → `videoUrl = "/vod/<uuid>.mp4"`(Caddy 정적). PRIVATE → `POST /api/recordings/{id}/video-token` → `{token}`(HS256, `sub=recordingId`, 5분) → `videoUrl = "/api/recordings/{id}/video?token=…"` → `GET`은 토큰 검증 후 `ResourceRegion`으로 Range 응답(`video/mp4`).
 
 ### 4.11 썸네일 캡처 (`thumbnail`)
-`ThumbnailCaptureScheduler` `interval-seconds`마다 LIVE 방송 각각: `ffmpeg -rtsp_transport tcp -i {rtsp-url}/live/<channelId> -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/<broadcastId>.jpg`(타임아웃 10초, 실패는 로그). 성공 시 `broadcast.thumbnail_path = "thumbnails/<broadcastId>.jpg"`(최초 1회만 갱신; 파일은 매번 덮어씀). 응답 `thumbnailUrl = "/uploads/" + path`, null이면 프론트가 기본 이미지.
+`ThumbnailCaptureScheduler` `interval-seconds`마다 LIVE 방송 각각: `ffmpeg -rtsp_transport tcp -i {rtsp-url}/live/<channelId> -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/<broadcastId>.tmp.jpg`(타임아웃 10초, 실패는 로그) → 성공하면 **원자적으로 `<broadcastId>.jpg`로 rename**(Caddy가 쓰다 만 파일을 서빙하지 않게). 캡처가 끝난 뒤 방송이 LIVE가 아니거나 삭제됐으면 결과 파일을 버린다. `broadcast.thumbnail_path = "thumbnails/<broadcastId>.jpg"`는 `UPDATE … WHERE thumbnail_path IS NULL`로 처음 한 번만 채운다(파일은 매번 덮어씀). 응답 `thumbnailUrl = "/uploads/" + path`, null이면 프론트가 기본 이미지.
 
 ### 4.12 댓글 · 게시글
 - 댓글은 한 테이블, 대상은 `recording_id` 또는 `post_id` 중 하나. `parent_id`가 있으면 parent의 `parent_id`가 null이어야 한다(아니면 409 `COMMENT_DEPTH_EXCEEDED`), parent와 같은 대상이어야 한다.
@@ -330,7 +331,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `POST /channels/me/widget-key/rotate` | 로그인 | → `{widgetKey, widgetUrl}` |
 | `GET /channels/{id}/broadcasts?page=` | 누구나 | ENDED이고 recording READY·PUBLIC인 방송 기록(최신순) |
 | `GET /channels/{id}/posts?page=` · `POST /channels/me/posts` | 누구나 / 주인 | `{title, content}` |
-| `GET /broadcasts?status=LIVE&category=&page=&size=20` | 누구나 | 시청자 수 내림차순 → startedAt. `BroadcastSummary {id, title, category:{code,label}, thumbnailUrl, status, startedAt, viewerCount, channel:{id, name}}` |
+| `GET /broadcasts?status=LIVE&category=&page=&size=20` | 누구나 | `status`는 `LIVE`(기본) · `DISCONNECTED`만(ENDED는 400 `VALIDATION_ERROR` — 지난 방송은 `/recordings` · `/channels/{id}/broadcasts`). 시청자 수가 메모리 값이라 진행 중 방송을 모두 읽어 **메모리에서** 정렬 · 페이징: 시청자 수 내림차순 → startedAt 내림차순 → id 내림차순. `BroadcastSummary {id, title, category:{code,label}, thumbnailUrl, status, startedAt, viewerCount, channel:{id, name}}` |
 | `GET /broadcasts/{id}` | 누구나 | `BroadcastDetail = Summary + {endedAt, source, viewerCount, recommendedMode:"whep"|"grid", play:{whepUrl:"/live/{channelId}/whep", hlsUrl:"/live/{channelId}/index.m3u8"}, donationTotal, recording:{id, status, visibility}(null 가능), isOwner}` |
 | `GET /broadcasts/{id}/recommendations` | 누구나 | 다른 채널 LIVE: 같은 카테고리 → 시청자 수, 최대 4 / 없으면 최근 공개 다시보기 4 → `{lives:[Summary], recordings:[RecordingSummary]}` |
 | `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end`(204) · `DELETE /broadcasts/{id}`(204) | 주인 | §4.6 |
