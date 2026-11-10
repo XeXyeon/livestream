@@ -315,7 +315,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
   - `history` `{type:"history", messages:[chat|donation …]}` — 구독 직후 그 세션에만(`convertAndSendToUser` 대신 `SessionSubscribeEvent`에서 세션 id 헤더로 전송)
 - 전송 `/app/broadcasts/{id}/chat` `{content(1~200)}` → 방송 LIVE/DISCONNECTED 확인 → 버퍼 추가 → 토픽 발행.
 - `ChatBufferService`: 방송별 `ArrayDeque`(최대 50, chat + donation). `BroadcastEndedEvent`(§4.6) `@EventListener`에서 30분 뒤 제거 예약.
-- `ViewerCounter`: `SessionSubscribeEvent`(목적지가 `/topic/broadcasts/{id}`) · `SessionUnsubscribeEvent` · `SessionDisconnectEvent`로 방송별 세션 집합. `viewer-broadcast-interval-seconds`마다 변화가 있으면 `viewers` 발행. `count(broadcastId)`를 `GET /api/broadcasts/{id}`가 사용.
+- `ViewerCounter`: `SessionSubscribeEvent`(목적지가 `/topic/broadcasts/{id}`) · `SessionUnsubscribeEvent` · `SessionDisconnectEvent`로 방송별 세션 집합. **채널 주인의 구독은 세지 않는다**(구독 시 principal의 memberId가 그 방송 채널의 `member_id`와 같으면 집합에 넣지 않음 — 스튜디오 S3 · S4도 같은 토픽을 구독하므로 그대로 두면 방송인이 항상 1명으로 잡히고, 시연 임계값 2에서는 실제 시청자 1명에 그리드 전환이 난다; 주인의 탭이 여러 개여도 모두 제외). 익명 구독은 센다. `viewer-broadcast-interval-seconds`마다 변화가 있으면 `viewers` 발행. `count(broadcastId)`를 `GET /api/broadcasts/{id}`가 사용.
 - 서버 재시작 시 버퍼 · 카운터는 0부터(허용).
 
 ### 4.15 공개 연동 SSE (`integration`)
@@ -509,7 +509,7 @@ frontend/src/
 
 ### CHAT-1 STOMP 채팅 · 이벤트 · 시청자 수
 - 읽을 절: §4.14, §4.6 이벤트 발행 지점. 의존성 `spring-boot-starter-websocket`. `BroadcastEventPublisher` 실구현, `ViewerCounter` 실구현(BC-2 연결).
-- 완료: 통합 테스트(STOMP 클라이언트): 익명 구독 · history 수신, 로그인 전송 · 브로드캐스트, 익명 전송 거부, 구독 수 카운트. 버퍼 50 초과 시 오래된 것 제거.
+- 완료: 통합 테스트(STOMP 클라이언트): 익명 구독 · history 수신, 로그인 전송 · 브로드캐스트, 익명 전송 거부, 구독 수 카운트(채널 주인의 구독은 0으로 셈). 버퍼 50 초과 시 오래된 것 제거.
 
 ### FE-5 채팅 UI
 - 읽을 절: §6.6, §6.7 S2 · S3 ChatPanel. FE-4의 폴링을 STOMP `status` · `viewers`로 교체(폴링은 30초 백업).
