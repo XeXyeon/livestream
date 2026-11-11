@@ -105,6 +105,8 @@ function startHlsJs() {
       core: {
         isP2PDisabled: !p2pEnabled,
         announceTrackers: [trackerUrl],
+        // 기본 스웜 id는 재생목록 절대 URL이라 localhost · LAN IP로 붙은 시청자가 서로 다른 스웜이 된다.
+        swarmId: `/live/${channelId}/index.m3u8`,
         ...(useStun ? {} : { rtcConfig: { iceServers: [] } }),
       },
       onHlsJsCreated: (created) => {
