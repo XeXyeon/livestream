@@ -81,3 +81,13 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const body = await response.text()
   return (body ? JSON.parse(body) : undefined) as T
 }
+
+/** 값이 없는 키는 뺀 `?a=1&b=2` (없으면 빈 문자열) */
+export function toQueryString(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value))
+  }
+  const text = search.toString()
+  return text ? `?${text}` : ''
+}
