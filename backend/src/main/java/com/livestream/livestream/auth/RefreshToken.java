@@ -5,6 +5,7 @@ import com.livestream.livestream.member.Member;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -21,7 +22,10 @@ import lombok.NoArgsConstructor;
  */
 @Getter
 @Entity
-@Table(name = "refresh_token", uniqueConstraints = @UniqueConstraint(name = "uk_refresh_token_hash", columnNames = "token_hash"))
+@Table(name = "refresh_token",
+		uniqueConstraints = @UniqueConstraint(name = "uk_refresh_token_hash", columnNames = "token_hash"),
+		// 만료 행 정리(RefreshTokenCleanupScheduler)가 테이블 전체를 훑고 잠그지 않게 한다.
+		indexes = @Index(name = "idx_refresh_token_expires_at", columnList = "expires_at"))
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RefreshToken extends BaseEntity {
 
