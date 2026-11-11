@@ -377,7 +377,7 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
 frontend/src/
 ├─ main.tsx · App.tsx(라우터 · QueryClient · 부트스트랩 refresh)
 ├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · types.ts(응답 타입 = §4.16)
-├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear) · player.ts(mode · stats)
+├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear)   ※ player.ts(mode · stats)는 두지 않는다 — 모드 · 통계는 Player 안의 로컬 상태(GRID-2). 다른 화면이 모드를 읽어야 할 때 store로 옮긴다
 ├─ media/      mixer.ts · whip.ts · whep.ts · gridPlayer.ts · devices.ts(기기 감지)
 ├─ ws/         stomp.ts(연결 · 구독 · 전송, 토큰 헤더)
 ├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · common/(Button · Input · Modal · Spinner · Thumbnail)
@@ -427,7 +427,12 @@ frontend/src/
 
 `media/whep.ts` — `class WhepPlayer { attach(video, url) ; close() ; onState(cb) }`: `addTransceiver('video', recvonly)` · `('audio', recvonly)`, offer → `POST url`(헤더 없음) → answer, `ontrack`으로 `video.srcObject`. 끊기면 `'waiting'`; `status: LIVE` 이벤트가 오면 재연결.
 
-`media/gridPlayer.ts` — `createGridPlayer(video, hlsUrl, { trackerUrl, onStats })`: `HlsJsP2PEngine`(p2p-media-loader) + `Hls({ lowLatencyMode: true, liveSyncDuration: 1.5 })`, `announceTrackers: [wss://<host>/tracker]`, swarm id = hlsUrl. 통계: `onChunkDownloaded(bytes, source: 'http'|'p2p')`, `onChunkUploaded(bytes)` → 누적 → `onStats({ httpBytes, p2pDownBytes, p2pUpBytes, peers })`. **GRID-1 PoC에서 API 이름을 실제 라이브러리 버전으로 맞춘다.**
+`media/gridPlayer.ts` — `createGridPlayer(video, hlsUrl, { trackerUrl, onStats })`: `HlsJsP2PEngine`(p2p-media-loader 2.3.x) + `Hls(GRID_HLS_CONFIG)`, `announceTrackers: [wss://<host>/tracker]`. 통계: `onChunkDownloaded(bytes, source: 'http'|'p2p')`, `onChunkUploaded(bytes)` → 누적 → `onStats({ httpBytes, p2pDownBytes, p2pUpBytes, peers })`. GRID-1 · GRID-2에서 정해진 것(구현 `1125b03` · `2db679b` 기준, 설계보다 우선):
+- **`GRID_HLS_CONFIG = { lowLatencyMode: false, liveSyncDuration: 6 }`**, 코어 `GRID_P2P_CORE_CONFIG = { highDemandTimeWindow: 2 }`. p2p-media-loader는 LL-HLS part를 P2P로 받지 않고, 재생 위치에서 highDemand 창(기본 15초) 안의 세그먼트는 곧바로 HTTP로 받는다. 그래서 그리드 모드는 지연(7~8초 예상)을 내주고 세그먼트 단위로 받아 피어 교환 틈을 만든다. 기본 모드(WHEP)는 영향 없음. `liveSyncDuration`을 직접 줘야 엔진이 `liveSyncDurationCount`를 크게 늘리지 않는다. 서버 쪽 LL-HLS 설정(§2.3)은 그대로이며, 같은 스트림을 그리드는 비LL로, 다른 소비자는 LL로 쓸 수 있다.
+- hls.js는 `lowLatencyMode`를 꺼도 서버가 `CAN-BLOCK-RELOAD=YES`면 재생목록을 `?_HLS_msn=…&_HLS_part=…`로 다시 받고, 그러면 P2P 엔진이 재생목록을 잃는다. 재생목록 응답 주소에서 `_HLS_msn` · `_HLS_part` · `_HLS_skip`을 빼는 playlist loader를 끼운다.
+- **swarm id = 경로 `/live/{channelId}/index.m3u8`**(`swarmIdOf(hlsUrl)`), 전체 URL이 아니다. 접속 호스트(localhost · 운영 도메인 · IP)가 달라도 같은 스웜이 되게 한다.
+- P2P 코어는 Vite `resolve.conditions`의 `p2pml:core-as-bundle`(폴리필 포함 번들)로 불러온다. 새 의존성 없음.
+- 재측정(기기 3대)에서 절감이 모자라면 재기획: **B** MediaMTX `hlsSegmentCount`를 늘리고(기본 7, 1초 세그먼트라 지금은 sync를 6초보다 키울 수 없음) sync 10초 이상, 또는 **C** §8의 비LL 변형(`hlsVariant` 변경). 둘 다 infra 변경이라 GRID-2 세션이 측정 결과와 함께 지휘 세션 · 설계자에게 올린다.
 
 `components/player/Player.tsx` — props `{ broadcast, initialMode }`. 상태 `mode: 'whep'|'grid'`(초기값 `recommendedMode`), `ModeToggle`로 전환(이전 플레이어 `close()` 후 생성), `PlayerStats`는 grid일 때 "서버 n MB · 피어 m MB · 절감 k% · 피어 p명". `status` 이벤트: `DISCONNECTED` → 오버레이 "방송인 연결이 끊겼습니다. 재연결을 기다리는 중…", `ENDED` → 종료 화면(`EndedView`: 안내 · 다시보기 버튼(recording READY면 활성, 아니면 "준비 중") · `RecommendList`).
 
@@ -452,7 +457,7 @@ frontend/src/
 ## 8. 미확인 위험 · PoC (구현 항목에서 먼저 확인)
 | 위험 | 어디서 | 안 되면 |
 |---|---|---|
-| LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 | GRID-1 | `hlsVariant: mpegts`/일반 fMP4 HLS(3~6초)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
+| LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 — **확인(GRID-1): part는 P2P로 안 받는다.** 클라이언트만 비LL로(`lowLatencyMode: false`, sync 6초, §6.5) 세그먼트 단위 교환으로 대응 중, 절감률은 GRID-2 재측정 대기 | GRID-1 → GRID-2 | 재측정이 모자라면 B(`hlsSegmentCount` 증가 + sync 10초 이상) 또는 C(`hlsVariant` 비LL 변형)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
 | OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
