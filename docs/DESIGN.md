@@ -118,8 +118,8 @@ SPRING_DATASOURCE_PASSWORD=livestream
 JWT_SECRET=32바이트_이상
 APP_MEDIAMTX_API_URL=http://mediamtx:9997
 APP_MEDIAMTX_INTERNAL_TOKEN=${INTERNAL_TOKEN}
-APP_TOSS_CLIENT_KEY=test_ck_...
-APP_TOSS_SECRET_KEY=test_sk_...
+APP_TOSS_CLIENT_KEY=test_gck_...   # 결제위젯 키(gck · gsk). ck · sk(API 개별 연동 키)는 결제창 SDK용이라 위젯에 못 쓴다(§4.13)
+APP_TOSS_SECRET_KEY=test_gsk_...
 APP_GRID_THRESHOLD=100
 APP_SEED_ENABLED=false
 APP_RECORDING_RETENTION_DAYS=30
@@ -299,6 +299,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 게시글: 채널 주인만 작성 · 수정 · 삭제(물리 삭제, 댓글 cascade). 본문 텍스트(최대 5,000자).
 
 ### 4.13 후원 (`donation`, Toss 결제위젯 v2 · 테스트 키)
+- **키 종류(DON-1#2 결정):** 결제위젯 v2를 유지하고 키는 **결제위젯 테스트 키 `test_gck_…`(클라이언트) · `test_gsk_…`(시크릿)**를 쓴다. 개발자센터 가입만으로 보이는 API 개별 연동 키(`test_ck_` · `test_sk_`)는 결제창(구 SDK) · 브랜드페이용이라 위젯 SDK가 거부한다. 결제위젯 키는 전자결제 신청 뒤에 발급되므로, 그 전에는 토스 문서가 공개한 결제위젯 테스트 키(`test_gck_docs_…` / `test_gsk_docs_…`, docs.tosspayments.com API 키 문서)를 `.env`에 넣어 쓴다 — 코드 변경 없이 `.env`만 바꾸면 자기 키로 교체된다. 백엔드 confirm은 `Basic base64(secretKey + ':')`라 어느 키든 같다. 문서 공개 키로 한 테스트 결제는 자기 개발자센터 대시보드에 보이지 않는다(받아들임).
 1. `POST /api/broadcasts/{id}/donations` `{amount(1000~100000, 1000 단위 아님 허용), message(≤100, 선택)}` → 로그인 · 방송 LIVE/DISCONNECTED 검증 → `donation`(PENDING, `order_id = UUID`, channel_id = 방송 채널) → 201 `{donationId, orderId, amount, clientKey, orderName:"후원", customerName:<닉네임>}`.
 2. 프론트 결제위젯 결제 → 성공 콜백 `{paymentKey, orderId, amount}`.
 3. `POST /api/donations/confirm` `{paymentKey, orderId, amount}`(로그인, 본인 후원만):
