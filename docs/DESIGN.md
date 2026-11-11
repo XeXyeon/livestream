@@ -64,7 +64,7 @@
 |---|---|---|
 | `/api/*` | `backend:8080` | `flush_interval -1`(SSE) |
 | `/ws` | `backend:8080` | WebSocket 업그레이드 |
-| `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`) | 경로 끝으로 분기 |
+| `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`, `.ts`) · **그 외는 `/*`와 같은 프론트 서빙** | 경로 끝으로 분기. SPA 시청 화면 `/live/:channelId`(§6.3)와 접두어가 겹치므로, 미디어 모양이 아닌 경로는 404가 아니라 index.html을 내준다(정적 모드 `try_files`, dev 모드 Vite 프록시 모두). 주소창으로 바로 열거나 새로고침해도 시청 화면이 떠야 한다(OPS-3#1) |
 | `/vod/*` | 정적 `/srv/media/vod` | mp4, Range. **공개 영상만** 이 폴더에 있다. 비공개 영상은 `/srv/media/private`에 있어 Caddy가 내주지 않는다(§4.10) |
 | `/uploads/*` | 정적 `/srv/uploads` | 썸네일 |
 | `/tracker` | `tracker:8000` | WebSocket |
@@ -460,7 +460,7 @@ frontend/src/
 
 ### OPS-3 로컬 실행 환경
 - 읽을 절: §2.1~2.4, §7. `infra/compose.yaml`, `compose.dev.yaml`, `Caddyfile`, `mediamtx.yml`, `tracker/`, `.env.example`. `application.yaml`에 §4.1 `app.*` 전부(기본값) + `AppProperties`(`@ConfigurationProperties("app")`).
-- 완료: `docker compose -f infra/compose.dev.yaml up`로 MySQL · MediaMTX · Caddy · tracker가 뜨고, IDE에서 backend 실행 후 `https://localhost/api/...`가 프록시되며, OBS로 `rtmp://localhost/live` + `1?user=obs&pass=x`가 MediaMTX에 닿는다(인증 콜백은 BC-1 전이라 `authMethod: internal`로 잠시 두고 주석으로 표시).
+- 완료: `docker compose -f infra/compose.dev.yaml up`로 MySQL · MediaMTX · Caddy · tracker가 뜨고, IDE에서 backend 실행 후 `https://localhost/api/...`가 프록시되며, OBS로 `rtmp://localhost/live` + `1?user=obs&pass=x`가 MediaMTX에 닿는다(인증 콜백은 BC-1 전이라 `authMethod: internal`로 잠시 두고 주석으로 표시). `https://localhost/live/<channelId>`를 주소창에 직접 입력하거나 새로고침해도 SPA가 뜬다(`/live/*` 블록의 마지막 handle이 프론트 서빙, §2.2).
 
 ### AUTH-1 회원가입 · 로그인 · 갱신 · 로그아웃
 - 읽을 절: §4.2 common/auth/member, §4.3 member · refresh_token · channel(자동 생성만, 나머지 채널 로직은 CH-1), §4.4, §4.7, §4.8의 공개 경로. `channel` 엔티티는 여기서 만든다(CH-1이 확장).
