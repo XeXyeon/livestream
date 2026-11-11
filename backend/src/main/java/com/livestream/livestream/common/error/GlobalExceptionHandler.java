@@ -14,6 +14,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -81,6 +82,11 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler({AccessDeniedException.class, AuthenticationException.class})
 	public void rethrowSecurity(Exception e) throws Exception {
 		throw e;
+	}
+
+	/** 클라이언트가 끊은 비동기 응답(SSE 등): 쓸 수 없는 응답이므로 아무것도 쓰지 않고 로그도 남기지 않는다. */
+	@ExceptionHandler(AsyncRequestNotUsableException.class)
+	public void handleDisconnected(AsyncRequestNotUsableException e) {
 	}
 
 	@ExceptionHandler(Exception.class)
