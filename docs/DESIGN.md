@@ -188,7 +188,7 @@ seed/        SeedRunner
 
 | 테이블 | 컬럼 | 제약 |
 |---|---|---|
-| `member` | `email VARCHAR(255)`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt |
+| `member` | `email VARCHAR(255) COLLATE utf8mb4_bin`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt. **email은 `utf8mb4_bin`**(`@Column(columnDefinition = "VARCHAR(255) COLLATE utf8mb4_bin")`, AUTH-1#4): MySQL 8 기본 `utf8mb4_0900_ai_ci`는 악센트 · 전각 · ß/ss를 같게 보아 `findByEmail`이 다른 글자의 이메일을 같은 회원으로 잡고 로그인 제한 키(§4.7)와 어긋난다. 가입 · 로그인이 `strip` + 소문자로 정규화하므로 bin이어도 대소문자 문제는 없다. `ddl-auto=update`는 기존 컬럼의 콜레이션을 바꾸지 않으므로 이미 만들어진 로컬 DB는 `ALTER TABLE member MODIFY email VARCHAR(255) COLLATE utf8mb4_bin NOT NULL`을 손으로 하거나 볼륨을 지운다(운영 DB는 OPS-5 전이라 없음) |
 | `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | **unique(token_hash)**(AUTH-1에서 index → unique로 바꿈: 해시 조회 시 gap lock 데드락 방지). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
 | `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
 | `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
@@ -251,7 +251,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
 - **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. **예외: `/api/auth/**`는 필터가 검사하지 않는다** — 로그아웃 · 로그인 · refresh는 만료된 access가 헤더에 남아 있어도 처리돼야 한다(`apiFetch`가 `/auth/` 경로에서는 refresh 재시도를 하지 않으므로, 여기서 401을 주면 refresh 쿠키가 폐기되지 않은 채 로그아웃이 실패한다). BC-1(334dd03)에서 구현됨.
 - **시도 횟수 제한(AUTH-1#1 결정):** `auth/AuthRateLimiter` — `ChatRateLimiter`와 같은 고정 창 · 인메모리 · 서버 1대 가정, 지난 창은 스케줄러가 지운다. 한도는 §4.1 `app.auth.*`.
-  - 로그인: 키 = **클라이언트 IP + 정규화한 이메일**(`AuthService`의 `strip` + 소문자와 같은 규칙). 창(300초) 안 **실패**가 `login-max-failures`(10)에 이르면 그 다음부터 429 `TOO_MANY_REQUESTS`. 검사는 DB 조회 · BCrypt 비교 **전에** 하고, 실패(`LOGIN_FAILED`)일 때만 세며, 성공하면 그 키의 카운터를 지운다. 이메일만 키로 쓰면 남의 계정을 잠글 수 있어 IP를 함께 쓴다(한 IP가 이메일을 바꿔 가며 찌르는 것은 막지 못한다 — 받아들인 한계).
+  - 로그인: 키 = **클라이언트 IP + 정규화한 이메일**(`AuthService`의 `strip` + 소문자와 같은 규칙. 구현은 NFKD · 악센트 제거까지 접는데, `member.email`이 `utf8mb4_bin`이라(§4.3) DB 비교가 제한 키보다 엄격하므로 글자를 바꾼 이메일로 제한을 피하면서 같은 계정을 맞히는 경로는 없다). 창(300초) 안 **실패**가 `login-max-failures`(10)에 이르면 그 다음부터 429 `TOO_MANY_REQUESTS`. 검사는 DB 조회 · BCrypt 비교 **전에** 하고, 실패(`LOGIN_FAILED`)일 때만 세며, 성공하면 그 키의 카운터를 지운다. 이메일만 키로 쓰면 남의 계정을 잠글 수 있어 IP를 함께 쓴다(한 IP가 이메일을 바꿔 가며 찌르는 것은 막지 못한다 — 받아들인 한계).
   - 가입: 키 = **클라이언트 IP**. 창 안 요청이 `signup-max-attempts`(10)에 이르면 429. 성공 · 실패를 가리지 않고 요청마다 센다(검증 전에 검사).
   - 클라이언트 IP: `HttpServletRequest.getRemoteAddr()`. Caddy의 `reverse_proxy`는 `trusted_proxies`가 없으면 들어온 `X-Forwarded-*`를 버리고 실제 접속 IP만 `X-Forwarded-For`에 넣으며, Spring은 `server.forward-headers-strategy=native`로 그 값을 `getRemoteAddr()`에 반영한다(§4.1). backend 컨테이너는 compose에서 포트를 공개하지 않아 Caddy 말고는 닿지 않는다.
   - 응답 형식은 §4.4 그대로(`message`: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"). 프론트는 분기 없이 `message`를 보여 준다. refresh · logout에는 제한을 두지 않는다(쿠키 기반이라 무차별 대입 대상이 아님).
@@ -474,6 +474,7 @@ frontend/src/
 - 읽을 절: §4.2 common/auth/member, §4.3 member · refresh_token · channel(자동 생성만, 나머지 채널 로직은 CH-1), §4.4, §4.7, §4.8의 공개 경로. `channel` 엔티티는 여기서 만든다(CH-1이 확장).
 - 완료: 가입 → 로그인 → `/members/me` → refresh 회전 → 로그아웃 후 refresh 401 통합 테스트. 중복 409 테스트.
 - 추가(AUTH-1#1): `AuthRateLimiter` 단위 테스트(`Clock` 주입 — 10회 실패 뒤 429, 성공 시 초기화, 창이 지나면 다시 허용, 다른 IP · 다른 이메일은 영향 없음) + 로그인 통합 테스트(11번째 실패가 429 · `Retry-After` 있음, 429일 때 BCrypt · DB 조회가 안 일어남은 로그나 mock으로). 가입은 IP당 11번째 요청 429. `X-Forwarded-For`를 사설 IP에서 보낸 요청이 그 값을 키로 쓰는지 테스트 1개(MockMvc `remoteAddr` 127.0.0.1 + 헤더).
+- 추가(AUTH-1#4): 통합 테스트(Testcontainers MySQL) — `victim@example.com` 가입 뒤 `vīctim@example.com` · 전각 `ｖictim@example.com` 로그인이 `LOGIN_FAILED`(회원을 못 찾음)이고, 가입도 중복 409가 아니라 새 회원이 된다(콜레이션이 bin임을 동작으로 확인).
 
 ### FE-1 프론트 기반
 - 읽을 절: §6.1~6.4, S7. `App.tsx` 라우터(모든 경로를 placeholder 페이지로), `api/client.ts`, `store/auth.ts`, `Header`(로그인 상태 · 방송하기 버튼 → `/studio`), `Protected`, Login · Signup 페이지.
