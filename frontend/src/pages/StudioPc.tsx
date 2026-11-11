@@ -113,9 +113,10 @@ export default function StudioPc() {
       mediaRef.current = next
       setMedia(next)
     } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'NotAllowedError')) {
-        setShareError('화면 공유를 시작하지 못했습니다.')
-      }
+      // 선택 창 취소와 브라우저 차단(앱 내장 브라우저 등)은 둘 다 NotAllowedError라 구분하지 않고 함께 안내한다.
+      setShareError(cause instanceof DOMException && cause.name === 'NotAllowedError'
+        ? '화면 공유가 취소되었거나 이 브라우저에서 허용되지 않았습니다. Chrome에서 다시 시도해 주세요.'
+        : '화면 공유를 시작하지 못했습니다.')
     } finally {
       setSharing(false)
     }
