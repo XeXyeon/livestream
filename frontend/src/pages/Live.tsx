@@ -35,7 +35,13 @@ export default function Live() {
     queryKey: ['broadcast', broadcastId],
     queryFn: () => getBroadcast(broadcastId!),
     enabled: broadcastId !== null,
-    refetchInterval: (query) => (query.state.data?.status === 'ENDED' ? false : 5000),
+    // ENDED 뒤에도 녹화 병합이 끝날 때까지(RECORDING · PROCESSING) 15초마다 다시 봐서 다시보기 버튼을 켠다.
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (data?.status !== 'ENDED') return 5000
+      const pending = data.recording?.status === 'RECORDING' || data.recording?.status === 'PROCESSING'
+      return pending ? 15_000 : false
+    },
   })
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {

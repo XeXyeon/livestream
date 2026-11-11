@@ -51,7 +51,7 @@ export default function StudioSettings() {
         </div>
       </div>
 
-      <ChannelInfoForm key={`${data.name}|${data.description ?? ''}`} channel={data} onSave={(input) => update.mutateAsync(input)} />
+      <ChannelInfoForm key={data.id} channel={data} onSave={(input) => update.mutateAsync(input)} />
 
       <section className={card}>
         <h2 className="text-lg font-semibold">다시보기</h2>
