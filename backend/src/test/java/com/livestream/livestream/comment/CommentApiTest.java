@@ -12,6 +12,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.livestream.livestream.broadcast.BroadcastLifecycleService;
 import com.livestream.livestream.broadcast.BroadcastRepository;
 import com.livestream.livestream.broadcast.BroadcastSource;
+import com.livestream.livestream.broadcast.PublishBlockRegistry;
 import com.livestream.livestream.mediamtx.MediaMtxClient;
 import com.livestream.livestream.recording.RecordingRepository;
 import com.livestream.livestream.recording.Visibility;
@@ -45,10 +46,11 @@ class CommentApiTest {
 	@Autowired CommentRepository commentRepository;
 	@Autowired TransactionTemplate tx;
 	@MockitoBean MediaMtxClient mediaMtxClient;
+	@Autowired PublishBlockRegistry publishBlocks;
 
 	@Test
 	void 다시보기에_댓글과_대댓글을_쓰면_평면_목록으로_오고_댓글_수에_반영된다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
 
@@ -77,10 +79,10 @@ class CommentApiTest {
 
 	@Test
 	void 대댓글에_답글은_409_다른_대상의_댓글에_답글은_400() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
-		long otherRecordingId = endedRecording(TestAccounts.create(mvc)); // 같은 채널은 종료 뒤 30초 송출 차단
+		long otherRecordingId = endedRecording(streamer()); // 같은 채널은 종료 뒤 30초 송출 차단
 		long postId = writePost(owner);
 
 		long root = id(write(viewer, recordings(recordingId), "{\"content\":\"부모\"}"));
@@ -101,7 +103,7 @@ class CommentApiTest {
 
 	@Test
 	void 수정_삭제는_작성자만_채널_주인도_남의_댓글은_403() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account author = TestAccounts.create(mvc);
 		Account other = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
@@ -128,7 +130,7 @@ class CommentApiTest {
 
 	@Test
 	void 대댓글이_있는_댓글은_지워도_삭제된_댓글로_남고_없으면_목록에서_빠진다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
 		long withReply = id(write(viewer, recordings(recordingId), "{\"content\":\"답글 달린 글\"}"));
@@ -156,7 +158,7 @@ class CommentApiTest {
 
 	@Test
 	void 녹화가_READY_FILE_DELETED일_때만_댓글을_쓴다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		lifecycle.onReady(owner.channelId(), BroadcastSource.BROWSER_PC);
 		long broadcastId = broadcastRepository.findOngoing(owner.channelId()).orElseThrow().getId();
@@ -187,9 +189,9 @@ class CommentApiTest {
 	@Test
 	void 다시보기_목록의_댓글_수는_다시보기별로_센다() throws Exception {
 		Account viewer = TestAccounts.create(mvc);
-		long two = endedRecording(TestAccounts.create(mvc));
-		long one = endedRecording(TestAccounts.create(mvc));
-		long none = endedRecording(TestAccounts.create(mvc));
+		long two = endedRecording(streamer());
+		long one = endedRecording(streamer());
+		long none = endedRecording(streamer());
 		long root = id(write(viewer, recordings(two), "{\"content\":\"a\"}"));
 		write(viewer, recordings(two), "{\"content\":\"b\",\"parentId\":" + root + "}");
 		long deleted = id(write(viewer, recordings(two), "{\"content\":\"지울 것\"}"));
@@ -205,7 +207,7 @@ class CommentApiTest {
 
 	@Test
 	void 비공개_다시보기의_댓글은_주인만_보고_쓴다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
 		long id = id(write(viewer, recordings(recordingId), "{\"content\":\"공개일 때\"}"));
@@ -227,7 +229,7 @@ class CommentApiTest {
 
 	@Test
 	void 없는_대상은_404_비로그인_작성은_401_내용_검증은_400() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		long recordingId = endedRecording(owner);
 
 		mvc.perform(get(recordings(999_999_999L))).andExpect(status().isNotFound());
@@ -246,7 +248,7 @@ class CommentApiTest {
 
 	@Test
 	void 게시글_댓글을_쓰고_글_목록_상세의_댓글_수에_반영된다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long postId = writePost(owner);
 		long root = id(write(viewer, posts(postId), "{\"content\":\"좋은 글\"}")
@@ -265,7 +267,7 @@ class CommentApiTest {
 
 	@Test
 	void 게시글을_지우면_댓글과_대댓글도_지워진다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long postId = writePost(owner);
 		long root = id(write(viewer, posts(postId), "{\"content\":\"댓글\"}"));
@@ -281,7 +283,7 @@ class CommentApiTest {
 
 	@Test
 	void 방송을_지우면_다시보기_댓글이_물리_삭제된다() throws Exception {
-		Account owner = TestAccounts.create(mvc);
+		Account owner = streamer();
 		Account viewer = TestAccounts.create(mvc);
 		long recordingId = endedRecording(owner);
 		long broadcastId = recordingRepository.findById(recordingId).orElseThrow().getBroadcast().getId();
@@ -298,6 +300,20 @@ class CommentApiTest {
 	}
 
 	// ---------- 도우미 ----------
+
+	/**
+	 * 방송을 열 수 있는 계정. 캐시된 다른 테스트 컨텍스트가 같은 DB 를 create-drop 으로 다시 만들면 id 가 1부터 다시 매겨져,
+	 * 새 계정의 채널 id 가 이 컨텍스트의 송출 차단(종료 뒤 30초) 목록에 남은 id 와 겹칠 수 있다 → 차단되지 않은 계정을 고른다.
+	 */
+	private Account streamer() throws Exception {
+		for (int i = 0; i < 50; i++) {
+			Account a = TestAccounts.create(mvc);
+			if (!publishBlocks.isBlocked(a.channelId())) {
+				return a;
+			}
+		}
+		throw new IllegalStateException("송출 차단되지 않은 채널을 만들지 못했다");
+	}
 
 	/** 방송 시작 → 종료(PROCESSING) → READY(파일은 만들지 않는다 — 댓글에는 필요 없다) → 공개. 병합은 10초 뒤라 겹치지 않는다. */
 	private long endedRecording(Account a) {
