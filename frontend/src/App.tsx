@@ -8,7 +8,10 @@ import Home from './pages/Home'
 import Live from './pages/Live'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
+import StudioEntry from './pages/StudioEntry'
+import StudioMobile from './pages/StudioMobile'
 import StudioPc from './pages/StudioPc'
+import StudioSettings from './pages/StudioSettings'
 import Placeholder from './pages/Placeholder'
 
 const queryClient = new QueryClient()
@@ -27,10 +30,10 @@ function AppRoutes() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route element={<Protected />}>
-          <Route path="/studio" element={<Placeholder title="방송하기" />} />
+          <Route path="/studio" element={<StudioEntry />} />
           <Route path="/studio/pc" element={<StudioPc />} />
-          <Route path="/studio/mobile" element={<Placeholder title="모바일 스튜디오" />} />
-          <Route path="/studio/settings" element={<Placeholder title="채널 설정" />} />
+          <Route path="/studio/mobile" element={<StudioMobile />} />
+          <Route path="/studio/settings" element={<StudioSettings />} />
           <Route path="/me" element={<Placeholder title="마이페이지" />} />
         </Route>
         <Route path="*" element={<Placeholder title="페이지를 찾을 수 없습니다" />} />
