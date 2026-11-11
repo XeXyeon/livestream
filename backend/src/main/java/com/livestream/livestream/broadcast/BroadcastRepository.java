@@ -41,6 +41,10 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 	@Query("select b.channel.id from Broadcast b where b.id = :id and b.deletedAt is null")
 	Optional<Long> findChannelIdOf(Long id);
 
+	/** 방송 채널 주인의 member id (시청자 수에서 주인의 구독을 빼려고, CHAT-1). 삭제된 방송도 찾는다(주인은 바뀌지 않는다). */
+	@Query("select b.channel.member.id from Broadcast b where b.id = :id")
+	Optional<Long> findOwnerMemberIdOf(Long id);
+
 	/** 유예가 지난 DISCONNECTED 방송 id (DisconnectGraceScheduler). */
 	@Query("""
 			select b.id from Broadcast b
