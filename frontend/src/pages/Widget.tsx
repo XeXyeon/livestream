@@ -101,7 +101,7 @@ export default function Widget() {
         </div>
       )}
       {speechBlocked && (
-        <button type="button" onClick={unlockSpeech} className="absolute bottom-4 left-4 rounded-lg bg-black/70 px-3 py-2 text-sm text-white">
+        <button type="button" onClick={(event) => { event.stopPropagation(); unlockSpeech() }} className="absolute bottom-4 left-4 rounded-lg bg-black/70 px-3 py-2 text-sm text-white">
           화면을 한 번 클릭하면 음성 알림이 켜집니다
         </button>
       )}

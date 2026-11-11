@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSpeaker, pickKoreanVoice, speechTimeoutMs } from './speech'
+import { SPEECH_START_TIMEOUT_MS, createSpeaker, pickKoreanVoice, speechTimeoutMs } from './speech'
 
 const voice = (lang: string, localService = false, name = lang) => ({ lang, localService, name }) as SpeechSynthesisVoice
 
@@ -8,6 +8,7 @@ class FakeUtterance {
   lang = ''
   voice: SpeechSynthesisVoice | null = null
   onend: (() => void) | null = null
+  onstart: (() => void) | null = null
   onerror: ((event: { error: string }) => void) | null = null
   constructor(text: string) { this.text = text }
 }
@@ -63,5 +64,22 @@ describe('createSpeaker', () => {
     const speaker = createSpeaker({}, undefined)
     expect(speaker.supported).toBe(false)
     await expect(speaker.speak('x')).resolves.toBeUndefined()
+  })
+
+  it('읽기가 시작되지 않으면(음성 엔진 없음) 3초 뒤 포기하고, 시작했으면 끝까지 기다린다', async () => {
+    const speaker = createSpeaker({}, synth as unknown as SpeechSynthesis)
+    let first = false
+    void speaker.speak('a').then(() => { first = true })
+    await vi.advanceTimersByTimeAsync(SPEECH_START_TIMEOUT_MS)
+    expect(first).toBe(true)
+
+    let second = false
+    void speaker.speak('b').then(() => { second = true })
+    spoken[1].onstart?.()
+    await vi.advanceTimersByTimeAsync(SPEECH_START_TIMEOUT_MS)
+    expect(second).toBe(false)
+    spoken[1].onend?.()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(second).toBe(true)
   })
 })

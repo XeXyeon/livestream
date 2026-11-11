@@ -8,6 +8,8 @@ import type { WidgetDonation } from './alertQueue'
 export type WidgetStatus = 'connecting' | 'connected' | 'reconnecting' | 'invalid-key'
 
 export const WIDGET_REOPEN_MS = 5000
+export const WIDGET_REOPEN_MAX_MS = 30_000
+export const WIDGET_STATUS_TIMEOUT_MS = 5000
 
 type EventSourceLike = Pick<EventSource, 'addEventListener' | 'close' | 'readyState'> & {
   onerror: ((event: Event) => void) | null
@@ -24,15 +26,17 @@ export function widgetEventsUrl(widgetKey: string): string {
   return `/api/public/widget/${encodeURIComponent(widgetKey)}/events`
 }
 
-/** 닫힌 연결의 이유를 알아낸다. 200이면 스트림이 열리므로 헤더만 보고 끊는다. 네트워크 오류는 null. */
+/** 닫힌 연결의 이유를 알아낸다. 200이면 스트림이 열리므로 헤더만 보고 끊는다. 네트워크 오류 · 응답 없음(5초)은 null. */
 async function defaultFetchStatus(url: string): Promise<number | null> {
   const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), WIDGET_STATUS_TIMEOUT_MS)
   try {
     const response = await fetch(url, { headers: { Accept: 'text/event-stream' }, signal: controller.signal })
     return response.status
   } catch {
     return null
   } finally {
+    clearTimeout(timer)
     controller.abort()
   }
 }
@@ -46,13 +50,16 @@ export function subscribeWidgetEvents(widgetKey: string, options: Options): () =
   let source: EventSourceLike | null = null
   let reopenTimer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
+  let failures = 0
 
   const open = () => {
     if (stopped) return
     const current = createEventSource(url)
     source = current
     current.addEventListener('ready', () => {
-      if (source === current) options.onStatus('connected')
+      if (source !== current) return
+      failures = 0
+      options.onStatus('connected')
     })
     current.addEventListener('donation', (event) => {
       if (source !== current) return
@@ -73,7 +80,11 @@ export function subscribeWidgetEvents(widgetKey: string, options: Options): () =
           return
         }
         options.onStatus('reconnecting')
-        reopenTimer = setTimeout(open, WIDGET_REOPEN_MS)
+        // 상태 확인이 200이면 서버가 돌아온 것이므로 첫 번째는 바로 다시 연다(그래도 또 닫히면 기다린다).
+        // 실패가 이어지면 5초 → 10초 → 20초 → 30초. ready를 받으면 처음부터.
+        const wait = status === 200 && failures === 0 ? 0 : Math.min(WIDGET_REOPEN_MS * 2 ** failures, WIDGET_REOPEN_MAX_MS)
+        failures++
+        reopenTimer = setTimeout(open, wait)
       })
     }
   }

@@ -100,4 +100,22 @@ describe('subscribeWidgetEvents', () => {
     await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
     expect(FakeEventSource.instances).toHaveLength(1)
   })
+
+  it('서버 오류가 이어지면 5초 → 10초로 늘려 다시 열고, 상태 확인이 200이면 첫 번째는 바로 연다', async () => {
+    const statuses = [502, 502, 200]
+    subscribe(() => Promise.resolve(statuses.shift() ?? 502))
+    FakeEventSource.instances[0].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(2)
+    FakeEventSource.instances[1].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(3)
+
+    FakeEventSource.instances[2].emit('ready', '{}')
+    FakeEventSource.instances[2].fail(2) // ready 뒤 실패 횟수가 초기화돼 200이면 바로
+    await vi.advanceTimersByTimeAsync(0)
+    expect(FakeEventSource.instances).toHaveLength(4)
+  })
 })

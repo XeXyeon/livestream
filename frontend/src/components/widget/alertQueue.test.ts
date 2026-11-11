@@ -72,4 +72,15 @@ describe('AlertQueue', () => {
     await vi.runAllTimersAsync()
     expect(show).not.toHaveBeenCalled()
   })
+
+  it('읽기가 예외를 던져도 큐는 멈추지 않고 다음 후원으로 넘어간다', async () => {
+    const shown: (number | null)[] = []
+    const speak = vi.fn(() => { throw new Error('speak failed') })
+    const queue = new AlertQueue({ show: (d) => shown.push(d?.id ?? null), speak })
+    queue.push(donation(1))
+    await vi.runAllTimersAsync()
+    queue.push(donation(2))
+    await vi.runAllTimersAsync()
+    expect(shown).toEqual([1, null, 2, null])
+  })
 })

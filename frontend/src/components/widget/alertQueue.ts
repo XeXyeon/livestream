@@ -17,6 +17,7 @@ export function parseDonation(data: string): WidgetDonation | null {
   try {
     const value = JSON.parse(data) as Partial<WidgetDonation>
     if (typeof value.id !== 'number' || typeof value.amount !== 'number' || !value.donor || typeof value.donor.nickname !== 'string') return null
+    if (value.message !== null && value.message !== undefined && typeof value.message !== 'string') return null
     return value as WidgetDonation
   } catch {
     return null
@@ -94,15 +95,22 @@ export class AlertQueue {
   private async run(): Promise<void> {
     this.running = true
     const { show, speak, displayMs, gapMs } = this.options
-    while (!this.disposed && this.pending.length > 0) {
-      const donation = this.pending.shift()!
-      show(donation)
-      await Promise.all([delay(displayMs), speak(speechText(donation))])
-      if (this.disposed) break
-      show(null)
-      await delay(gapMs)
+    try {
+      while (!this.disposed && this.pending.length > 0) {
+        const donation = this.pending.shift()!
+        try {
+          show(donation)
+          // 읽기가 실패해도 큐는 멈추지 않는다(카드 시간만 지키고 다음으로).
+          await Promise.all([delay(displayMs), Promise.resolve().then(() => speak(speechText(donation))).catch(() => undefined)])
+        } finally {
+          if (!this.disposed) show(null)
+        }
+        if (this.disposed) break
+        await delay(gapMs)
+      }
+    } finally {
+      this.running = false
     }
-    this.running = false
   }
 }
 

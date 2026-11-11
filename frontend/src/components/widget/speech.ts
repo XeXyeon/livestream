@@ -17,6 +17,9 @@ export function pickKoreanVoice(voices: readonly SpeechSynthesisVoice[]): Speech
   return korean.find((voice) => voice.localService) ?? korean[0] ?? null
 }
 
+/** 읽기가 시작되지 않으면(음성 엔진 없음 · 조용히 무시) 이 시간 뒤 포기한다. */
+export const SPEECH_START_TIMEOUT_MS = 3000
+
 /** 읽기가 끝났다는 이벤트가 오지 않는 브라우저(Chrome 일부)를 위한 상한 */
 export function speechTimeoutMs(text: string): number {
   return Math.max(8000, text.length * 300)
@@ -27,6 +30,7 @@ export function createSpeaker(options: SpeakerOptions = {}, synth: SpeechSynthes
     return { supported: false, speak: () => Promise.resolve(), cancel: () => undefined }
   }
   let voice = pickKoreanVoice(synth.getVoices())
+  let currentUtterance: SpeechSynthesisUtterance | null = null
   // Chrome은 음성 목록을 늦게 채운다.
   synth.addEventListener?.('voiceschanged', () => { voice = pickKoreanVoice(synth.getVoices()) })
 
@@ -34,23 +38,34 @@ export function createSpeaker(options: SpeakerOptions = {}, synth: SpeechSynthes
     supported: true,
     speak(text) {
       return new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          synth.cancel()
+        const utterance = new SpeechSynthesisUtterance(text)
+        // 상한에 걸렸을 때 자기 발화가 아직 진행 중일 때만 취소한다(뒤에 시작한 다른 발화는 건드리지 않는다).
+        const giveUp = () => {
+          if (currentUtterance === utterance) synth.cancel()
           done()
-        }, speechTimeoutMs(text))
+        }
+        const startTimer = setTimeout(giveUp, SPEECH_START_TIMEOUT_MS)
+        const endTimer = setTimeout(giveUp, speechTimeoutMs(text))
         const done = () => {
-          clearTimeout(timer)
+          clearTimeout(startTimer)
+          clearTimeout(endTimer)
+          if (currentUtterance === utterance) currentUtterance = null
           resolve()
         }
-        const utterance = new SpeechSynthesisUtterance(text)
         utterance.lang = 'ko-KR'
         if (voice) utterance.voice = voice
+        utterance.onstart = () => clearTimeout(startTimer)
         utterance.onend = done
         utterance.onerror = (event) => {
           if (event.error === 'not-allowed') options.onBlocked?.()
           done()
         }
-        synth.speak(utterance)
+        currentUtterance = utterance
+        try {
+          synth.speak(utterance)
+        } catch {
+          done()
+        }
       })
     },
     cancel() {
