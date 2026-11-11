@@ -3,11 +3,16 @@
 // iOS Safari가 Opus 오디오를 디코드하는지 측정하는 독립 페이지다. 앱 번들에는 들어가지 않는다.
 import Hls from 'hls.js'
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs'
+import { GRID_P2P_CORE_CONFIG, withStableResponseUrl } from '../src/media/gridPlayer'
 
 const params = new URLSearchParams(location.search)
 const channelId = params.get('ch') ?? '1'
 const lowLatencyMode = params.get('ll') === '1'
-const liveSyncDuration = Number(params.get('sync') ?? (lowLatencyMode ? '1.5' : '4'))
+const liveSyncDuration = Number(params.get('sync') ?? (lowLatencyMode ? '1.5' : '6'))
+// 재생 위치에서 이 초 안의 세그먼트는 HTTP로 바로 받는다(그보다 앞만 피어 교환). 라이브러리 기본은 15
+const highDemandTimeWindow = Number(params.get('hd') ?? GRID_P2P_CORE_CONFIG.highDemandTimeWindow)
+// fixurl=0이면 재생목록 주소 정규화를 끈다(수정 전과 비교용)
+const fixUrl = params.get('fixurl') !== '0'
 const p2pEnabled = params.get('p2p') !== '0'
 const nativeMode = params.get('native') === '1'
 const useStun = params.get('stun') !== '0'
@@ -61,7 +66,7 @@ function render() {
   if (wallLatencySamples.length > 600) wallLatencySamples.shift()
   const downTotal = totals.httpBytes + totals.p2pDownBytes
   const rows: [string, string][] = [
-    ['설정', `ch=${channelId} native=${nativeMode} ll=${lowLatencyMode} sync=${liveSyncDuration}s p2p=${p2pEnabled} stun=${useStun}`],
+    ['설정', `ch=${channelId} native=${nativeMode} ll=${lowLatencyMode} sync=${liveSyncDuration}s hd=${highDemandTimeWindow}s fixurl=${fixUrl} p2p=${p2pEnabled} stun=${useStun}`],
     ['HLS URL · 트래커', `${hlsUrl} · ${trackerUrl}`],
     ['코덱', codecs],
     ['지원', JSON.stringify(capabilities())],
@@ -101,8 +106,10 @@ function startHlsJs() {
   const instance = new HlsWithP2P({
     lowLatencyMode,
     liveSyncDuration,
+    ...(fixUrl ? { loader: withStableResponseUrl(Hls.DefaultConfig.loader) } : {}),
     p2p: {
       core: {
+        highDemandTimeWindow,
         isP2PDisabled: !p2pEnabled,
         announceTrackers: [trackerUrl],
         // 기본 스웜 id는 재생목록 절대 URL이라 localhost · LAN IP로 붙은 시청자가 서로 다른 스웜이 된다.
@@ -121,8 +128,8 @@ function startHlsJs() {
           else totals.httpSegments++
           log(`segment ${details.downloadSource} ${details.bytesLength}B ${details.segmentUrl.split('/').pop()}${details.peerId ? ` from ${details.peerId}` : ''}`)
         })
-        engine.addEventListener('onPeerConnect', ({ peerId }) => { peers.add(peerId); log(`peer connect ${peerId}`) })
-        engine.addEventListener('onPeerClose', ({ peerId }) => { peers.delete(peerId); log(`peer close ${peerId}`) })
+        engine.addEventListener('onPeerConnect', ({ peerId, streamType }) => { if (streamType === 'main') peers.add(peerId); log(`peer connect ${streamType} ${peerId}`) })
+        engine.addEventListener('onPeerClose', ({ peerId, streamType }) => { if (streamType === 'main') peers.delete(peerId); log(`peer close ${streamType} ${peerId}`) })
         engine.addEventListener('onPeerError', ({ peerId, error }) => log(`peer error ${peerId} ${error.message}`))
         engine.addEventListener('onTrackerError', ({ error }) => { trackerErrors++; log(`tracker error ${String(error)}`) })
         engine.addEventListener('onTrackerWarning', ({ warning }) => log(`tracker warning ${String(warning)}`))
@@ -142,7 +149,11 @@ function startHlsJs() {
     hlsErrors++
     log(`hls error ${data.type} ${data.details} fatal=${data.fatal}`)
     if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) instance.startLoad()
-    else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError()
+    else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      // 미디어를 다시 붙이면 P2P 엔진이 재생목록 등록을 지우므로 매니페스트도 다시 받는다(gridPlayer와 같음)
+      instance.recoverMediaError()
+      instance.loadSource(hlsUrl)
+    }
   })
   instance.loadSource(hlsUrl)
   instance.attachMedia(video)
@@ -157,7 +168,7 @@ document.getElementById('report')?.addEventListener('click', () => {
   const downTotal = totals.httpBytes + totals.p2pDownBytes
   const result = {
     userAgent: navigator.userAgent,
-    settings: { channelId, nativeMode, lowLatencyMode, liveSyncDuration, p2pEnabled, useStun },
+    settings: { channelId, nativeMode, lowLatencyMode, liveSyncDuration, highDemandTimeWindow, fixUrl, p2pEnabled, useStun },
     codecs,
     capabilities: capabilities(),
     httpMB: Number(mb(totals.httpBytes)),

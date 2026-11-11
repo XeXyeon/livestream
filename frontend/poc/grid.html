@@ -20,7 +20,7 @@
 </head>
 <body>
   <h1>GRID-1 그리드 PoC — LL-HLS + p2p-media-loader</h1>
-  <p>쿼리: <code>ch</code>(채널 id, 기본 1) · <code>ll</code>(1이면 hls.js lowLatencyMode) · <code>sync</code>(liveSyncDuration 초) · <code>p2p</code>(0이면 P2P 끔) · <code>native</code>(1이면 hls.js 없이 &lt;video src&gt; 네이티브 HLS) · <code>stun</code>(0이면 STUN 없이 host 후보만)</p>
+  <p>쿼리: <code>ch</code>(채널 id, 기본 1) · <code>ll</code>(1이면 hls.js lowLatencyMode) · <code>sync</code>(liveSyncDuration 초, ll=0 기본 6) · <code>hd</code>(highDemandTimeWindow 초, 기본 2 · 라이브러리 기본 15) · <code>fixurl</code>(0이면 재생목록 주소 정규화 끔, 수정 전 비교용) · <code>p2p</code>(0이면 P2P 끔) · <code>native</code>(1이면 hls.js 없이 &lt;video src&gt; 네이티브 HLS) · <code>stun</code>(0이면 STUN 없이 host 후보만)</p>
   <video id="video" muted playsinline autoplay controls></video>
   <div class="row">
     <button id="unmute" type="button">소리 켜기</button>
