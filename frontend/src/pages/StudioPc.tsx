@@ -66,7 +66,14 @@ export default function StudioPc() {
   useEffect(() => { activeRef.current = active }, [active])
 
   // 페이지를 떠나면 캡처를 멈춘다(송출은 세션 훅이 끊는다).
-  useEffect(() => () => { mediaRef.current?.stop() }, [])
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      mediaRef.current?.stop()
+    }
+  }, [])
 
   useEffect(() => {
     if (previewRef.current) previewRef.current.srcObject = media?.stream ?? null
@@ -100,6 +107,8 @@ export default function StudioPc() {
           else stopMedia()
         },
       })
+      // 공유 · 마이크 권한을 고르는 중에 화면을 떠났으면 열린 캡처를 바로 끈다.
+      if (!mountedRef.current) { next.stop(); return }
       mediaRef.current?.stop()
       mediaRef.current = next
       setMedia(next)

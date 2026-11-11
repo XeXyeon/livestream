@@ -23,6 +23,8 @@ const ACTIVE: WhipState[] = ['connecting', 'live', 'reconnecting']
 export function useBroadcastSession(src: 'pc' | 'mobile', options: { onServerEnded?: () => void } = {}) {
   const queryClient = useQueryClient()
   const whipRef = useRef<WhipClient | null>(null)
+  // start 시도 번호. end · 언마운트가 올리면, 진행 중이던 start는 다음 await 뒤에 멈춘다.
+  const attemptRef = useRef(0)
   const broadcastIdRef = useRef<number | null>(null)
   const onServerEndedRef = useRef(options.onServerEnded)
   const [whipState, setWhipState] = useState<WhipState>('idle')
@@ -49,19 +51,25 @@ export function useBroadcastSession(src: 'pc' | 'mobile', options: { onServerEnd
   })
 
   useEffect(() => () => {
+    attemptRef.current++
     whipRef.current?.close()
     whipRef.current = null
   }, [])
 
   const start = useCallback(async (stream: MediaStream, info: BroadcastInfo) => {
+    const attempt = ++attemptRef.current
+    const stale = () => attemptRef.current !== attempt
     setError('')
     setFinished(false)
     broadcastIdRef.current = null
     whipRef.current?.close()
+    whipRef.current = null
     setWhipState('connecting')
     try {
       await ensureFreshToken()
+      if (stale()) return
       const me = await updateMyChannel(info)
+      if (stale()) return
       queryClient.setQueryData(MY_CHANNEL_KEY, me)
       const whip = new WhipClient(`${me.publish.whipUrl}?src=${src}`, me.streamKey)
       whipRef.current = whip
@@ -77,12 +85,15 @@ export function useBroadcastSession(src: 'pc' | 'mobile', options: { onServerEnd
       })
       await whip.publish(stream)
     } catch (cause) {
+      // 시작 도중 종료 · 이탈로 whip이 닫혀 난 오류는 실패로 보이지 않는다.
+      if (stale()) return
       setWhipState('failed')
       setError(cause instanceof WhipError || cause instanceof ApiError ? cause.message : '송출을 시작하지 못했습니다.')
     }
   }, [queryClient, src])
 
   const end = useCallback(async (stopMedia: () => void) => {
+    attemptRef.current++
     setEnding(true)
     setError('')
     let id = broadcastIdRef.current

@@ -39,6 +39,7 @@ function useWakeLock(enabled: boolean) {
 export default function StudioMobile() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaRef = useRef<MobileStream | null>(null)
+  const mountedRef = useRef(false)
   const [media, setMedia] = useState<MobileStream | null>(null)
   const [facing, setFacing] = useState<Facing>('user')
   const [micOn, setMicOn] = useState(true)
@@ -60,6 +61,8 @@ export default function StudioMobile() {
     setCameraError('')
     try {
       const next = await createMobileStream({ facing: nextFacing })
+      // 권한 요청 중에 화면을 떠났으면 열린 카메라 · 마이크를 바로 끈다.
+      if (!mountedRef.current) { next.stop(); return }
       mediaRef.current?.stop()
       mediaRef.current = next
       setMedia(next)
@@ -72,8 +75,12 @@ export default function StudioMobile() {
 
   // 들어오면 바로 카메라를 연다. 떠나면 캡처를 멈춘다(송출은 세션 훅이 끊는다).
   useEffect(() => {
+    mountedRef.current = true
     void openCamera('user')
-    return () => { mediaRef.current?.stop() }
+    return () => {
+      mountedRef.current = false
+      mediaRef.current?.stop()
+    }
   }, [openCamera])
 
   useEffect(() => {
@@ -90,16 +97,25 @@ export default function StudioMobile() {
   async function switchCamera() {
     if (!media) return
     setSwitching(true)
+    let failed = false
     try {
-      const track = await media.switchCamera()
-      await session.replaceTrack('video', track)
+      await media.switchCamera()
+    } catch {
+      failed = true
+    }
+    // 전환에 실패해도 mixer가 원래 카메라를 다시 열어 stream에 넣는다. 이전 트랙은 이미 멈췄으므로
+    // 성공 · 실패 모두 stream의 현재 비디오 트랙을 송출에 다시 붙여야 시청 화면이 멈추지 않는다.
+    try {
+      const track = media.stream.getVideoTracks()[0]
+      if (track && track.readyState === 'live') await session.replaceTrack('video', track)
       if (videoRef.current) {
         videoRef.current.srcObject = null
         videoRef.current.srcObject = media.stream
       }
     } catch {
-      setCameraError('카메라를 바꾸지 못했습니다.')
+      failed = true
     } finally {
+      if (failed) setCameraError('카메라를 바꾸지 못했습니다.')
       setFacing(media.facing)
       setSwitching(false)
     }
