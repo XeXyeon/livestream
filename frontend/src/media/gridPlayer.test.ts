@@ -41,7 +41,7 @@ vi.mock('p2p-media-loader-hlsjs', () => ({
 
 import type { LoaderCallbacks, LoaderConfiguration, LoaderContext, LoaderResponse } from 'hls.js'
 import {
-  GRID_HLS_CONFIG, GRID_P2P_CORE_CONFIG, NETWORK_RETRY_MS, createGridPlayer, defaultTrackerUrl, savedPercent, stripDeliveryDirectives, swarmIdOf,
+  GRID_HLS_CONFIG, GRID_P2P_CORE_CONFIG, MAX_MEDIA_RECOVERIES, MEDIA_RECOVERY_WINDOW_MS, NETWORK_RETRY_MS, createGridPlayer, defaultTrackerUrl, savedPercent, stripDeliveryDirectives, swarmIdOf,
   withStableResponseUrl,
 } from './gridPlayer'
 import type { GridStats } from './gridPlayer'
@@ -106,6 +106,23 @@ describe('gridPlayer', () => {
     expect(hls.destroy).toHaveBeenCalled()
   })
 
+  it('미디어 오류 복구는 연속 3번까지만 하고(매번 매니페스트 재요청), 한동안 오류가 없으면 다시 센다', () => {
+    const onStats = vi.fn<(stats: GridStats) => void>()
+    createGridPlayer(video, '/live/3/index.m3u8', { onStats })
+    const hls = fake.instances[0]
+    const error = hls.handlers.get('hlsError')!
+    fake.engineListeners.get('onPeerConnect')!({ peerId: 'p', streamType: 'main' })
+    for (let i = 0; i < MAX_MEDIA_RECOVERIES + 2; i++) error('hlsError', { fatal: true, type: 'mediaError' })
+    expect(hls.recoverMediaError).toHaveBeenCalledTimes(MAX_MEDIA_RECOVERIES)
+    expect(hls.loadSource).toHaveBeenCalledTimes(1 + MAX_MEDIA_RECOVERIES)
+    vi.advanceTimersByTime(1000)
+    expect(onStats.mock.lastCall![0].peers).toBe(0) // 엔진이 피어를 새로 만들므로 비운다
+
+    vi.advanceTimersByTime(MEDIA_RECOVERY_WINDOW_MS)
+    error('hlsError', { fatal: true, type: 'mediaError' })
+    expect(hls.recoverMediaError).toHaveBeenCalledTimes(MAX_MEDIA_RECOVERIES + 1)
+  })
+
   it('hls.js를 못 쓰면 네이티브 HLS(피어 공유 없음)로 재생한다', () => {
     fake.supported = false
     const native = { canPlayType: () => 'maybe', src: '' } as unknown as HTMLVideoElement
@@ -124,6 +141,7 @@ describe('gridPlayer', () => {
     expect(stripDeliveryDirectives('https://h/live/3/video1_stream.m3u8?_HLS_msn=12&_HLS_part=1')).toBe('https://h/live/3/video1_stream.m3u8')
     expect(stripDeliveryDirectives('https://h/a.m3u8?token=x&_HLS_skip=YES')).toBe('https://h/a.m3u8?token=x')
     expect(stripDeliveryDirectives('https://h/a.m3u8')).toBe('https://h/a.m3u8')
+    expect(stripDeliveryDirectives(undefined)).toBeUndefined() // response.url이 없는 브라우저: hls.js가 context.url로 대신한다
 
     const seen: LoaderResponse[] = []
     class BaseLoader {
@@ -139,6 +157,9 @@ describe('gridPlayer', () => {
     loader.load({ url: 'https://h/v.m3u8', type: 'level' } as unknown as LoaderContext, {} as LoaderConfiguration, callbacks)
     loader.load({ url: 'https://h/a.m3u8', type: 'audioTrack' } as unknown as LoaderContext, {} as LoaderConfiguration, callbacks)
     loader.load({ url: 'https://h/seg.mp4', frag: {} } as unknown as LoaderContext, {} as LoaderConfiguration, callbacks)
-    expect(seen.map((r) => r.url)).toEqual(['https://h/v.m3u8', 'https://h/a.m3u8', 'https://h/seg.mp4?_HLS_msn=5&_HLS_part=1'])
+    loader.load({ url: 'https://h/index.m3u8', type: 'manifest' } as unknown as LoaderContext, {} as LoaderConfiguration, callbacks)
+    expect(seen.map((r) => r.url)).toEqual([
+      'https://h/v.m3u8', 'https://h/a.m3u8', 'https://h/seg.mp4?_HLS_msn=5&_HLS_part=1', 'https://h/index.m3u8?_HLS_msn=5&_HLS_part=1',
+    ])
   })
 })

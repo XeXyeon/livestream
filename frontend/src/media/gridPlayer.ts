@@ -39,12 +39,12 @@ export const GRID_P2P_CORE_CONFIG = { highDemandTimeWindow: 2 } as const
 const DELIVERY_DIRECTIVES = ['_HLS_msn', '_HLS_part', '_HLS_skip']
 
 /** LL-HLS 차단 재요청 지시자(`_HLS_msn` 등)를 뺀 재생목록 주소 */
-export function stripDeliveryDirectives(url: string): string {
-  if (!url.includes('_HLS_')) return url
+export function stripDeliveryDirectives<T>(url: T): T {
+  if (typeof url !== 'string' || !url.includes('_HLS_')) return url
   try {
     const parsed = new URL(url)
     for (const name of DELIVERY_DIRECTIVES) parsed.searchParams.delete(name)
-    return parsed.href
+    return parsed.href as T
   } catch {
     return url
   }
@@ -72,6 +72,9 @@ export function withStableResponseUrl(Base: HlsConfig['loader']): HlsConfig['loa
 }
 
 export const NETWORK_RETRY_MS = 3000
+/** 치명적 미디어 오류가 이 시간 안에 이어지면 연속으로 본다. 연속 MAX_MEDIA_RECOVERIES번을 넘으면 복구를 멈춘다. */
+export const MEDIA_RECOVERY_WINDOW_MS = 10_000
+export const MAX_MEDIA_RECOVERIES = 3
 
 export function defaultTrackerUrl(loc: Pick<Location, 'protocol' | 'host'> = location): string {
   return `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/tracker`
@@ -99,6 +102,8 @@ export function createGridPlayer(video: HTMLVideoElement, hlsUrl: string, option
   const peers = new Set<string>()
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let closed = false
+  let mediaRecoveries = 0
+  let lastMediaRecoveryAt = -Infinity
 
   const HlsWithP2P = HlsJsP2PEngine.injectMixin(Hls)
   const hls = new HlsWithP2P({
@@ -127,8 +132,14 @@ export function createGridPlayer(video: HTMLVideoElement, hlsUrl: string, option
   hls.on(Hls.Events.ERROR, (_event, data) => {
     if (!data.fatal || closed) return
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      // 디코드할 수 없는 스트림(코덱 불일치 등)이면 복구 → 오류가 끝없이 돌며 매번 매니페스트를 다시 받으므로 상한을 둔다.
+      const now = Date.now()
+      mediaRecoveries = now - lastMediaRecoveryAt < MEDIA_RECOVERY_WINDOW_MS ? mediaRecoveries + 1 : 1
+      lastMediaRecoveryAt = now
+      if (mediaRecoveries > MAX_MEDIA_RECOVERIES) return
       // recoverMediaError는 미디어를 다시 붙이는데, P2P 엔진은 이때 등록한 재생목록을 모두 지우고
       // 매니페스트를 다시 받기 전에는 되살리지 않는다. 그대로 두면 이후 세그먼트가 모두 HTTP로 간다.
+      // 매니페스트를 다시 받으면 라이브 동기 위치(끝에서 liveSyncDuration)에서 다시 시작한다. 라이브라 의도한 동작이다.
       hls.recoverMediaError()
       peers.clear()
       hls.loadSource(hlsUrl)

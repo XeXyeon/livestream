@@ -150,7 +150,7 @@ function startHlsJs() {
     log(`hls error ${data.type} ${data.details} fatal=${data.fatal}`)
     if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) instance.startLoad()
     else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-      // 미디어를 다시 붙이면 P2P 엔진이 재생목록 등록을 지우므로 매니페스트도 다시 받는다(gridPlayer와 같음)
+      // 미디어를 다시 붙이면 P2P 엔진이 재생목록 등록을 지우므로 매니페스트도 다시 받는다(gridPlayer와 같음. PoC는 상한 없이 오류 칸으로 본다)
       instance.recoverMediaError()
       instance.loadSource(hlsUrl)
     }
