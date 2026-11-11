@@ -154,6 +154,8 @@ livestream/
 | `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
 | `app.jwt.secret` / `app.jwt.access-minutes` / `app.jwt.refresh-days` | — / 15 / 14 | 기존 `custom.jwt.secret`을 `app.jwt.secret`으로 옮긴다 |
 | `app.seed.enabled` | false | 시드 투입 |
+| `app.auth.login-max-failures` / `app.auth.signup-max-attempts` / `app.auth.attempt-window-seconds` | 10 / 10 / 300 | 로그인 · 가입 시도 횟수 제한(§4.7). 로그인은 IP+이메일당 실패 횟수, 가입은 IP당 요청 횟수를 고정 창으로 센다 |
+| `server.forward-headers-strategy` | `native` | Caddy 뒤에서 클라이언트 IP를 `X-Forwarded-For`로 받는다(§4.7 시도 횟수 제한). Tomcat `RemoteIpValve`의 기본 `internal-proxies`(사설 대역)만 신뢰하므로 compose 네트워크의 Caddy는 신뢰, 그 밖은 무시 |
 | `spring.task.scheduling.pool.size` | 4 | 기본 스케줄러가 스레드 1개라 썸네일 캡처(방송당 최대 10초)가 유예 종료 · 보관 정리 스케줄러를 막지 않게 |
 | `app.public-url` | `http://localhost` | 안내 문자열(WHIP URL 등)에 사용 |
 
@@ -215,6 +217,7 @@ Enum:
 | `EMAIL_DUPLICATED` · `NICKNAME_DUPLICATED` | 409 |
 | `BROADCAST_NOT_LIVE`(채팅 · 후원 · category 수정이 LIVE/DISCONNECTED가 아닐 때) · `BROADCAST_ALREADY_ENDED`(end API를 ENDED에 부를 때) · `RECORDING_NOT_READY` · `COMMENT_DEPTH_EXCEEDED` · `RECORDING_COMMENT_NOT_OPEN` | 409 |
 | `DONATION_AMOUNT_MISMATCH` · `DONATION_ALREADY_PROCESSED` · `PAYMENT_CONFIRM_FAILED` | 400 / 409 / 502 |
+| `TOO_MANY_REQUESTS`(로그인 · 가입 시도 횟수 초과, §4.7. 응답에 `Retry-After: <창이 끝날 때까지 남은 초>` 헤더) | 429 |
 
 ### 4.5 날짜 · 시각
 DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론트.
@@ -247,6 +250,11 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 로그아웃 `POST /api/auth/logout`(쿠키) → 그 회원의 refresh 토큰 **전부** revoke(`replaced_by_id` null) + 쿠키 삭제, 200. 다른 탭 · 기기도 다음 갱신부터 로그아웃된다. (access는 만료까지 유효 — 15분)
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
 - **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. **예외: `/api/auth/**`는 필터가 검사하지 않는다** — 로그아웃 · 로그인 · refresh는 만료된 access가 헤더에 남아 있어도 처리돼야 한다(`apiFetch`가 `/auth/` 경로에서는 refresh 재시도를 하지 않으므로, 여기서 401을 주면 refresh 쿠키가 폐기되지 않은 채 로그아웃이 실패한다). BC-1(334dd03)에서 구현됨.
+- **시도 횟수 제한(AUTH-1#1 결정):** `auth/AuthRateLimiter` — `ChatRateLimiter`와 같은 고정 창 · 인메모리 · 서버 1대 가정, 지난 창은 스케줄러가 지운다. 한도는 §4.1 `app.auth.*`.
+  - 로그인: 키 = **클라이언트 IP + 정규화한 이메일**(`AuthService`의 `strip` + 소문자와 같은 규칙). 창(300초) 안 **실패**가 `login-max-failures`(10)에 이르면 그 다음부터 429 `TOO_MANY_REQUESTS`. 검사는 DB 조회 · BCrypt 비교 **전에** 하고, 실패(`LOGIN_FAILED`)일 때만 세며, 성공하면 그 키의 카운터를 지운다. 이메일만 키로 쓰면 남의 계정을 잠글 수 있어 IP를 함께 쓴다(한 IP가 이메일을 바꿔 가며 찌르는 것은 막지 못한다 — 받아들인 한계).
+  - 가입: 키 = **클라이언트 IP**. 창 안 요청이 `signup-max-attempts`(10)에 이르면 429. 성공 · 실패를 가리지 않고 요청마다 센다(검증 전에 검사).
+  - 클라이언트 IP: `HttpServletRequest.getRemoteAddr()`. Caddy의 `reverse_proxy`는 `trusted_proxies`가 없으면 들어온 `X-Forwarded-*`를 버리고 실제 접속 IP만 `X-Forwarded-For`에 넣으며, Spring은 `server.forward-headers-strategy=native`로 그 값을 `getRemoteAddr()`에 반영한다(§4.1). backend 컨테이너는 compose에서 포트를 공개하지 않아 Caddy 말고는 닿지 않는다.
+  - 응답 형식은 §4.4 그대로(`message`: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"). 프론트는 분기 없이 `message`를 보여 준다. refresh · logout에는 제한을 두지 않는다(쿠키 기반이라 무차별 대입 대상이 아님).
 - Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
 - `/swagger-ui/**`, `/v3/api-docs/**` 공개.
 
@@ -465,6 +473,7 @@ frontend/src/
 ### AUTH-1 회원가입 · 로그인 · 갱신 · 로그아웃
 - 읽을 절: §4.2 common/auth/member, §4.3 member · refresh_token · channel(자동 생성만, 나머지 채널 로직은 CH-1), §4.4, §4.7, §4.8의 공개 경로. `channel` 엔티티는 여기서 만든다(CH-1이 확장).
 - 완료: 가입 → 로그인 → `/members/me` → refresh 회전 → 로그아웃 후 refresh 401 통합 테스트. 중복 409 테스트.
+- 추가(AUTH-1#1): `AuthRateLimiter` 단위 테스트(`Clock` 주입 — 10회 실패 뒤 429, 성공 시 초기화, 창이 지나면 다시 허용, 다른 IP · 다른 이메일은 영향 없음) + 로그인 통합 테스트(11번째 실패가 429 · `Retry-After` 있음, 429일 때 BCrypt · DB 조회가 안 일어남은 로그나 mock으로). 가입은 IP당 11번째 요청 429. `X-Forwarded-For`를 사설 IP에서 보낸 요청이 그 값을 키로 쓰는지 테스트 1개(MockMvc `remoteAddr` 127.0.0.1 + 헤더).
 
 ### FE-1 프론트 기반
 - 읽을 절: §6.1~6.4, S7. `App.tsx` 라우터(모든 경로를 placeholder 페이지로), `api/client.ts`, `store/auth.ts`, `Header`(로그인 상태 · 방송하기 버튼 → `/studio`), `Protected`, Login · Signup 페이지.
