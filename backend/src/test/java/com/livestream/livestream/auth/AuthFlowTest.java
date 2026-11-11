@@ -397,6 +397,50 @@ class AuthFlowTest {
 				.andExpect(status().isUnsupportedMediaType()).andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
 	}
 
+	// ---------- AUTH-1#4: member.email 은 utf8mb4_bin (악센트 · 전각 · ß 를 다른 글자로 비교) ----------
+
+	@Test
+	void 악센트_전각_변형_이메일로는_다른_회원의_계정에_로그인할_수_없다() throws Exception {
+		String email = uniqueEmail(); // "u" + 영숫자 + "@example.com"
+		signup(email, uniqueNickname()).andExpect(status().isCreated());
+
+		String accent = "ū" + email.substring(1); // ū
+		String fullWidth = "ｕ" + email.substring(1); // 전각 ｕ
+		login(accent, PASSWORD).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("LOGIN_FAILED"));
+		login(fullWidth, PASSWORD).andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("LOGIN_FAILED"));
+		login(email, PASSWORD).andExpect(status().isOk()); // 원래 이메일은 그대로 로그인된다
+	}
+
+	@Test
+	void 악센트_전각_ß_변형_이메일은_409가_아니라_별도_회원으로_가입된다() throws Exception {
+		String email = uniqueEmail();
+		signup(email, uniqueNickname()).andExpect(status().isCreated());
+
+		String accent = "ū" + email.substring(1);
+		String fullWidth = "ｕ" + email.substring(1);
+		signup(accent, uniqueNickname()).andExpect(status().isCreated());
+		signup(fullWidth, uniqueNickname()).andExpect(status().isCreated());
+		login(accent, PASSWORD).andExpect(status().isOk()); // 변형 이메일은 자기 계정으로 로그인된다
+
+		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12) + "@example.com";
+		signup("strasse" + suffix, uniqueNickname()).andExpect(status().isCreated());
+		signup("straße" + suffix, uniqueNickname()).andExpect(status().isCreated()); // ß ≠ ss
+		signup("strasse" + suffix, uniqueNickname()).andExpect(status().isConflict()); // 정확히 같으면 409
+	}
+
+	@Test
+	void 대소문자_NFC_NFD가_다른_같은_이메일은_같은_회원으로_본다() throws Exception {
+		String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12) + "@example.com";
+		String nfc = "café" + suffix; // 조합형 é
+		String nfd = "café" + suffix; // e + 결합 악센트
+		signup(nfc, uniqueNickname()).andExpect(status().isCreated());
+
+		login(nfc.toUpperCase(), PASSWORD).andExpect(status().isOk()); // 대소문자 다르게
+		login(nfd, PASSWORD).andExpect(status().isOk()); // 분해형 입력
+		signup(nfd, uniqueNickname()).andExpect(status().isConflict()); // 같은 이메일 재가입 불가
+	}
+
 	// ---------- helpers ----------
 
 	private String signupAndLogin() throws Exception {

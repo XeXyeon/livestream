@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.text.Normalizer;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
@@ -174,8 +175,12 @@ public class AuthService {
 		return new Issued(new AuthResult(response, raw), saved);
 	}
 
+	/**
+	 * strip + 소문자 + NFC. member.email 이 utf8mb4_bin(AUTH-1#4)이라 DB 가 조합형 "é" 와 분해형 "e"+U+0301 을
+	 * 같게 봐 주지 않으므로 앱에서 NFC 로 맞춘다. NFKC 는 전각을 접어 버려 쓰지 않는다(전각은 다른 글자로 둔다).
+	 */
 	private static String normalizeEmail(String email) {
-		return email.strip().toLowerCase(Locale.ROOT);
+		return Normalizer.normalize(email.strip().toLowerCase(Locale.ROOT), Normalizer.Form.NFC);
 	}
 
 	static String hash(String raw) {
