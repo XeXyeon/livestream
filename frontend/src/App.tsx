@@ -4,6 +4,8 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { bootstrapAuth } from './api/client'
 import Header from './components/layout/Header'
 import Protected from './components/layout/Protected'
+import Home from './pages/Home'
+import Live from './pages/Live'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Placeholder from './pages/Placeholder'
@@ -16,8 +18,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/widget/:widgetKey" element={<Placeholder title="알림 위젯" />} />
       <Route element={<Header />}>
-        <Route path="/" element={<Placeholder title="홈" />} />
-        <Route path="/live/:channelId" element={<Placeholder title="시청" />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/live/:channelId" element={<Live />} />
         <Route path="/videos/:recordingId" element={<Placeholder title="다시보기" />} />
         <Route path="/channel/:channelId" element={<Placeholder title="채널" />} />
         <Route path="/posts/:postId" element={<Placeholder title="커뮤니티 글" />} />
