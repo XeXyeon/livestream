@@ -33,6 +33,21 @@ class RecordingServiceTest {
 	}
 
 	@Test
+	void 영상은_다른_영상_폴더의_같은_파일_이름도_지운다() throws Exception {
+		Path recordings = Files.createDirectories(root.resolve("media"));
+		Path uploads = Files.createDirectories(root.resolve("uploads"));
+		Files.createDirectories(recordings.resolve("vod"));
+		Files.createDirectories(recordings.resolve("private"));
+		Path moved = Files.writeString(recordings.resolve("private/b.mp4"), "x");
+		Path other = Files.writeString(recordings.resolve("private/c.mp4"), "x");
+
+		service(recordings, uploads).deleteFiles("vod/b.mp4", null);
+
+		assertThat(moved).doesNotExist();
+		assertThat(other).exists();
+	}
+
+	@Test
 	void 없는_파일_null_기준_밖_경로는_조용히_넘어간다() throws Exception {
 		Path recordings = Files.createDirectories(root.resolve("media"));
 		Path uploads = Files.createDirectories(root.resolve("uploads"));

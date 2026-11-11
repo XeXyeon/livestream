@@ -1,6 +1,9 @@
 package com.livestream.livestream.recording;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -35,12 +38,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * REC-2 (DESIGN §4.10 서빙 · §4.16 /recordings* · §9 REC-2): 공개 목록 · 상세, 비공개는 주인만, 공개 설정 403,
- * video-token → Range 206, 토큰 검사, 삭제된 방송 404, 채널 recordingCount.
+ * video-token → Range 206, 토큰 검사, 삭제된 방송 404, 채널 recordingCount,
+ * 공개 설정에 따른 vod/ ↔ private/ 파일 이동(REC-2#1).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -59,7 +65,7 @@ class RecordingApiTest {
 	@Autowired MockMvc mvc;
 	@Autowired BroadcastLifecycleService lifecycle;
 	@Autowired BroadcastRepository broadcastRepository;
-	@Autowired RecordingRepository recordingRepository;
+	@MockitoSpyBean RecordingRepository recordingRepository;
 	@Autowired RecordingMergeService mergeService;
 	@Autowired TransactionTemplate tx;
 	@MockitoBean MediaMtxClient mediaMtxClient;
@@ -160,6 +166,120 @@ class RecordingApiTest {
 	}
 
 	@Test
+	void READY면_공개_설정에_따라_영상_파일을_vod와_private_사이로_옮긴다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long id = readyRecording(owner, Visibility.PUBLIC);
+		String vod = recordingRepository.findById(id).orElseThrow().getFilePath();
+		assertThat(vod).startsWith("vod/");
+		String name = vod.substring("vod/".length());
+
+		// 공개 → 비공개: vod/ 에서 private/ 로 옮기고 file_path 도 바꾼다. 예전 /vod 주소의 파일은 없다(REC-2#1)
+		visibility(owner, id, "PRIVATE").andExpect(status().isOk()).andExpect(jsonPath("$.videoUrl").doesNotExist());
+		assertThat(recordingRepository.findById(id).orElseThrow().getFilePath()).isEqualTo("private/" + name);
+		assertThat(recordingsDir.resolve(vod)).doesNotExist();
+		assertThat(recordingsDir.resolve("private/" + name)).hasSize(VIDEO_SIZE);
+		// 비공개 재생(video-token)은 private/ 의 파일을 내준다
+		mvc.perform(get("/api/recordings/" + id + "/video").param("token", videoToken(owner, id)))
+				.andExpect(status().isOk()).andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, VIDEO_SIZE));
+
+		// 같은 값은 아무것도 하지 않는다
+		visibility(owner, id, "PRIVATE").andExpect(status().isOk());
+		assertThat(recordingRepository.findById(id).orElseThrow().getFilePath()).isEqualTo("private/" + name);
+
+		// 비공개 → 공개: 되돌린다
+		visibility(owner, id, "PUBLIC").andExpect(status().isOk()).andExpect(jsonPath("$.videoUrl").value("/vod/" + name));
+		assertThat(recordingRepository.findById(id).orElseThrow().getFilePath()).isEqualTo("vod/" + name);
+		assertThat(recordingsDir.resolve("private/" + name)).doesNotExist();
+		assertThat(recordingsDir.resolve(vod)).hasSize(VIDEO_SIZE);
+	}
+
+	@Test
+	void READY가_아니면_파일을_옮기지_않고_visibility만_바꾼다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long processing = endedRecording(owner);
+		visibility(owner, processing, "PRIVATE").andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PROCESSING"));
+		Recording r = recordingRepository.findById(processing).orElseThrow();
+		assertThat(r.getVisibility()).isEqualTo(Visibility.PRIVATE);
+		assertThat(r.getFilePath()).isNull();
+
+		Account owner2 = TestAccounts.create(mvc);
+		long deleted = readyRecording(owner2, Visibility.PUBLIC);
+		String vod = recordingRepository.findById(deleted).orElseThrow().getFilePath();
+		tx.executeWithoutResult(s -> recordingRepository.findById(deleted).orElseThrow().markFileDeleted(Instant.now()));
+		visibility(owner2, deleted, "PRIVATE").andExpect(status().isOk());
+		assertThat(recordingRepository.findById(deleted).orElseThrow().getFilePath()).isEqualTo(vod);
+		assertThat(recordingsDir.resolve(vod)).exists();
+	}
+
+	@Test
+	void 비공개인데_vod에_있으면_재생할_때_private으로_거둔다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long id = readyRecording(owner, Visibility.PRIVATE);
+		String priv = recordingRepository.findById(id).orElseThrow().getFilePath();
+		String name = priv.substring("private/".length());
+		// 공개로 옮긴 뒤 롤백 · 되돌리기까지 실패한 상황: 파일은 vod/(노출), DB 는 PRIVATE · private/
+		Files.createDirectories(recordingsDir.resolve("vod"));
+		Files.move(recordingsDir.resolve(priv), recordingsDir.resolve("vod/" + name));
+
+		mvc.perform(get("/api/recordings/" + id + "/video").param("token", videoToken(owner, id)))
+				.andExpect(status().isOk()).andExpect(header().longValue(HttpHeaders.CONTENT_LENGTH, VIDEO_SIZE));
+		assertThat(recordingRepository.findById(id).orElseThrow().getFilePath()).isEqualTo(priv);
+		assertThat(recordingsDir.resolve(priv)).hasSize(VIDEO_SIZE);
+		assertThat(recordingsDir.resolve("vod/" + name)).doesNotExist();
+	}
+
+	@Test
+	void 공개인데_file_path가_private이면_재생할_때_vod로_맞춘다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long id = readyRecording(owner, Visibility.PUBLIC);
+		String vod = recordingRepository.findById(id).orElseThrow().getFilePath();
+		String name = vod.substring("vod/".length());
+		// 비공개로 옮긴 뒤 롤백된 상황(그 방향은 되돌리지 않는다): 파일은 private/, DB 는 PUBLIC · vod/
+		Files.createDirectories(recordingsDir.resolve("private"));
+		Files.move(recordingsDir.resolve(vod), recordingsDir.resolve("private/" + name));
+
+		mvc.perform(get("/api/recordings/" + id + "/video").param("token", videoToken(owner, id))).andExpect(status().isOk());
+		assertThat(recordingRepository.findById(id).orElseThrow().getFilePath()).isEqualTo(vod);
+		assertThat(recordingsDir.resolve(vod)).exists();
+		assertThat(recordingsDir.resolve("private/" + name)).doesNotExist();
+	}
+
+	@Test
+	void 파일_이동이_실패하면_500_FILE_MOVE_FAILED이고_아무것도_바꾸지_않는다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long id = readyRecording(owner, Visibility.PUBLIC);
+		String vod = recordingRepository.findById(id).orElseThrow().getFilePath();
+		String name = vod.substring("vod/".length());
+		// 옮길 자리에 비어 있지 않은 디렉터리를 두어 rename 을 실패시킨다
+		Files.createDirectories(recordingsDir.resolve("private/" + name + "/blocker"));
+
+		visibility(owner, id, "PRIVATE").andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("FILE_MOVE_FAILED"));
+		Recording r = recordingRepository.findById(id).orElseThrow();
+		assertThat(r.getVisibility()).isEqualTo(Visibility.PUBLIC);
+		assertThat(r.getFilePath()).isEqualTo(vod);
+		assertThat(recordingsDir.resolve(vod)).hasSize(VIDEO_SIZE);
+	}
+
+	@Test
+	void 공개로_옮긴_뒤_DB가_롤백되면_private으로_되돌린다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long id = readyRecording(owner, Visibility.PRIVATE);
+		String priv = recordingRepository.findById(id).orElseThrow().getFilePath();
+		String name = priv.substring("private/".length());
+		doThrow(new IllegalStateException("DB 실패 흉내")).when(recordingRepository)
+				.updateVisibilityAndFilePath(eq(id), any(), any(), any());
+
+		visibility(owner, id, "PUBLIC").andExpect(status().isInternalServerError());
+
+		Recording r = recordingRepository.findById(id).orElseThrow();
+		assertThat(r.getVisibility()).isEqualTo(Visibility.PRIVATE);
+		assertThat(r.getFilePath()).isEqualTo(priv);
+		assertThat(recordingsDir.resolve(priv)).hasSize(VIDEO_SIZE);
+		assertThat(recordingsDir.resolve("vod/" + name)).doesNotExist();
+	}
+
+	@Test
 	void 주인은_재생_토큰으로_Range_206_응답을_받는다() throws Exception {
 		Account owner = TestAccounts.create(mvc);
 		Account other = TestAccounts.create(mvc);
@@ -252,10 +372,20 @@ class RecordingApiTest {
 		return recordingRepository.findByBroadcastId(broadcastId).orElseThrow().getId();
 	}
 
-	/** 종료 → 병합 성공(READY, vod 파일 0..999) → 공개 설정. */
+	private ResultActions visibility(Account a, long id, String value) throws Exception {
+		return mvc.perform(patch("/api/recordings/" + id).header(HttpHeaders.AUTHORIZATION, a.bearer())
+				.contentType(MediaType.APPLICATION_JSON).content("{\"visibility\":\"" + value + "\"}"));
+	}
+
+	private String videoToken(Account a, long id) throws Exception {
+		return JsonPath.read(mvc.perform(post("/api/recordings/" + id + "/video-token").header(HttpHeaders.AUTHORIZATION, a.bearer()))
+				.andExpect(status().isOk()).andReturn().getResponse().getContentAsString(), "$.token");
+	}
+
+	/** 종료 → 병합 성공(READY, 영상 파일 0..999, 공개면 vod/ · 비공개면 private/) → 공개 설정. */
 	private long readyRecording(Account a, Visibility visibility) throws Exception {
 		long id = endedRecording(a);
-		String relative = "vod/" + UUID.randomUUID() + ".mp4";
+		String relative = RecordingFiles.folderFor(visibility) + UUID.randomUUID() + ".mp4";
 		byte[] bytes = new byte[VIDEO_SIZE];
 		for (int i = 0; i < bytes.length; i++) {
 			bytes[i] = (byte) i;

@@ -98,6 +98,23 @@ public interface RecordingRepository extends JpaRepository<Recording, Long> {
 	@Query("update Recording r set r.visibility = :visibility, r.updatedAt = :now where r.id = :id")
 	int updateVisibility(Long id, Visibility visibility, Instant now);
 
+	/** 공개 설정과 영상 파일 경로를 함께 바꾼다(READY 영상을 반대 폴더로 옮긴 뒤). 호출 전에 recording 을 잠근다. */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("update Recording r set r.visibility = :visibility, r.filePath = :filePath, r.updatedAt = :now where r.id = :id")
+	int updateVisibilityAndFilePath(Long id, Visibility visibility, String filePath, Instant now);
+
+	/** 파일을 다른 폴더에서 찾아 맞춘 뒤 file_path 를 고친다. 호출 전에 recording 을 잠근다. */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("update Recording r set r.filePath = :filePath where r.id = :id")
+	int updateFilePath(Long id, String filePath);
+
+	/** 공개 설정 변경의 주인 확인: 엔티티를 올리지 않고 채널 주인의 member id 만 읽는다. 삭제된 방송의 다시보기는 없음. */
+	@Query("""
+			select c.member.id from Recording r join r.broadcast b join b.channel c
+			where r.id = :id and b.deletedAt is null
+			""")
+	Optional<Long> findOwnerMemberIdOfActive(Long id);
+
 	// ---------- REC-1 녹화 병합 · 보관 ----------
 
 	/** 병합 결과 저장 · 조각 추가 직전에 잠가 읽는다(방송 삭제의 FILE_DELETED 와 겹치지 않게). */

@@ -4,6 +4,7 @@ import com.livestream.livestream.broadcast.BroadcastEndedEvent;
 import com.livestream.livestream.thumbnail.FfmpegRunner;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -25,8 +27,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <ul>
  *   <li>단일 스레드에서 하나씩 돈다. 종료 직후 kick 으로 닫힌 마지막 조각의 훅이 늦게 올 수 있어 {@link #MERGE_DELAY} 뒤에 시작한다.</li>
  *   <li>시작할 때 status 가 PROCESSING 이 아니면 아무것도 하지 않는다(FILE_DELETED 면 남은 raw 조각만 지운다).</li>
- *   <li>ffmpeg concat(-c copy, faststart) → 성공하면 잠금 읽기로 다시 확인해 PROCESSING 일 때만 READY + raw 조각 삭제,
- *       그 사이 FILE_DELETED 가 됐으면 만든 vod 파일을 지운다. 실패하면 FAILED + 사유(raw 조각은 남긴다).</li>
+ *   <li>ffmpeg concat(-c copy, faststart) 결과는 항상 {@code private/} 에 쓴다(READY 전에는 어떤 주소로도 노출되지 않게).
+ *       성공하면 잠금 읽기로 다시 확인해 PROCESSING 일 때만 READY + raw 조각 삭제. 그때 visibility 가 PUBLIC 이면
+ *       파일을 {@code vod/} 로 옮긴다(ATOMIC_MOVE). 그 사이 FILE_DELETED 가 됐으면 만든 파일을 지운다.
+ *       실패하면 FAILED + 사유(raw 조각은 남긴다).</li>
  *   <li>서버가 재시작되면 PROCESSING 으로 남은 녹화를 다시 줄 세운다.</li>
  * </ul>
  */
@@ -137,10 +141,12 @@ public class RecordingMergeService {
 			return;
 		}
 
-		String vodRelative = "vod/" + UUID.randomUUID() + ".mp4";
-		Path out = files.resolve(vodRelative);
+		String outRelative = RecordingFiles.PRIVATE_DIR + UUID.randomUUID() + ".mp4";
+		Path out = files.resolve(outRelative);
 		Path list = null;
 		boolean keepOut = false;
+		// 공개라 vod/ 로 옮긴 뒤 DB 커밋이 실패하면 옮긴 파일도 지워야 한다(공개 폴더에 고아가 남지 않게)
+		AtomicReference<String> moved = new AtomicReference<>();
 		try {
 			Files.createDirectories(out.getParent());
 			list = Files.createTempFile(out.getParent(), ".concat-", ".txt");
@@ -168,7 +174,17 @@ public class RecordingMergeService {
 				if (segmentRepository.countByRecordingId(recordingId) != snap.segments().size()) {
 					return SaveResult.SEGMENTS_CHANGED;
 				}
-				r.markReady(vodRelative, duration, size);
+				String finalRelative = outRelative;
+				if (r.getVisibility() == Visibility.PUBLIC) {
+					finalRelative = RecordingFiles.videoPathFor(outRelative, Visibility.PUBLIC);
+					try {
+						files.moveVideo(outRelative, finalRelative);
+					} catch (IOException e) {
+						throw new UncheckedIOException("공개 폴더로 옮기기 실패", e);
+					}
+					moved.set(finalRelative);
+				}
+				r.markReady(finalRelative, duration, size);
 				segmentRepository.deleteAllByIdInBatch(snap.segments().stream().map(Segment::id).toList());
 				return SaveResult.SAVED;
 			});
@@ -176,7 +192,8 @@ public class RecordingMergeService {
 				case SAVED -> {
 					keepOut = true;
 					snap.segments().forEach(seg -> files.deleteQuietly(seg.filePath()));
-					log.info("녹화 병합 완료: recording={} file={} duration={}s size={}", recordingId, vodRelative, duration, size);
+					log.info("녹화 병합 완료: recording={} file={} duration={}s size={}", recordingId,
+							moved.get() != null ? moved.get() : outRelative, duration, size);
 				}
 				case SEGMENTS_CHANGED -> {
 					log.info("병합 중 조각이 늘어 다시 병합: recording={}", recordingId);
@@ -194,6 +211,9 @@ public class RecordingMergeService {
 		} finally {
 			if (!keepOut) {
 				deleteQuietly(out); // 실패 · 버림 · 예외(DB 오류 포함) 모두 만든 파일을 지운다
+				if (moved.get() != null) {
+					files.deleteQuietly(moved.get());
+				}
 			}
 			deleteQuietly(list);
 		}

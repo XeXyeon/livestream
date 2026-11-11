@@ -36,6 +36,7 @@ public enum ErrorCode {
 	DONATION_ALREADY_PROCESSED(HttpStatus.CONFLICT, "이미 처리된 후원입니다"),
 	PAYMENT_CONFIRM_FAILED(HttpStatus.BAD_GATEWAY, "결제 승인에 실패했습니다"),
 
+	FILE_MOVE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "영상 파일을 옮기지 못했습니다. 잠시 후 다시 시도해 주세요"),
 	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다");
 
 	private final HttpStatus status;

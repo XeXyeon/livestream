@@ -31,7 +31,9 @@ public record RecordingDetail(
 	public static RecordingDetail of(Recording r, long commentCount, long donationTotal, boolean isOwner) {
 		Broadcast b = r.getBroadcast();
 		boolean ready = r.getStatus() == RecordingStatus.READY;
-		String videoUrl = ready && r.getVisibility() == Visibility.PUBLIC && r.getFilePath() != null ? "/" + r.getFilePath() : null;
+		// 공개 폴더(vod/)에 있을 때만. 드물게 file_path 가 private/ 를 가리키면(이동 뒤 롤백) null — /private 는 Caddy 가 SPA 로 넘긴다
+		String videoUrl = ready && r.getVisibility() == Visibility.PUBLIC && r.getFilePath() != null
+				&& r.getFilePath().startsWith("vod/") ? "/" + r.getFilePath() : null;
 		return new RecordingDetail(r.getId(), b.getId(), b.getTitle(), CategoryResponse.of(b.getCategory()),
 				BroadcastSummary.thumbnailUrl(b.getThumbnailPath()), r.getDurationSeconds(), b.getStartedAt(),
 				new BroadcastSummary.ChannelRef(b.getChannel().getId(), b.getChannel().getName()), commentCount,
