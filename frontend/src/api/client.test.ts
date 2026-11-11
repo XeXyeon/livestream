@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiFetch, ensureFreshToken, tokenExpiresAt } from './client'
+import { ApiError, apiFetch, ensureFreshToken, shouldRetryQuery, tokenExpiresAt } from './client'
 import { useAuth } from '../store/auth'
 
 const auth = { accessToken: 'new-token', member: { id: 1, nickname: '방송인', channelId: 2 } }
@@ -91,5 +91,18 @@ describe('ensureFreshToken', () => {
   it('exp를 읽는다', () => {
     expect(tokenExpiresAt(jwt(100))).toBe(100_000)
     expect(tokenExpiresAt('broken')).toBeNull()
+  })
+})
+
+describe('shouldRetryQuery', () => {
+  it('4xx는 재시도하지 않는다', () => {
+    expect(shouldRetryQuery(0, new ApiError(404, 'CHANNEL_NOT_FOUND', '채널을 찾을 수 없습니다.'))).toBe(false)
+    expect(shouldRetryQuery(0, new ApiError(403, 'FORBIDDEN', '권한이 없습니다.'))).toBe(false)
+  })
+
+  it('5xx와 네트워크 오류는 3번까지 재시도한다', () => {
+    expect(shouldRetryQuery(0, new ApiError(503, 'UNAVAILABLE', '잠시 후 다시 시도'))).toBe(true)
+    expect(shouldRetryQuery(2, new TypeError('Failed to fetch'))).toBe(true)
+    expect(shouldRetryQuery(3, new TypeError('Failed to fetch'))).toBe(false)
   })
 })

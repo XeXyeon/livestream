@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { bootstrapAuth } from './api/client'
+import { bootstrapAuth, shouldRetryQuery } from './api/client'
 import Header from './components/layout/Header'
 import Protected from './components/layout/Protected'
 import Home from './pages/Home'
@@ -14,7 +14,7 @@ import StudioPc from './pages/StudioPc'
 import StudioSettings from './pages/StudioSettings'
 import Placeholder from './pages/Placeholder'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
 
 function AppRoutes() {
   useEffect(() => { void bootstrapAuth() }, [])

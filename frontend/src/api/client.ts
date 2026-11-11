@@ -120,3 +120,10 @@ export function toQueryString(params: Record<string, string | number | undefined
   const text = search.toString()
   return text ? `?${text}` : ''
 }
+
+// TanStack Query 재시도 규칙: 4xx(없음 · 권한 · 입력 오류)는 다시 물어도 같으므로 바로 실패시키고,
+// 네트워크 오류 · 5xx만 최대 3번 다시 시도한다.
+export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < 3
+}
