@@ -12,6 +12,7 @@ import StudioEntry from './pages/StudioEntry'
 import StudioMobile from './pages/StudioMobile'
 import StudioPc from './pages/StudioPc'
 import StudioSettings from './pages/StudioSettings'
+import Widget from './pages/Widget'
 import Placeholder from './pages/Placeholder'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
@@ -20,7 +21,7 @@ function AppRoutes() {
   useEffect(() => { void bootstrapAuth() }, [])
   return (
     <Routes>
-      <Route path="/widget/:widgetKey" element={<Placeholder title="알림 위젯" />} />
+      <Route path="/widget/:widgetKey" element={<Widget />} />
       <Route element={<Header />}>
         <Route path="/" element={<Home />} />
         <Route path="/live/:channelId" element={<Live />} />
