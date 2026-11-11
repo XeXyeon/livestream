@@ -3,9 +3,12 @@ package com.livestream.livestream.broadcast;
 import com.livestream.livestream.broadcast.dto.BroadcastSummary;
 import com.livestream.livestream.broadcast.dto.Recommendations;
 import com.livestream.livestream.chat.ViewerCounter;
+import com.livestream.livestream.comment.CommentCounter;
+import com.livestream.livestream.recording.Recording;
 import com.livestream.livestream.recording.RecordingRepository;
 import com.livestream.livestream.recording.dto.RecordingSummary;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -23,6 +26,7 @@ public class RecommendationService {
 	private final BroadcastRepository broadcastRepository;
 	private final RecordingRepository recordingRepository;
 	private final ViewerCounter viewerCounter;
+	private final CommentCounter commentCounter;
 
 	/** 호출 쪽 트랜잭션(readOnly) 안에서 부른다. */
 	public Recommendations recommend(Broadcast base) {
@@ -35,10 +39,10 @@ public class RecommendationService {
 		if (!lives.isEmpty()) {
 			return new Recommendations(lives, List.of());
 		}
-		// TODO(CMT-1): commentCount
-		List<RecordingSummary> recordings = recordingRepository
-				.findRecentPublic(base.getId(), PageRequest.of(0, LIMIT)).stream()
-				.map(r -> RecordingSummary.of(r, 0))
+		List<Recording> recent = recordingRepository.findRecentPublic(base.getId(), PageRequest.of(0, LIMIT));
+		Map<Long, Long> comments = commentCounter.ofRecordings(recent.stream().map(Recording::getId).toList());
+		List<RecordingSummary> recordings = recent.stream()
+				.map(r -> RecordingSummary.of(r, comments.getOrDefault(r.getId(), 0L)))
 				.toList();
 		return new Recommendations(List.of(), recordings);
 	}

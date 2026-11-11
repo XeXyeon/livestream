@@ -117,6 +117,11 @@ public interface RecordingRepository extends JpaRepository<Recording, Long> {
 
 	// ---------- REC-1 녹화 병합 · 보관 ----------
 
+	/** 댓글 작성: 공유 잠금(FOR SHARE) — 방송 삭제의 댓글 물리 삭제와 직렬화한다. 방송 · 채널은 잠그지 않는다(잠금 순서). */
+	@Lock(LockModeType.PESSIMISTIC_READ)
+	@Query("select r from Recording r where r.id = :id")
+	Optional<Recording> findByIdForShare(Long id);
+
 	/** 병합 결과 저장 · 조각 추가 직전에 잠가 읽는다(방송 삭제의 FILE_DELETED 와 겹치지 않게). */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select r from Recording r where r.id = :id")

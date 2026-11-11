@@ -1,5 +1,6 @@
 package com.livestream.livestream.recording;
 
+import com.livestream.livestream.comment.CommentCounter;
 import com.livestream.livestream.common.dto.PageResponse;
 import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
@@ -12,8 +13,10 @@ import com.livestream.livestream.recording.dto.VideoTokenResponse;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +38,7 @@ public class RecordingQueryService {
 	private final RecordingFiles files;
 	private final DonationRepository donationRepository;
 	private final TransactionTemplate tx;
+	private final CommentCounter commentCounter;
 
 	/** GET /recordings?sort=recent — 공개(READY · PUBLIC) 다시보기, 방송 시작 최신순. 정렬은 recent 하나뿐이다. */
 	@Transactional(readOnly = true)
@@ -42,9 +46,9 @@ public class RecordingQueryService {
 		if (sort != null && !sort.equals("recent")) {
 			throw new ApiException(ErrorCode.VALIDATION_ERROR, "sort는 recent만 지원합니다");
 		}
-		// TODO(CMT-1): commentCount
-		return PageResponse.of(recordingRepository.findPublic(PageResponse.pageable(page, size, Sort.unsorted())),
-				r -> RecordingSummary.of(r, 0));
+		Page<Recording> recordings = recordingRepository.findPublic(PageResponse.pageable(page, size, Sort.unsorted()));
+		Map<Long, Long> comments = commentCounter.ofRecordings(recordings.map(Recording::getId).getContent());
+		return PageResponse.of(recordings, r -> RecordingSummary.of(r, comments.getOrDefault(r.getId(), 0L)));
 	}
 
 	@Transactional(readOnly = true)
@@ -212,7 +216,6 @@ public class RecordingQueryService {
 	}
 
 	private RecordingDetail toDetail(Recording r, boolean owner) {
-		// TODO(CMT-1): commentCount
-		return RecordingDetail.of(r, 0, donationRepository.sumApprovedByBroadcast(r.getBroadcast().getId()), owner);
+		return RecordingDetail.of(r, commentCounter.ofRecording(r.getId()), donationRepository.sumApprovedByBroadcast(r.getBroadcast().getId()), owner);
 	}
 }
