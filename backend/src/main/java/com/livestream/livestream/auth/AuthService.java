@@ -26,6 +26,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** 가입 · 로그인 · 갱신(회전) · 로그아웃 (DESIGN §4.7). */
 @Service
@@ -40,13 +41,15 @@ public class AuthService {
 	private final PasswordEncoder passwordEncoder;
 	private final JwtProvider jwtProvider;
 	private final AppProperties props;
+	private final TransactionTemplate tx;
 	private final SecureRandom secureRandom = new SecureRandom();
 	/** 존재하지 않는 이메일로 로그인할 때도 BCrypt 비교를 한 번 수행해 응답 시간 차이로 가입 여부가 드러나지 않게 한다. */
 	private final String dummyPasswordHash;
 
 	public AuthService(MemberRepository memberRepository, ChannelRepository channelRepository,
 			RefreshTokenRepository refreshTokenRepository, PasswordEncoder passwordEncoder, JwtProvider jwtProvider,
-			AppProperties props) {
+			AppProperties props, TransactionTemplate tx) {
+		this.tx = tx;
 		this.memberRepository = memberRepository;
 		this.channelRepository = channelRepository;
 		this.refreshTokenRepository = refreshTokenRepository;
@@ -56,7 +59,10 @@ public class AuthService {
 		this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-timing");
 	}
 
-	@Transactional
+	/**
+	 * 가입. BCrypt 해시(수백 ms)가 DB 커넥션을 쥔 채 돌지 않도록 트랜잭션은 저장 구간({@code member} + {@code channel})에만 건다.
+	 * 사전 중복 검사는 빠른 실패용이고, 동시 가입은 유니크 제약 위반으로 잡는다.
+	 */
 	public Long signup(SignupRequest request) {
 		String email = normalizeEmail(request.email());
 		String nickname = request.nickname().strip();
@@ -72,11 +78,13 @@ public class AuthService {
 		if (memberRepository.existsByNickname(nickname)) {
 			throw new ApiException(ErrorCode.NICKNAME_DUPLICATED);
 		}
+		String passwordHash = passwordEncoder.encode(request.password());
 		try {
-			Member member = memberRepository.saveAndFlush(
-					Member.create(email, passwordEncoder.encode(request.password()), nickname));
-			channelRepository.save(Channel.createFor(member));
-			return member.getId();
+			return tx.execute(status -> {
+				Member member = memberRepository.saveAndFlush(Member.create(email, passwordHash, nickname));
+				channelRepository.save(Channel.createFor(member));
+				return member.getId();
+			});
 		} catch (DataIntegrityViolationException e) {
 			// 사전 검사와 저장 사이에 같은 값이 먼저 들어온 경우(동시 가입)
 			String cause = String.valueOf(e.getMostSpecificCause().getMessage());
@@ -85,7 +93,10 @@ public class AuthService {
 		}
 	}
 
-	@Transactional
+	/**
+	 * 로그인. 회원 조회 · BCrypt 비교 · 토큰 저장이 각각 자기 짧은 트랜잭션(리포지토리)에서 돌아, BCrypt 비교 동안 커넥션을 쥐지 않는다.
+	 * (병렬 로그인이 Hikari 풀을 오래 점유하지 못하게 한다 — AUTH-1#1)
+	 */
 	public AuthResult login(LoginRequest request) {
 		Member member = memberRepository.findByEmail(normalizeEmail(request.email())).orElse(null);
 		String hash = member != null ? member.getPasswordHash() : dummyPasswordHash;
