@@ -184,7 +184,7 @@ seed/        SeedRunner
 계층: Controller(요청 검증 · DTO) → Service(규칙 · 트랜잭션 · 권한) → Repository(JPA). 엔티티는 Lombok `@Getter`, 생성자는 정적 팩토리, setter 없음.
 
 ### 4.3 테이블 · 엔티티
-공통 컬럼: `id BIGINT AUTO_INCREMENT PK`, `created_at DATETIME(6)`, `updated_at DATETIME(6)` (`@CreatedDate`/`@LastModifiedDate`, JPA Auditing). 문자열은 `VARCHAR`, enum은 `@Enumerated(STRING)`. 유니크 · check는 `@Table(uniqueConstraints)` · `@Check`로.
+공통 컬럼: `id BIGINT AUTO_INCREMENT PK`, `created_at DATETIME(6)`, `updated_at DATETIME(6)` (`@CreatedDate`/`@LastModifiedDate`, JPA Auditing). 문자열은 `VARCHAR`, enum은 `@Enumerated(STRING)`. 유니크 · check는 `@Table(uniqueConstraints)` · `@Check`로. 단, MySQL은 `ON DELETE CASCADE` FK 컬럼이 들어간 CHECK를 거부하므로(ERROR 3823) 그런 규칙은 엔티티 생성 메서드로 지킨다(comment 참고).
 
 | 테이블 | 컬럼 | 제약 |
 |---|---|---|
@@ -195,7 +195,7 @@ seed/        SeedRunner
 | `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `app.recording.dir` 기준 상대 경로로 **지금 파일이 있는 곳**을 가리킨다: PUBLIC이면 `vod/<uuid>.mp4`, PRIVATE면 `private/<uuid>.mp4`(§4.10) |
 | `recording_segment` | `recording_id FK`, `file_path VARCHAR(255)`, `sequence INT` | 조각 도착 순서 |
 | `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
-| `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | check((recording_id IS NULL) <> (post_id IS NULL)). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
+| `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | 대상 하나 규칙 `(recording_id IS NULL) <> (post_id IS NULL)`은 **DB CHECK가 아니라 `Comment.onRecording` · `Comment.onPost` 생성 메서드로** 지킨다(생성자는 private; cascade FK 컬럼은 MySQL CHECK에 못 씀 — `da44053`). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
 | `donation` | `broadcast_id FK`, `channel_id FK`, `donor_member_id FK`, `amount INT`, `message VARCHAR(100) NULL`, `order_id CHAR(36)`, `payment_key VARCHAR(200) NULL`, `status VARCHAR(20)`, `approved_at NULL` | unique(order_id), unique(payment_key). index(broadcast_id, status), index(channel_id, status) |
 
 Enum:
@@ -361,7 +361,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러, 댓글 check 제약.
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
@@ -440,7 +440,7 @@ frontend/src/
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**, **S10 Post**: §6.3.
-- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`; `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생.
+- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`; `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
 
 ## 7. 인프라 세부 (OPS-3 · OPS-5)
 - `backend/Dockerfile`: 현재 Dockerfile 유지 + 런타임 스테이지에 `RUN apk add --no-cache ffmpeg`.
@@ -455,7 +455,7 @@ frontend/src/
 | LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 | GRID-1 | `hlsVariant: mpegts`/일반 fMP4 HLS(3~6초)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
-| OBS 브라우저 소스에서 `speechSynthesis` 동작 | WID-1 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
+| OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
 ## 9. 항목별 구현 지침 (로드맵 ID)
@@ -532,9 +532,9 @@ frontend/src/
 - 읽을 절: §6.7 S2 DonateDialog · DonationBanner, S8 받은 후원, §4.13 1~3. Toss 결제위젯 v2 SDK(테스트 클라이언트 키), 결제 성공 URL은 `/live/:channelId?payment=success&paymentKey=&orderId=&amount=`로 돌아와 confirm 호출.
 - 완료: 테스트 카드로 결제 → 채팅 강조 + 배너 + 스튜디오 알림, 마이페이지 방송별 합계.
 
-### WID-1 위젯 키 SSE · 알림 위젯
-- 읽을 절: §4.15, §6.7 S11, §8 TTS 위험. README 연동 문서 초안(이벤트 형식 · curl 예시)은 `docs/`가 아니라 README 절로(DOC-2가 합침) — 이 항목에서는 카드에 적어 둔다.
-- 완료: curl로 SSE 수신, 후원 시 위젯에 카드 + TTS(일반 Chrome), OBS 브라우저 소스 TTS 동작 여부 카드에 기록, `Last-Event-ID` 복구.
+### WID-1 위젯 키 SSE (백엔드)
+- 읽을 절: §4.15. README 연동 문서 초안(이벤트 형식 · curl 예시)은 `docs/`가 아니라 README 절로(DOC-2가 합침) — 이 항목에서는 카드에 적어 둔다. 알림 위젯 S11 화면 · TTS는 FE-9(2026-11-11 분리).
+- 완료: curl로 SSE 수신(ready → donation, 15초 ping), `Last-Event-ID` 복구, 위젯 키 재발급 시 연결 종료, 없는 키 404 통합 테스트.
 
 ### REC-1 녹화 세그먼트 수집 · 병합 · 정리
 - 읽을 절: §4.10, §4.3 recording · recording_segment, `FfmpegRunner`, §2.3 record 설정.
@@ -567,6 +567,10 @@ frontend/src/
 ### OPS-5 배포
 - 읽을 절: §2, §7, ARCH-1 카드 "맥미니 대체 조사"(호스트는 사용자 결정 대기). 운영 `compose.yaml`로 전체 기동, 도메인 HTTPS, 포트 개방, `webrtcAdditionalHosts`.
 - 완료: 외부 기기(LTE)에서 가입 · 송출 · 시청 · 채팅이 동작. 서버 재시작 후 데이터 유지 확인.
+
+### FE-9 알림 위젯 S11 · TTS PoC
+- 읽을 절: §6.3 `/widget/:widgetKey`, §6.7 S11, §4.15(이벤트 형식), §8 TTS 위험. WID-1 카드 "API · 스키마 상세"(같은 후원이 두 번 올 수 있는 경우).
+- 완료: ① `/widget/<key>`를 열면 레이아웃 없이 투명 배경으로 `EventSource` 구독, `donation` 이벤트에 카드 6초 표시 + `speechSynthesis`(한국어 음성, 큐 순차 재생) ② 같은 후원 `id`가 두 번 와도 한 번만 표시(vitest, 이벤트 핸들러 단위) ③ 끊기면 브라우저 `EventSource` 자동 재연결에 맡기고 `Last-Event-ID`는 브라우저가 보내는 것을 그대로 쓴다(직접 구현 없음) ④ 옛 키(404)는 "위젯 키가 바뀌었습니다" 문구 ⑤ 일반 Chrome 창에서 TTS 동작 확인, **OBS 브라우저 소스에서 TTS 동작 여부를 카드에 기록**(안 되면 §8의 대응: 일반 Chrome 창 + OBS 창 캡처 안내를 S5 위젯 설정 문구로) ⑥ README 연동 절에 넣을 안내 문구(위젯 주소 · OBS 설정 · 안 될 때)를 카드에 적는다(DOC-2가 합침).
 
 ### DOC-2 README
 - 읽을 절: PLAN-1 카드 "확정 사항 14"(시연 12단계) · §1 체크 대응 · §4.15 연동 문서. 절: 서비스 URL · 테스트 계정 · 로컬 실행 · 운영 배포 · 기능 확인 절차(12단계, 각 단계에 체크 항목 표기) · 소유자 검증 · 멱등 테스트 이름 · 공개 연동 문서 · 아키텍처 요약(이 문서 링크).
