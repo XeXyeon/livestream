@@ -42,14 +42,16 @@ public class AuthService {
 	private final JwtProvider jwtProvider;
 	private final AppProperties props;
 	private final TransactionTemplate tx;
+	private final AuthRateLimiter rateLimiter;
 	private final SecureRandom secureRandom = new SecureRandom();
 	/** 존재하지 않는 이메일로 로그인할 때도 BCrypt 비교를 한 번 수행해 응답 시간 차이로 가입 여부가 드러나지 않게 한다. */
 	private final String dummyPasswordHash;
 
 	public AuthService(MemberRepository memberRepository, ChannelRepository channelRepository,
 			RefreshTokenRepository refreshTokenRepository, PasswordEncoder passwordEncoder, JwtProvider jwtProvider,
-			AppProperties props, TransactionTemplate tx) {
+			AppProperties props, TransactionTemplate tx, AuthRateLimiter rateLimiter) {
 		this.tx = tx;
+		this.rateLimiter = rateLimiter;
 		this.memberRepository = memberRepository;
 		this.channelRepository = channelRepository;
 		this.refreshTokenRepository = refreshTokenRepository;
@@ -63,7 +65,8 @@ public class AuthService {
 	 * 가입. BCrypt 해시(수백 ms)가 DB 커넥션을 쥔 채 돌지 않도록 트랜잭션은 저장 구간({@code member} + {@code channel})에만 건다.
 	 * 사전 중복 검사는 빠른 실패용이고, 동시 가입은 유니크 제약 위반으로 잡는다.
 	 */
-	public Long signup(SignupRequest request) {
+	public Long signup(SignupRequest request, String clientIp) {
+		rateLimiter.acquireSignup(clientIp); // 검증 전에 센다(성공 · 실패 불문)
 		String email = normalizeEmail(request.email());
 		String nickname = request.nickname().strip();
 		if (nickname.length() < 2 || nickname.length() > 20) {
@@ -97,14 +100,18 @@ public class AuthService {
 	 * 로그인. 회원 조회 · BCrypt 비교 · 토큰 저장이 각각 자기 짧은 트랜잭션(리포지토리)에서 돌아, BCrypt 비교 동안 커넥션을 쥐지 않는다.
 	 * (병렬 로그인이 Hikari 풀을 오래 점유하지 못하게 한다 — AUTH-1#1)
 	 */
-	public AuthResult login(LoginRequest request) {
-		Member member = memberRepository.findByEmail(normalizeEmail(request.email())).orElse(null);
+	public AuthResult login(LoginRequest request, String clientIp) {
+		String email = normalizeEmail(request.email());
+		rateLimiter.checkLogin(clientIp, email); // DB 조회 · BCrypt 전에 막는다
+		Member member = memberRepository.findByEmail(email).orElse(null);
 		String hash = member != null ? member.getPasswordHash() : dummyPasswordHash;
 		boolean tooLong = request.password().getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_BYTES;
 		boolean matches = !tooLong && passwordEncoder.matches(request.password(), hash);
 		if (member == null || !matches) {
+			rateLimiter.recordLoginFailure(clientIp, email);
 			throw new ApiException(ErrorCode.LOGIN_FAILED);
 		}
+		rateLimiter.clearLogin(clientIp, email);
 		return issue(member).result();
 	}
 

@@ -2,6 +2,7 @@ package com.livestream.livestream.common.error;
 
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -27,6 +28,13 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
 		ErrorCode code = e.getErrorCode();
 		return ResponseEntity.status(code.getStatus()).body(ErrorResponse.of(code, e.getMessage()));
+	}
+
+	@ExceptionHandler(TooManyRequestsException.class)
+	public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException e) {
+		ErrorCode code = e.getErrorCode();
+		return ResponseEntity.status(code.getStatus()).header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+				.body(ErrorResponse.of(code, e.getMessage()));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
