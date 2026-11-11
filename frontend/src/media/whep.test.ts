@@ -92,4 +92,20 @@ describe('WhepPlayer', () => {
     expect(fetchMock.mock.calls[1]).toEqual(['https://host/live/3/whep/1', { method: 'DELETE' }])
     expect(FakePeerConnection.instances).toHaveLength(2)
   })
+  it('POST 응답 전에 close되면 받은 세션을 DELETE하고, 연결 시도 중 reconnect는 건너뛴다', async () => {
+    let resolvePost: (response: Response) => void = () => undefined
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolvePost = resolve }))
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+    const player = new WhepPlayer()
+    player.attach(video as unknown as HTMLVideoElement, 'https://host/live/3/whep')
+    await flush()
+    player.reconnect()
+    await flush()
+    expect(FakePeerConnection.instances).toHaveLength(1)
+
+    player.close()
+    resolvePost(sdpResponse(201, 'answer-sdp', '/live/3/whep/late'))
+    await flush()
+    expect(fetchMock).toHaveBeenLastCalledWith('https://host/live/3/whep/late', { method: 'DELETE', headers: undefined })
+  })
 })

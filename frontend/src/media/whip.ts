@@ -1,4 +1,4 @@
-import { resolveLocation, waitForIceGathering } from './webrtc'
+import { resolveLocation, waitForIceGathering, discardSession } from './webrtc'
 
 // §6.5 WhipClient: 브라우저 송출. Authorization: Bearer <streamKey>로 MediaMTX에 publish한다.
 // 연결이 끊기면 3초 간격으로 최대 20번(서버 유예 60초 안) 다시 publish한다.
@@ -114,7 +114,10 @@ export class WhipClient {
     } catch {
       throw new WhipError(0, '송출 서버에 연결하지 못했습니다')
     }
-    if (stale()) return
+    if (stale()) {
+      if (response.ok) discardSession(response, this.url, { Authorization: `Bearer ${this.bearer}` })
+      return
+    }
     if (response.status !== 201 && response.status !== 200) {
       throw new WhipError(response.status, response.status === 401
         ? '송출이 거절되었습니다. 스트림 키를 확인하거나, 방송을 종료했다면 30초 뒤 다시 시도해 주세요.'

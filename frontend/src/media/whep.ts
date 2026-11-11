@@ -1,4 +1,4 @@
-import { resolveLocation, waitForIceGathering } from './webrtc'
+import { resolveLocation, waitForIceGathering, discardSession } from './webrtc'
 
 // §6.5 WhepPlayer: MediaMTX WHEP로 저지연 재생. 헤더 없이 POST(시청은 인증 콜백이 허용).
 // 끊기거나 아직 송출이 붙지 않았으면(404) 'waiting'으로 바꾸고 3초마다 다시 붙는다. close() 전까지 계속한다.
@@ -13,6 +13,7 @@ export class WhepPlayer {
   private sessionUrl: string | null = null
   private closed = false
   private generation = 0
+  private attempting = false
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private state: WhepState = 'connecting'
   private readonly listeners = new Set<(state: WhepState) => void>()
@@ -35,7 +36,8 @@ export class WhepPlayer {
 
   /** 방송이 다시 LIVE가 됐을 때 기다리지 않고 바로 다시 붙는다. 재생 중이면 아무것도 하지 않는다. */
   reconnect(): void {
-    if (this.closed || this.state === 'playing') return
+    // 연결 시도(POST)가 진행 중이면 그 결과를 기다린다. 버리고 새로 붙으면 방금 만든 세션이 버려진다.
+    if (this.closed || this.state === 'playing' || this.attempting) return
     void this.connect()
   }
 
@@ -77,6 +79,7 @@ export class WhepPlayer {
       }
     })
 
+    this.attempting = true
     try {
       await pc.setLocalDescription(await pc.createOffer())
       await waitForIceGathering(pc)
@@ -86,7 +89,10 @@ export class WhepPlayer {
         headers: { 'Content-Type': 'application/sdp' },
         body: pc.localDescription?.sdp ?? '',
       })
-      if (stale()) return
+      if (stale()) {
+        if (response.ok) discardSession(response, this.url)
+        return
+      }
       if (!response.ok) {
         this.waitAndRetry()
         return
@@ -95,6 +101,8 @@ export class WhepPlayer {
       await pc.setRemoteDescription({ type: 'answer', sdp: await response.text() })
     } catch {
       if (!stale()) this.waitAndRetry()
+    } finally {
+      if (!stale()) this.attempting = false
     }
   }
 

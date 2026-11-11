@@ -21,3 +21,9 @@ export function resolveLocation(location: string | null, requestUrl: string): st
   const base = new URL(requestUrl, globalThis.location?.href ?? 'http://localhost/')
   return new URL(location, base).toString()
 }
+
+/** 성공한 POST 뒤 시도가 무효가 됐을 때(close · 다시 붙기) 서버에 만들어진 세션을 지운다. 지우지 않으면 타임아웃까지 남는다. */
+export function discardSession(response: Response, requestUrl: string, headers?: HeadersInit): void {
+  const url = resolveLocation(response.headers.get('Location'), requestUrl)
+  if (url) void fetch(url, { method: 'DELETE', headers }).catch(() => undefined)
+}
