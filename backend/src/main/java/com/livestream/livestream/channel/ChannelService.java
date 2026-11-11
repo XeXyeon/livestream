@@ -11,6 +11,7 @@ import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
+import com.livestream.livestream.integration.WidgetKeyRotatedEvent;
 import com.livestream.livestream.post.PostRepository;
 import com.livestream.livestream.recording.RecordingRepository;
 import java.net.URI;
@@ -18,6 +19,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +36,7 @@ public class ChannelService {
 
 	private final ChannelRepository channelRepository;
 	private final AppProperties props;
+	private final ApplicationEventPublisher applicationEventPublisher;
 	private final ObjectProvider<LiveBroadcastTerminator> liveBroadcastTerminators;
 	private final LiveBroadcastLookup liveBroadcastLookup;
 	private final PostRepository postRepository;
@@ -79,6 +82,8 @@ public class ChannelService {
 	public WidgetKeyResponse rotateWidgetKey(MemberPrincipal me) {
 		Channel channel = findMine(me, true);
 		String widgetKey = channel.rotateWidgetKey();
+		// 커밋되면 옛 키로 연 위젯 SSE 연결을 모두 닫는다(WID-1)
+		applicationEventPublisher.publishEvent(new WidgetKeyRotatedEvent(channel.getId()));
 		return new WidgetKeyResponse(widgetKey, widgetUrl(widgetKey));
 	}
 

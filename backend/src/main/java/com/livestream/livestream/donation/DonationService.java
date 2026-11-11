@@ -16,6 +16,8 @@ import com.livestream.livestream.donation.dto.DonationPageResponse;
 import com.livestream.livestream.donation.dto.DonationResponse;
 import com.livestream.livestream.donation.dto.ReceivedDonationByBroadcast;
 import com.livestream.livestream.donation.dto.ReceivedDonationsResponse;
+import com.livestream.livestream.integration.WidgetEventService;
+import com.livestream.livestream.integration.dto.WidgetDonationEvent;
 import com.livestream.livestream.member.Member;
 import com.livestream.livestream.member.MemberRepository;
 import java.time.Instant;
@@ -56,6 +58,7 @@ public class DonationService {
 	private final MemberRepository memberRepository;
 	private final TossPaymentsClient tossPaymentsClient;
 	private final BroadcastEventPublisher eventPublisher;
+	private final WidgetEventService widgetEventService;
 	private final TransactionTemplate tx;
 	private final AppProperties props;
 
@@ -90,7 +93,7 @@ public class DonationService {
 			throw result.error();
 		}
 		if (result.newlyApproved()) {
-			publishApproved(result.response(), result.broadcastOngoing());
+			publishApproved(result.response(), result.channelId(), result.broadcastOngoing());
 		}
 		return result.response();
 	}
@@ -147,7 +150,7 @@ public class DonationService {
 			case APPROVED -> {
 				d.approve(request.paymentKey(), Instant.now());
 				donationRepository.flush(); // payment_key 유니크 위반을 여기서 드러낸다
-				yield ConfirmResult.approved(DonationResponse.of(d), d.getBroadcast().getStatus().isOngoing());
+				yield ConfirmResult.approved(DonationResponse.of(d), d.getChannel().getId(), d.getBroadcast().getStatus().isOngoing());
 			}
 			case REJECTED -> {
 				log.info("Toss 승인 거절 donationId={} code={}", d.getId(), toss.code());
@@ -159,8 +162,17 @@ public class DonationService {
 		};
 	}
 
-	/** 채팅 토픽 · 버퍼는 방송이 진행 중일 때만(종료 뒤 승인되면 볼 시청자가 없고, 버퍼가 만료 예약 없이 다시 생긴다). */
-	private void publishApproved(DonationResponse r, boolean broadcastOngoing) {
+	/**
+	 * 알림 위젯 SSE 에는 늘 보낸다(위젯은 채널 단위이고, 놓친 것은 Last-Event-ID 로 다시 받는다 — WID-1).
+	 * 채팅 토픽 · 버퍼는 방송이 진행 중일 때만(종료 뒤 승인되면 볼 시청자가 없고, 버퍼가 만료 예약 없이 다시 생긴다).
+	 */
+	private void publishApproved(DonationResponse r, Long channelId, boolean broadcastOngoing) {
+		try {
+			widgetEventService.publish(channelId, WidgetDonationEvent.of(r.id(), r.broadcastId(), r.donor().nickname(),
+					r.amount(), r.message(), r.approvedAt()));
+		} catch (RuntimeException e) {
+			log.warn("위젯 후원 이벤트 발행 실패 donationId={}: {}", r.id(), e.toString());
+		}
 		if (!broadcastOngoing) {
 			return;
 		}
@@ -208,18 +220,19 @@ public class DonationService {
 		return value;
 	}
 
-	private record ConfirmResult(DonationResponse response, boolean newlyApproved, boolean broadcastOngoing, ApiException error) {
+	private record ConfirmResult(DonationResponse response, boolean newlyApproved, Long channelId, boolean broadcastOngoing,
+			ApiException error) {
 
 		static ConfirmResult ok(DonationResponse response, boolean newlyApproved) {
-			return new ConfirmResult(response, newlyApproved, false, null);
+			return new ConfirmResult(response, newlyApproved, null, false, null);
 		}
 
-		static ConfirmResult approved(DonationResponse response, boolean broadcastOngoing) {
-			return new ConfirmResult(response, true, broadcastOngoing, null);
+		static ConfirmResult approved(DonationResponse response, Long channelId, boolean broadcastOngoing) {
+			return new ConfirmResult(response, true, channelId, broadcastOngoing, null);
 		}
 
 		static ConfirmResult failed(ApiException error) {
-			return new ConfirmResult(null, false, false, error);
+			return new ConfirmResult(null, false, null, false, error);
 		}
 	}
 }
