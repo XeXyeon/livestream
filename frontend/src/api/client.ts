@@ -46,6 +46,35 @@ export async function bootstrapAuth(): Promise<void> {
   }
 }
 
+/** access JWT의 exp(ms). 해석하지 못하면 null */
+export function tokenExpiresAt(token: string): number | null {
+  try {
+    const payload = token.split('.')[1]
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '='))
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp
+    return typeof exp === 'number' ? exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * §6.4: access의 exp가 60초 안이면 먼저 refresh한다. STOMP 연결 직전 · 송출 시작 직전에 부른다.
+ * 로그인 상태가 아니거나 refresh가 실패하면 null(실패 시 로그인 상태를 지운다).
+ */
+export async function ensureFreshToken(now: number = Date.now()): Promise<string | null> {
+  const token = useAuth.getState().accessToken
+  if (!token) return null
+  const expiresAt = tokenExpiresAt(token)
+  if (expiresAt !== null && expiresAt - now > 60_000) return token
+  try {
+    return (await refreshSession()).accessToken
+  } catch {
+    useAuth.getState().clear()
+    return null
+  }
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const request = (token: string | null) => {
     const headers = new Headers(init.headers)
