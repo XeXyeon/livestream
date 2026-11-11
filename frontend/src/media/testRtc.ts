@@ -18,6 +18,7 @@ export class FakeMediaStream {
     this.tracks = [...tracks]
   }
   addTrack(track: FakeTrack) { this.tracks.push(track) }
+  removeTrack(track: FakeTrack) { const i = this.tracks.indexOf(track); if (i >= 0) this.tracks.splice(i, 1) }
   getTracks() { return [...this.tracks] }
   getAudioTracks() { return this.tracks.filter((t) => t.kind === 'audio') }
   getVideoTracks() { return this.tracks.filter((t) => t.kind === 'video') }

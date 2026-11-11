@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPcStream } from './mixer'
+import { createMobileStream, createPcStream } from './mixer'
 import { FakeMediaStream, FakeTrack } from './testRtc'
 
 class FakeNode {
@@ -88,5 +88,50 @@ describe('createPcStream', () => {
     await result.setMic(null)
     expect(micTrack.stop).toHaveBeenCalled()
     expect(result.hasMic).toBe(false)
+  })
+})
+
+describe('createMobileStream', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('카메라 1280x720 + 마이크로 열고, 전/후면을 바꾸면 이전 트랙을 멈추고 새 트랙을 돌려준다', async () => {
+    const first = new FakeTrack('video')
+    const audio = new FakeTrack('audio')
+    const second = new FakeTrack('video')
+    const getUserMedia = vi.fn()
+      .mockResolvedValueOnce(new FakeMediaStream([first, audio]))
+      .mockResolvedValueOnce(new FakeMediaStream([second]))
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
+
+    const mobile = await createMobileStream({ facing: 'user' })
+    expect(getUserMedia).toHaveBeenNthCalledWith(1, { video: { facingMode: 'user', width: 1280, height: 720 }, audio: true })
+
+    const track = await mobile.switchCamera()
+    expect(track).toBe(second)
+    expect(first.stop).toHaveBeenCalled()
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, { video: { facingMode: 'environment', width: 1280, height: 720 } })
+    expect(mobile.facing).toBe('environment')
+    expect((mobile.stream.getVideoTracks() as unknown as FakeTrack[])).toEqual([second])
+
+    mobile.setMicEnabled(false)
+    expect(audio.enabled).toBe(false)
+    mobile.stop()
+    expect(second.stop).toHaveBeenCalled()
+    expect(audio.stop).toHaveBeenCalled()
+  })
+
+  it('반대쪽 카메라를 못 열면 원래 카메라를 다시 열고 실패를 알린다', async () => {
+    const first = new FakeTrack('video')
+    const reopened = new FakeTrack('video')
+    const getUserMedia = vi.fn()
+      .mockResolvedValueOnce(new FakeMediaStream([first, new FakeTrack('audio')]))
+      .mockRejectedValueOnce(new DOMException('none', 'NotFoundError'))
+      .mockResolvedValueOnce(new FakeMediaStream([reopened]))
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } })
+
+    const mobile = await createMobileStream({ facing: 'user' })
+    await expect(mobile.switchCamera()).rejects.toThrow()
+    expect(mobile.facing).toBe('user')
+    expect((mobile.stream.getVideoTracks() as unknown as FakeTrack[])).toEqual([reopened])
   })
 })

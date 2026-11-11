@@ -103,3 +103,59 @@ export async function createPcStream({ mic, onEnded }: PcStreamOptions): Promise
     },
   }
 }
+
+// §6.5 모바일: 카메라 + 마이크. 전/후면 전환은 새 카메라 트랙을 열어 RTCRtpSender.replaceTrack으로 바꾼다.
+export type Facing = 'user' | 'environment'
+
+export type MobileStream = {
+  stream: MediaStream
+  facing: Facing
+  /** 반대쪽 카메라로 바꾸고 새 비디오 트랙을 돌려준다(송출 중이면 부르는 쪽이 replaceTrack) */
+  switchCamera: () => Promise<MediaStreamTrack>
+  setMicEnabled: (enabled: boolean) => void
+  stop: () => void
+}
+
+const cameraConstraints = (facing: Facing): MediaTrackConstraints => ({ facingMode: facing, width: 1280, height: 720 })
+
+export async function createMobileStream({ facing }: { facing: Facing }): Promise<MobileStream> {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(facing), audio: true })
+  const state = { facing, micEnabled: true, stopped: false }
+
+  return {
+    stream,
+    get facing() { return state.facing },
+    async switchCamera() {
+      const next: Facing = state.facing === 'user' ? 'environment' : 'user'
+      const old = stream.getVideoTracks()[0]
+      // 휴대폰은 카메라 두 개를 동시에 못 여는 경우가 많아(iOS) 이전 트랙을 먼저 멈춘다.
+      old?.stop()
+      let video: MediaStream
+      try {
+        video = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(next) })
+      } catch (error) {
+        // 반대쪽 카메라가 없거나 거절되면 원래 카메라를 다시 연다.
+        video = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(state.facing) })
+        swap(old, video.getVideoTracks()[0])
+        throw error
+      }
+      state.facing = next
+      return swap(old, video.getVideoTracks()[0])
+    },
+    setMicEnabled(enabled) {
+      state.micEnabled = enabled
+      stream.getAudioTracks().forEach((track) => { track.enabled = enabled })
+    },
+    stop() {
+      if (state.stopped) return
+      state.stopped = true
+      stream.getTracks().forEach((track) => track.stop())
+    },
+  }
+
+  function swap(old: MediaStreamTrack | undefined, track: MediaStreamTrack): MediaStreamTrack {
+    if (old) stream.removeTrack(old)
+    stream.addTrack(track)
+    return track
+  }
+}
