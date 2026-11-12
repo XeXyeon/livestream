@@ -1,4 +1,4 @@
-import type { BroadcastSummary, Category, RecordingSummary } from '../../api/types'
+import type { BroadcastSummary, Category, FollowedChannel, RecordingSummary } from '../../api/types'
 
 export type SidebarChannel = {
   channelId: number
@@ -51,6 +51,18 @@ export function buildSidebarChannels(
     })
   }
   return { live, recommended }
+}
+
+/** "팔로우" 칸: 서버 정렬(라이브 먼저) 그대로. 누르면 시청 화면(방송이 없으면 그 화면이 채널 소개를 보여 준다) */
+export function followsToSidebar(follows: readonly FollowedChannel[]): SidebarChannel[] {
+  return follows.map((follow) => ({
+    channelId: follow.channelId,
+    name: follow.name,
+    category: follow.category,
+    viewerCount: follow.isLive ? follow.viewerCount : null,
+    lastBroadcastAt: null,
+    href: `/live/${follow.channelId}`,
+  }))
 }
 
 /** 사이드바가 없는 화면: 스튜디오(전체 화면 송출 도구) · 로그인 · 가입(폼에 집중) */

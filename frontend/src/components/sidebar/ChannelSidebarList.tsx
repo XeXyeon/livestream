@@ -1,6 +1,9 @@
-import { Link } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { Avatar } from '@astryxdesign/core/Avatar'
 import { formatCount, formatRelative } from '../broadcast/format'
+import { useMyFollows } from '../follow/useMyFollows'
+import { followsToSidebar } from './sidebarChannels'
 import type { SidebarChannel } from './sidebarChannels'
 import { useSidebarChannels } from './useSidebarChannels'
 
@@ -19,15 +22,33 @@ type SidebarGroup = {
   isPending: boolean
   isError: boolean
   empty: string
+  /** 목록 대신 보일 안내(비로그인 "팔로우" 칸). 접힌 레일에서는 보이지 않는다 */
+  notice?: ReactNode
 }
 
 /**
- * 사이드바 본문. 펼침(행) · 접힘(아바타 줄) 공용.
- * 맨 위는 "팔로우" 자리: FOLLOW-2가 groups 맨 앞에 묶음 하나를 더한다. 1차는 "지금 라이브" · "추천 채널"만 그린다.
+ * 사이드바 본문. 펼침(행) · 접힘(아바타 줄) 공용. 위에서부터 "팔로우"(FOLLOW-2) · "지금 라이브" · "추천 채널".
  */
 export default function ChannelSidebarList({ collapsed = false, onNavigate }: Props) {
   const { live, recommended } = useSidebarChannels()
+  const follows = useMyFollows()
+  const { pathname, search } = useLocation()
+  const followGroup: SidebarGroup = {
+    key: 'follow',
+    title: '팔로우',
+    channels: follows.data ? followsToSidebar(follows.data) : [],
+    isPending: !follows.ready || (follows.loggedIn && follows.isPending),
+    isError: follows.isError && !follows.data,
+    empty: '팔로우한 채널이 없습니다.',
+    notice: follows.ready && !follows.loggedIn ? (
+      <p className="px-3 py-1 text-xs text-secondary">
+        로그인하면 팔로우한 채널이 여기 보입니다.{' '}
+        <Link to={`/login?next=${encodeURIComponent(pathname + search)}`} onClick={onNavigate} className="font-medium text-accent hover:underline">로그인</Link>
+      </p>
+    ) : undefined,
+  }
   const groups: SidebarGroup[] = [
+    followGroup,
     { key: 'live', title: '지금 라이브', ...live, empty: '지금 방송 중인 채널이 없습니다.' },
     { key: 'recommended', title: '추천 채널', ...recommended, empty: '최근 방송한 채널이 없습니다.' },
   ]
@@ -75,7 +96,9 @@ function CollapsedGroup({ group, onNavigate }: { group: SidebarGroup; onNavigate
 
 function ExpandedGroup({ group, onNavigate }: { group: SidebarGroup; onNavigate?: () => void }) {
   let body
-  if (group.channels.length > 0) {
+  if (group.notice) {
+    body = group.notice
+  } else if (group.channels.length > 0) {
     body = (
       <ul>
         {group.channels.map((channel) => (

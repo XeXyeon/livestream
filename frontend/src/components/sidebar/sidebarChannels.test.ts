@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { BroadcastSummary, RecordingSummary } from '../../api/types'
-import { buildSidebarChannels, hasSidebar, readCollapsed, writeCollapsed } from './sidebarChannels'
+import type { BroadcastSummary, FollowedChannel, RecordingSummary } from '../../api/types'
+import { buildSidebarChannels, followsToSidebar, hasSidebar, readCollapsed, writeCollapsed } from './sidebarChannels'
 
 const category = { code: 'GAME', label: '게임' } as const
 const live = (id: number, channelId: number, viewerCount: number): BroadcastSummary => ({
@@ -56,5 +56,13 @@ describe('접힘 상태 저장', () => {
       if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
       else delete (globalThis as { localStorage?: unknown }).localStorage
     }
+  })
+
+  it('팔로우 목록은 서버 순서 그대로, 라이브만 시청자 수 · 모두 시청 화면으로', () => {
+    const follow = (channelId: number, isLive: boolean, viewerCount: number): FollowedChannel => ({
+      channelId, name: `ch${channelId}`, category, isLive, liveBroadcastId: isLive ? channelId * 10 : null, viewerCount, followedAt: '2026-11-12T00:00:00Z',
+    })
+    const result = followsToSidebar([follow(3, true, 7), follow(14, false, 0)])
+    expect(result.map((item) => [item.channelId, item.viewerCount, item.href])).toEqual([[3, 7, '/live/3'], [14, null, '/live/14']])
   })
 })

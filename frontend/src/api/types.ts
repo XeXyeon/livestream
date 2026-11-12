@@ -59,6 +59,9 @@ export type BroadcastDetail = BroadcastSummary & {
   donationTotal: number
   recording: RecordingRef | null
   isOwner: boolean
+  /** 이 방송 채널 기준(FOLLOW-1). 비로그인 · 자기 채널은 isFollowing false */
+  followerCount: number
+  isFollowing: boolean
 }
 
 export type RecordingStatus = 'RECORDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'FILE_DELETED'
@@ -111,6 +114,23 @@ export type ChannelResponse = {
   recordingCount: number
   postCount: number
   owner: { nickname: string }
+  followerCount: number
+  /** 로그인한 회원이 팔로우 중이면 true. 비로그인 · 자기 채널은 false */
+  isFollowing: boolean
+}
+
+/** POST · DELETE /channels/{id}/follow (둘 다 멱등) */
+export type FollowStatus = { channelId: number; following: boolean; followerCount: number }
+
+/** GET /members/me/follows 항목. 정렬은 서버 고정(라이브 먼저 · 시청자 수 순, 그다음 최근 팔로우 순) */
+export type FollowedChannel = {
+  channelId: number
+  name: string
+  category: Category
+  isLive: boolean
+  liveBroadcastId: number | null
+  viewerCount: number
+  followedAt: string
 }
 
 export type MyChannelResponse = ChannelResponse & {

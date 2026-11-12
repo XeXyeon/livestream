@@ -21,6 +21,7 @@ import DonationBanner from '../components/donation/DonationBanner'
 import { useDonationBanner } from '../components/donation/useDonationBanner'
 import { useDonationReturn } from '../components/donation/useDonationReturn'
 import type { DonationReturnState } from '../components/donation/useDonationReturn'
+import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
 
 // S2 시청. 채널 → liveBroadcastId → 방송 상세. 방송이 끝나 liveBroadcastId가 null이 돼도
@@ -112,6 +113,7 @@ function BroadcastInfo({ broadcast, onDonate }: { broadcast: BroadcastDetail; on
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
         <Link to={`/channel/${broadcast.channel.id}`} className="font-semibold text-primary hover:text-accent">{broadcast.channel.name}</Link>
+        <FollowButton channelId={broadcast.channel.id} isFollowing={broadcast.isFollowing} followerCount={broadcast.followerCount} isOwner={broadcast.isOwner} />
         {broadcast.status !== 'ENDED' && (
           <span className="flex items-center gap-1"><Users aria-hidden className="h-4 w-4" />시청자 {formatCount(broadcast.viewerCount)}</span>
         )}

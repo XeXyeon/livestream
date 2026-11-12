@@ -12,6 +12,7 @@ import type { ChannelResponse } from '../api/types'
 import ChannelPosts from '../components/channel/ChannelPosts'
 import ChannelRecordings from '../components/channel/ChannelRecordings'
 import Spinner from '../components/common/Spinner'
+import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
 
 const TABS = [
@@ -51,6 +52,7 @@ export default function Channel() {
             {channel.liveBroadcastId != null && <Badge variant="error" label="LIVE" />}
           </div>
           <p className="text-sm text-secondary">{channel.owner.nickname} · {channel.category.label} · 다시보기 {channel.recordingCount.toLocaleString('ko-KR')} · 게시글 {channel.postCount.toLocaleString('ko-KR')}</p>
+          <div className="pt-2"><FollowButton key={channel.id} channelId={channel.id} isFollowing={channel.isFollowing} followerCount={channel.followerCount} isOwner={isOwner} /></div>
         </div>
         {isOwner && <Button href="/studio/settings" label="채널 설정" variant="secondary" size="sm" />}
       </div>
