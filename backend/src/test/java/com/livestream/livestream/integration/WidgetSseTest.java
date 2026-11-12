@@ -44,7 +44,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * WID-1 (DESIGN §4.15 · §9 WID-1): 실제 HTTP 로 SSE 를 받는다. ready → 승인 후원 donation(id = 후원 id),
- * Last-Event-ID 뒤 재전송, 위젯 키 재발급 시 연결 종료 · 옛 키 404, 없는 키 404.
+ * Last-Event-ID 헤더 · lastEventId 쿼리 뒤 재전송(헤더 우선), 위젯 키 재발급 시 연결 종료 · 옛 키 404, 없는 키 404.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -123,6 +123,35 @@ class WidgetSseTest {
 		assertThat(next(garbage).get("event")).isEqualTo("ready");
 		assertThat(otherEvents.poll(500, TimeUnit.MILLISECONDS)).isNull();
 		assertThat(garbage.poll(500, TimeUnit.MILLISECONDS)).isNull();
+	}
+
+	@Test
+	void lastEventId_쿼리로도_그_뒤_승인_후원을_먼저_보낸다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account donor = TestAccounts.create(mvc);
+		long broadcastId = start(streamer);
+		long first = donate(donor, broadcastId, 1000, "하나");
+		long second = donate(donor, broadcastId, 2000, "둘");
+
+		BlockingQueue<Map<String, String>> events = open(widgetKey(streamer), "?lastEventId=" + first, null);
+		assertThat(next(events).get("event")).isEqualTo("ready");
+		assertThat(next(events).get("id")).isEqualTo(String.valueOf(second));
+		assertThat(events.poll(500, TimeUnit.MILLISECONDS)).isNull();
+	}
+
+	@Test
+	void 헤더와_쿼리가_함께_오면_헤더가_우선한다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account donor = TestAccounts.create(mvc);
+		long broadcastId = start(streamer);
+		long first = donate(donor, broadcastId, 1000, "하나");
+		long second = donate(donor, broadcastId, 2000, "둘");
+		long third = donate(donor, broadcastId, 3000, "셋");
+
+		BlockingQueue<Map<String, String>> events = open(widgetKey(streamer), "?lastEventId=" + first, String.valueOf(second));
+		assertThat(next(events).get("event")).isEqualTo("ready");
+		assertThat(next(events).get("id")).isEqualTo(String.valueOf(third));
+		assertThat(events.poll(500, TimeUnit.MILLISECONDS)).isNull();
 	}
 
 	@Test
@@ -239,7 +268,11 @@ class WidgetSseTest {
 	}
 
 	private URI uri(String key) {
-		return URI.create("http://localhost:" + port + "/api/public/widget/" + key + "/events");
+		return uri(key, "");
+	}
+
+	private URI uri(String key, String query) {
+		return URI.create("http://localhost:" + port + "/api/public/widget/" + key + "/events" + query);
 	}
 
 	private int httpStatus(String key) throws Exception {
@@ -251,7 +284,12 @@ class WidgetSseTest {
 
 	/** SSE 를 열어 이벤트(event · id · data)를 큐로 모은다. 스트림이 끝나면 {@link #END}. */
 	private BlockingQueue<Map<String, String>> open(String key, String lastEventId) throws Exception {
-		HttpRequest.Builder req = HttpRequest.newBuilder(uri(key)).header("Accept", "text/event-stream").GET();
+		return open(key, "", lastEventId);
+	}
+
+	/** query 는 "?lastEventId=…" 처럼 앞의 ? 까지 넣는다. lastEventId 는 Last-Event-ID 헤더. */
+	private BlockingQueue<Map<String, String>> open(String key, String query, String lastEventId) throws Exception {
+		HttpRequest.Builder req = HttpRequest.newBuilder(uri(key, query)).header("Accept", "text/event-stream").GET();
 		if (lastEventId != null) {
 			req.header("Last-Event-ID", lastEventId);
 		}
