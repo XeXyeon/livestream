@@ -64,6 +64,16 @@ public class Broadcast extends BaseEntity {
 	@Column(name = "deleted_at", columnDefinition = "DATETIME(6)")
 	private Instant deletedAt;
 
+	/**
+	 * 이미 끝난 방송을 바로 만든다. 시연 시드(OPS-4) 전용: 상태 전이 · 종료 이벤트를 거치지 않는다.
+	 * 제목 · 카테고리는 {@link #start} 와 같이 채널에서 복사한다.
+	 */
+	public static Broadcast endedForSeed(Channel channel, BroadcastSource source, Instant startedAt, Instant endedAt) {
+		Broadcast b = start(channel, source, startedAt);
+		b.end(endedAt);
+		return b;
+	}
+
 	/** ready 훅으로 새 방송 시작: 제목 · 카테고리는 채널의 "다음 방송 정보"에서 복사한다. */
 	public static Broadcast start(Channel channel, BroadcastSource source, Instant now) {
 		Broadcast b = new Broadcast();
