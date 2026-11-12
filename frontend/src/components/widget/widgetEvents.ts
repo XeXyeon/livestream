@@ -2,6 +2,8 @@
 // 끊기면 브라우저 EventSource의 자동 재연결에 맡기고 `Last-Event-ID`도 브라우저가 보내게 둔다(§9 FE-9 ③).
 // 단, 브라우저는 200이 아닌 응답(옛 키 404 · 서버 오류 502 등)에는 재연결하지 않고 연결을 닫는다.
 // 그때만 상태를 한 번 물어 404면 "키가 바뀜"으로 멈추고, 아니면 잠시 뒤 새 연결을 연다.
+// 새 EventSource에는 헤더를 붙일 수 없으므로 마지막 donation id를 `?lastEventId=`로 넘긴다(FE-9#1).
+// 메모리에만 둔다: 페이지를 새로 열면 옛 후원을 다시 재생하지 않는다.
 import { parseDonation } from './alertQueue'
 import type { WidgetDonation } from './alertQueue'
 
@@ -22,8 +24,9 @@ type Options = {
   fetchStatus?: (url: string) => Promise<number | null>
 }
 
-export function widgetEventsUrl(widgetKey: string): string {
-  return `/api/public/widget/${encodeURIComponent(widgetKey)}/events`
+export function widgetEventsUrl(widgetKey: string, lastEventId = ''): string {
+  const base = `/api/public/widget/${encodeURIComponent(widgetKey)}/events`
+  return lastEventId ? `${base}?lastEventId=${encodeURIComponent(lastEventId)}` : base
 }
 
 /** 닫힌 연결의 이유를 알아낸다. 200이면 스트림이 열리므로 헤더만 보고 끊는다. 네트워크 오류 · 응답 없음(5초)은 null. */
@@ -51,10 +54,11 @@ export function subscribeWidgetEvents(widgetKey: string, options: Options): () =
   let reopenTimer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   let failures = 0
+  let lastEventId = ''
 
   const open = () => {
     if (stopped) return
-    const current = createEventSource(url)
+    const current = createEventSource(widgetEventsUrl(widgetKey, lastEventId))
     source = current
     current.addEventListener('ready', () => {
       if (source !== current) return
@@ -63,7 +67,9 @@ export function subscribeWidgetEvents(widgetKey: string, options: Options): () =
     })
     current.addEventListener('donation', (event) => {
       if (source !== current) return
-      const donation = parseDonation((event as MessageEvent<string>).data)
+      const message = event as MessageEvent<string>
+      if (message.lastEventId) lastEventId = message.lastEventId
+      const donation = parseDonation(message.data)
       if (donation) options.onDonation(donation)
     })
     current.onerror = () => {

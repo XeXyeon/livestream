@@ -24,8 +24,8 @@ class FakeEventSource {
     this.readyState = 2
   }
 
-  emit(type: string, data?: string) {
-    this.listeners.get(type)?.forEach((listener) => listener({ data } as MessageEvent))
+  emit(type: string, data?: string, lastEventId = '') {
+    this.listeners.get(type)?.forEach((listener) => listener({ data, lastEventId } as MessageEvent))
   }
 
   fail(readyState: number) {
@@ -90,6 +90,26 @@ describe('subscribeWidgetEvents', () => {
     expect(statuses.at(-1)).toBe('reconnecting')
     await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
     expect(FakeEventSource.instances).toHaveLength(2)
+  })
+
+  it('닫힌 뒤 새로 열 때는 마지막 donation id를 ?lastEventId=로 붙인다(처음 열 때는 붙이지 않음)', async () => {
+    const donation = (id: number) => JSON.stringify({ version: 1, type: 'donation', id, broadcastId: 1, donor: { nickname: 'a' }, amount: 1000, message: null, createdAt: 'x' })
+    subscribe(() => Promise.resolve(200))
+    const first = FakeEventSource.instances[0]
+    expect(first.url).toBe(widgetEventsUrl('k/ey'))
+    expect(first.url).not.toContain('?')
+
+    first.emit('ready', '{}')
+    first.emit('donation', donation(9), '9')
+    first.emit('donation', donation(12), '12')
+    first.fail(2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(FakeEventSource.instances[1].url).toBe(`${widgetEventsUrl('k/ey')}?lastEventId=12`)
+
+    // 새 연결에서 donation 없이 다시 닫혀도 마지막 id를 그대로 넘긴다
+    FakeEventSource.instances[1].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS * 2) // ready 없이 또 닫혀 두 번째는 10초 뒤
+    expect(FakeEventSource.instances[2].url).toBe(widgetEventsUrl('k/ey', '12'))
   })
 
   it('구독을 끊으면 연결을 닫고 예약된 재연결도 취소한다', async () => {
