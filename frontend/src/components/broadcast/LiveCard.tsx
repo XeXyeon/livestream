@@ -6,7 +6,7 @@ import { formatCount, formatRelative } from './format'
 
 export default function LiveCard({ broadcast }: { broadcast: BroadcastSummary }) {
   return (
-    <Link to={`/live/${broadcast.channel.id}`} className="group block">
+    <Link to={`/live/${broadcast.channel.id}`} className="group block rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
       <Thumbnail src={broadcast.thumbnailUrl} alt={broadcast.title}>
         <span className="absolute left-2 top-2 rounded bg-rose-600 px-1.5 py-0.5 text-xs font-bold text-white">
           {broadcast.status === 'DISCONNECTED' ? '재연결 중' : 'LIVE'}
@@ -17,9 +17,9 @@ export default function LiveCard({ broadcast }: { broadcast: BroadcastSummary })
         </span>
       </Thumbnail>
       <div className="mt-2">
-        <p className="line-clamp-2 font-semibold text-white group-hover:text-indigo-300">{broadcast.title}</p>
-        <p className="mt-0.5 text-sm text-slate-400">{broadcast.channel.name}</p>
-        <p className="text-xs text-slate-500">{broadcast.category.label} · {formatRelative(broadcast.startedAt)} 시작</p>
+        <p className="line-clamp-2 font-semibold text-primary group-hover:text-accent">{broadcast.title}</p>
+        <p className="mt-0.5 text-sm text-secondary">{broadcast.channel.name}</p>
+        <p className="text-xs text-secondary">{broadcast.category.label} · {formatRelative(broadcast.startedAt)} 시작</p>
       </div>
     </Link>
   )

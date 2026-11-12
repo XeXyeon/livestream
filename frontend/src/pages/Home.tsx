@@ -1,5 +1,10 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+import { Radio } from 'lucide-react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { EmptyState } from '@astryxdesign/core/EmptyState'
+import { Heading } from '@astryxdesign/core/Heading'
 import { listBroadcasts } from '../api/broadcasts'
 import { listRecordings } from '../api/recordings'
 import { CATEGORIES } from '../api/types'
@@ -14,9 +19,7 @@ const isCategory = (value: string | null): value is CategoryCode => CATEGORIES.s
 function MoreButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
   return (
     <div className="mt-6 text-center">
-      <button type="button" onClick={onClick} disabled={loading} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 hover:border-slate-500 disabled:opacity-50">
-        {loading ? '불러오는 중…' : '더 보기'}
-      </button>
+      <Button label={loading ? '불러오는 중…' : '더 보기'} variant="secondary" isLoading={loading} onClick={onClick} />
     </div>
   )
 }
@@ -47,12 +50,12 @@ export default function Home() {
 
   const liveItems = lives.data?.pages.flatMap((page) => page.items) ?? []
   const recordingItems = recordings.data?.pages.flatMap((page) => page.items) ?? []
-  const chip = (active: boolean) => `rounded-full px-3.5 py-1.5 text-sm font-medium ${active ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`
+  const chip = (active: boolean) => `rounded-full px-3.5 py-1.5 text-sm font-medium ${active ? 'bg-accent-bg text-on-accent' : 'bg-surface text-secondary hover:bg-muted hover:text-primary'}`
 
   return (
     <div className="space-y-12">
       <section>
-        <h1 className="text-2xl font-bold">지금 라이브</h1>
+        <Heading level={1}>지금 라이브</Heading>
         <div role="group" aria-label="카테고리" className="mt-4 flex flex-wrap gap-2">
           <button type="button" aria-pressed={!category} onClick={() => selectCategory(undefined)} className={chip(!category)}>전체</button>
           {CATEGORIES.map((item) => (
@@ -63,8 +66,8 @@ export default function Home() {
         </div>
         <div className="mt-6">
           {lives.isPending ? <Spinner />
-            : lives.isError ? <p role="alert" className="text-sm text-rose-300">라이브 목록을 불러오지 못했습니다.</p>
-              : liveItems.length === 0 ? <p className="rounded-xl border border-dashed border-slate-700 py-12 text-center text-slate-400">지금 방송 중인 채널이 없습니다.</p>
+            : lives.isError ? <Banner role="alert" status="error" title="라이브 목록을 불러오지 못했습니다." />
+              : liveItems.length === 0 ? <div className="rounded-lg border border-dashed border-border py-6"><EmptyState title="지금 방송 중인 채널이 없습니다." icon={<Radio aria-hidden className="h-8 w-8" />} /></div>
                 : (
                   <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
                     {liveItems.map((broadcast) => <LiveCard key={broadcast.id} broadcast={broadcast} />)}
@@ -75,11 +78,11 @@ export default function Home() {
       </section>
 
       <section>
-        <h2 className="text-xl font-bold">다시보기</h2>
+        <Heading level={2}>다시보기</Heading>
         <div className="mt-4">
           {recordings.isPending ? <Spinner />
-            : recordings.isError ? <p role="alert" className="text-sm text-rose-300">다시보기 목록을 불러오지 못했습니다.</p>
-              : recordingItems.length === 0 ? <p className="text-sm text-slate-400">아직 공개된 다시보기가 없습니다.</p>
+            : recordings.isError ? <Banner role="alert" status="error" title="다시보기 목록을 불러오지 못했습니다." />
+              : recordingItems.length === 0 ? <p className="text-sm text-secondary">아직 공개된 다시보기가 없습니다.</p>
                 : (
                   <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
                     {recordingItems.map((recording) => <RecordingCard key={recording.id} recording={recording} />)}

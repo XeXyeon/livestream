@@ -29,7 +29,7 @@ export default function Player({ broadcast, initialMode }: Props) {
   if (broadcast.status === 'ENDED') return <EndedView broadcast={broadcast} />
   return (
     <div className="space-y-2">
-      <div className="relative overflow-hidden rounded-xl">
+      <div className="relative overflow-hidden rounded-lg">
         {mode === 'whep'
           ? <WhepView url={broadcast.play.whepUrl} status={broadcast.status} />
           : <GridView key={gridGeneration} hlsUrl={broadcast.play.hlsUrl} onStats={setStats} onP2pUnavailable={() => setP2p(false)} />}

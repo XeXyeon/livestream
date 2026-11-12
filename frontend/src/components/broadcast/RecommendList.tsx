@@ -16,7 +16,7 @@ export default function RecommendList({ broadcastId }: { broadcastId: number }) 
   if (!hasLives && data.recordings.length === 0) return null
   return (
     <section className="w-full text-left">
-      <h3 className="mb-3 text-sm font-semibold text-slate-300">{hasLives ? '지금 방송 중인 다른 채널' : '추천 다시보기'}</h3>
+      <h3 className="mb-3 text-sm font-semibold text-secondary">{hasLives ? '지금 방송 중인 다른 채널' : '추천 다시보기'}</h3>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {hasLives
           ? data.lives.map((live) => <LiveCard key={live.id} broadcast={live} />)

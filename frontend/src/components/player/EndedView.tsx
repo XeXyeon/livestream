@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Button } from '@astryxdesign/core/Button'
+import { Heading } from '@astryxdesign/core/Heading'
 import type { BroadcastDetail } from '../../api/types'
 import RecommendList from '../broadcast/RecommendList'
 
@@ -15,14 +16,14 @@ function recordingLabel(broadcast: BroadcastDetail): string | null {
 export default function EndedView({ broadcast }: { broadcast: BroadcastDetail }) {
   const disabledLabel = recordingLabel(broadcast)
   return (
-    <div className="flex flex-col items-center gap-6 rounded-xl bg-slate-900 px-6 py-10 text-center">
+    <div className="flex flex-col items-center gap-6 rounded-lg border border-border bg-surface px-6 py-10 text-center">
       <div>
-        <p className="text-xl font-bold text-white">방송이 종료되었습니다</p>
-        <p className="mt-1 text-sm text-slate-400">{broadcast.channel.name}님의 방송을 시청해 주셔서 감사합니다.</p>
+        <Heading level={2}>방송이 종료되었습니다</Heading>
+        <p className="mt-1 text-sm text-secondary">{broadcast.channel.name}님의 방송을 시청해 주셔서 감사합니다.</p>
       </div>
       {disabledLabel || !broadcast.recording
-        ? <button type="button" disabled className="rounded-lg bg-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300">{disabledLabel}</button>
-        : <Link to={`/videos/${broadcast.recording.id}`} className="rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-400">다시보기</Link>}
+        ? <Button label={disabledLabel ?? '다시보기가 없습니다'} variant="secondary" isDisabled />
+        : <Button href={`/videos/${broadcast.recording.id}`} label="다시보기" variant="primary" />}
       <RecommendList broadcastId={broadcast.id} />
     </div>
   )
