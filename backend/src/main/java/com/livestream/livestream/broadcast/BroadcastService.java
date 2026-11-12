@@ -23,6 +23,7 @@ import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
 import com.livestream.livestream.common.tx.AfterCommit;
 import com.livestream.livestream.donation.DonationRepository;
+import com.livestream.livestream.follow.FollowRepository;
 import com.livestream.livestream.recording.Recording;
 import com.livestream.livestream.recording.RecordingRepository;
 import com.livestream.livestream.recording.RecordingService;
@@ -67,6 +68,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	private final BroadcastLifecycleService lifecycle;
 	private final RecommendationService recommendationService;
 	private final ViewerCounter viewerCounter;
+	private final FollowRepository followRepository;
 	private final DonationRepository donationRepository;
 	private final AppProperties props;
 	private final CommentRepository commentRepository;
@@ -214,7 +216,9 @@ public class BroadcastService implements LiveBroadcastLookup {
 				new BroadcastSummary.ChannelRef(channelId, b.getChannel().getName()), b.getEndedAt(),
 				b.getSource().name(), viewers >= props.grid().threshold() ? "grid" : "whep",
 				new BroadcastDetail.Play("/live/" + channelId + "/whep", "/live/" + channelId + "/index.m3u8"),
-				donationRepository.sumApprovedByBroadcast(b.getId()), RecordingRef.of(recording), isOwner);
+				donationRepository.sumApprovedByBroadcast(b.getId()), RecordingRef.of(recording), isOwner,
+				followRepository.countByChannelId(channelId),
+				me != null && !isOwner && followRepository.existsByMemberIdAndChannelId(me.id(), channelId));
 	}
 
 	private Map<Long, Recording> recordingsOf(List<Broadcast> broadcasts) {
