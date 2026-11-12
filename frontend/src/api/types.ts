@@ -135,3 +135,35 @@ export type StatusMessage = { type: 'status'; status: BroadcastStatus; at: strin
 export type ViewersMessage = { type: 'viewers'; count: number }
 export type HistoryMessage = { type: 'history'; messages: (ChatMessage | DonationMessage)[] }
 export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage
+
+// §4.13 후원
+export type DonationCreateInput = { amount: number; message?: string }
+/** 결제위젯에 넘길 주문 정보(201) */
+export type DonationCreated = {
+  donationId: number
+  orderId: string
+  amount: number
+  clientKey: string
+  orderName: string
+  customerName: string
+}
+/** 결제위젯 성공 리다이렉트로 받은 값 그대로 */
+export type DonationConfirmInput = { paymentKey: string; orderId: string; amount: number }
+/** 승인된 후원 */
+export type Donation = {
+  id: number
+  broadcastId: number
+  donor: { nickname: string }
+  amount: number
+  message: string | null
+  approvedAt: string
+}
+export type DonationPage = Page<Donation> & { totalAmount: number; totalCount: number }
+export type ReceivedDonationByBroadcast = {
+  broadcastId: number
+  title: string
+  startedAt: string
+  totalAmount: number
+  count: number
+}
+export type ReceivedDonations = { totalAmount: number; byBroadcast: ReceivedDonationByBroadcast[] }
