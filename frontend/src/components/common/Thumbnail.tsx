@@ -6,10 +6,10 @@ import { Radio } from 'lucide-react'
 export default function Thumbnail({ src, alt, children }: { src: string | null; alt: string; children?: ReactNode }) {
   const [failed, setFailed] = useState(false)
   return (
-    <div className="relative aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-slate-800 to-indigo-950">
+    <div className="relative aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-surface to-accent-muted">
       {src && !failed
         ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
-        : <div className="flex h-full w-full items-center justify-center text-slate-500"><Radio aria-hidden className="h-10 w-10" /></div>}
+        : <div className="flex h-full w-full items-center justify-center text-secondary"><Radio aria-hidden className="h-10 w-10" /></div>}
       {children}
     </div>
   )
