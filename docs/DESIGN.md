@@ -122,6 +122,7 @@ APP_TOSS_CLIENT_KEY=test_gck_...   # 결제위젯 키(gck · gsk). ck · sk(API 
 APP_TOSS_SECRET_KEY=test_gsk_...
 APP_GRID_THRESHOLD=100
 APP_SEED_ENABLED=false
+APP_SEED_PASSWORD=          # 시드 계정 공용 비밀번호(seed 켤 때 필수)
 APP_RECORDING_RETENTION_DAYS=30
 ```
 
@@ -372,7 +373,7 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
-없을 때만 생성: 회원 `demo-streamer@example.com` / `demo-viewer@example.com`(비밀번호는 `.env.example`의 `APP_SEED_PASSWORD`, README에 기재), 채널(방송인 채널 name "데모 방송인", title "데모 방송", GAME), ENDED 방송 1(어제) + recording READY · PUBLIC(`infra/seed/sample.mp4`를 `vod/seed-sample.mp4`로 복사, duration은 ffprobe), 게시글 1("첫 공지"), 댓글 1. 시연 `.env`: `APP_GRID_THRESHOLD=2`, `APP_RECORDING_RETENTION_DAYS=365`.
+없을 때만 생성: 회원 `demo-streamer@example.com` / `demo-viewer@example.com`(비밀번호는 `.env.example`의 `APP_SEED_PASSWORD`, README에 기재), 채널(방송인 채널 name "데모 방송인", title "데모 방송", GAME), ENDED 방송 1(어제) + recording READY · PUBLIC(`infra/seed/sample.mp4`를 `vod/seed-sample.mp4`로 복사, duration은 ffprobe, 썸네일은 2초 지점 한 프레임), 게시글 1("첫 공지"), 댓글 1. 방송인 계정이 있으면 DB는 건너뛰고 영상 파일만 없을 때 다시 복사한다. 샘플 경로는 `app.seed.sample-path`(운영 compose는 `infra/seed`를 `/seed`로 읽기 전용 마운트, `local` 프로파일은 `../infra/seed/sample.mp4`). 시연 `.env`: `APP_GRID_THRESHOLD=2`, `APP_RECORDING_RETENTION_DAYS=365`.
 
 ## 6. 프론트엔드 구조
 
