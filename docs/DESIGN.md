@@ -447,7 +447,7 @@ frontend/src/
 
 ### 6.7 화면별 요소 (PLAN-1 최종 화면 목록 기준)
 - **S1 Home**: 카테고리 칩(전체 + 5), `LiveCard` 그리드(썸네일 · LIVE 배지 · 시청자 수 · 제목 · 채널명), 아래 "다시보기" 탭(`RecordingCard`). 30초 refetch.
-- **S2 Live**: 상단 Player(16:9, 모바일은 세로 비율 자동), 제목 · 채널 링크 · 시청자 수 · 카테고리, 채널 링크 옆 **팔로우 버튼**(`FollowButton`, FOLLOW-2: `isFollowing`으로 "팔로우"/"팔로잉" 토글 + `followerCount`, `isOwner`면 숨김, 비로그인 클릭은 `/login?next=`), 우측(모바일은 하단) ChatPanel(비로그인은 입력창 대신 "로그인하고 채팅하기"), 후원 버튼 → `DonateDialog`(금액 1,000/5,000/10,000 + 직접 입력, 메시지 100자) → Toss 결제위젯 → confirm. 후원 발생 시 `DonationBanner`(플레이어 위 5초) + 채팅 강조.
+- **S2 Live**: 상단 Player(16:9, 모바일은 세로 비율 자동), 제목 · 채널 링크 · 시청자 수 · 카테고리, 채널 링크 옆 **팔로우 버튼**(`FollowButton`, FOLLOW-2: "팔로우"/"팔로잉" 토글 + `followerCount`. 팔로우 여부는 상세의 `isFollowing`이 아니라 **내 팔로우 목록**(`useMyFollows`, 로그인 복구 뒤에만 조회, 30초마다 refetch)에 이 채널이 있는지로 정한다 — 복구 전이나 이전 계정 때 받은 상세 값을 쓰지 않기 위해서다. 자기 채널 · 복구 전 · 목록 실패면 수만, 비로그인은 `/login?next=` 링크, 목록 로딩 중은 누를 수 없음), 우측(모바일은 하단) ChatPanel(비로그인은 입력창 대신 "로그인하고 채팅하기"), 후원 버튼 → `DonateDialog`(금액 1,000/5,000/10,000 + 직접 입력, 메시지 100자) → Toss 결제위젯 → confirm. 후원 발생 시 `DonationBanner`(플레이어 위 5초) + 채팅 강조.
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**(헤더에 팔로워 수 + 같은 `FollowButton`), **S10 Post**: §6.3.
@@ -572,7 +572,7 @@ frontend/src/
 - 완료: 통합 테스트 `FollowApiTest` — 팔로우 → `following: true` · `followerCount: 1` · 두 번 POST도 같은 응답 / 해제 → `false` · `0` · 두 번 DELETE도 같은 응답 / 자기 채널 400 `VALIDATION_ERROR` / 비로그인 401 / 없는 채널 404 / `GET /channels/{id}` · `GET /broadcasts/{id}`의 `followerCount` · `isFollowing`(팔로우한 회원 true, 다른 회원 · 비로그인 false) / `GET /members/me/follows` 정렬(라이브 채널이 먼저, 그다음 최근 팔로우 순)과 `isLive` · `liveBroadcastId` · `viewerCount`. 라이브 방송은 다른 통합 테스트처럼 `Broadcast.start`로 저장소에 직접 만든다. 실행 확인(실제 화면)은 지휘 세션이 한다.
 
 ### FOLLOW-2 팔로우 UI
-- 읽을 절: §6.7 S2 · S9 · 사이드바, §4.16 위 네 엔드포인트. 공용 `components/FollowButton.tsx`(props: `channelId`, `isFollowing`, `followerCount`, `isOwner`; 응답으로 상태 갱신, 사이드바 목록 refetch). `api/types.ts`에 `FollowStatus` · `FollowedChannel`.
+- 읽을 절: §6.7 S2 · S9 · 사이드바, §4.16 위 네 엔드포인트. 공용 `components/follow/FollowButton.tsx`(props: `channelId`, `isFollowing`, `followerCount`, `isOwner`; 표시 판단은 `followView.ts`, 목록은 `useMyFollows.ts`의 `['me','follows', memberId]`; 응답으로 `['channel', id]` · `['broadcast', *]` 캐시의 두 필드를 고치고 `['me','follows']`를 무효화). `api/types.ts`에 `FollowStatus` · `FollowedChannel`.
 - 완료: 채널 페이지 · 시청 화면에서 팔로우 · 해제가 되고 사이드바 "팔로우" 칸에 바로 반영된다. 비로그인 클릭은 `/login?next=`. 자기 채널에는 버튼이 없다.
 
 ### FE-7 다시보기 · 마이페이지 · 채널 페이지
