@@ -14,6 +14,8 @@ import Spinner from '../components/common/Spinner'
 import { inputClassName } from '../components/common/TextField'
 import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
+import DonationBanner from '../components/donation/DonationBanner'
+import { useDonationBanner } from '../components/donation/useDonationBanner'
 
 const WARNING_TEXT: Record<MixerWarning, string> = {
   NO_SYSTEM_AUDIO: '탭/시스템 소리가 포함되지 않았습니다. 탭을 공유할 때 "탭 오디오도 공유"를 켜 주세요.',
@@ -44,7 +46,7 @@ function LevelMeter({ value, label }: { value: number; label: string }) {
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 채팅(FE-5), 후원 알림은 FE-6.
+// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 후원 알림(FE-6)과 채팅(FE-5).
 export default function StudioPc() {
   const [media, setMedia] = useState<PcStream | null>(null)
   const mediaRef = useRef<PcStream | null>(null)
@@ -68,7 +70,8 @@ export default function StudioPc() {
   const session = useBroadcastSession('pc', { onServerEnded: stopMedia })
   const { end, active } = session
   // 방송인도 같은 토픽을 구독한다(서버는 채널 주인의 구독을 시청자 수에 넣지 않는다). viewers는 방송 상세 캐시로 들어가 상태 표시에 반영된다.
-  const chat = useBroadcastChat(session.broadcastId)
+  const banner = useDonationBanner()
+  const chat = useBroadcastChat(session.broadcastId, { onDonation: banner.push })
   const activeRef = useRef(active)
   useEffect(() => { activeRef.current = active }, [active])
 
@@ -229,7 +232,7 @@ export default function StudioPc() {
             <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
           )}
         </section>
-        {/* FE-6 후원 알림은 이 위에 붙인다 */}
+        <DonationBanner donation={banner.current} />
         {session.broadcastId !== null
           ? <ChatPanel chat={chat} className="h-[28rem]" />
           : <aside aria-label="채팅" className="rounded-lg border border-border bg-surface p-4 text-sm text-secondary">방송을 시작하면 채팅이 열립니다.</aside>}

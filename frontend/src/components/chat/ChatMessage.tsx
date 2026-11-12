@@ -1,13 +1,17 @@
 import { Badge } from '@astryxdesign/core/Badge'
 import type { ChatEntry } from './chatState'
 
-// 채팅 한 줄. 방송인은 배지. 후원은 FE-6에서 강조 · 배너를 붙이고, 지금은 금액이 보이는 한 줄로만 보인다.
+// 채팅 한 줄. 방송인은 배지. 후원은 테두리 있는 칸에 금액을 크게 보여 강조한다(FE-6).
 export default function ChatMessage({ entry }: { entry: ChatEntry }) {
   if (entry.type === 'donation') {
     return (
-      <li className="rounded-md bg-warning-muted px-2 py-1 text-on-warning-muted">
-        <span className="font-semibold">{entry.donor.nickname}</span>님이 {entry.amount.toLocaleString('ko-KR')}원 후원
-        {entry.message && <span>: {entry.message}</span>}
+      <li className="my-1 rounded-md border border-border-warning bg-warning-muted px-3 py-2 text-on-warning-muted">
+        <p className="flex flex-wrap items-baseline gap-x-1.5">
+          <span className="font-semibold">{entry.donor.nickname}</span>
+          <span className="text-base font-bold">{entry.amount.toLocaleString('ko-KR')}원</span>
+          <span className="text-xs">후원</span>
+        </p>
+        {entry.message && <p className="mt-0.5 whitespace-pre-wrap break-words">{entry.message}</p>}
       </li>
     )
   }

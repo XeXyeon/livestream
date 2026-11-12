@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { Donation } from '../../api/types'
 import { useAuth } from '../../store/auth'
@@ -46,6 +46,8 @@ export function useDonationReturn() {
   const { ret } = initial
   const [state, setState] = useState<DonationReturnState>(() => initialState(ret))
   const [attempt, setAttempt] = useState(0)
+  // 결과가 정해졌거나(승인 · 다시 시도할 수 없는 실패) 닫은 뒤에는 로그인 상태가 바뀌어도 다시 돌지 않는다
+  const settledRef = useRef(false)
 
   useEffect(() => {
     if (!initial.fromUrl) return
@@ -54,7 +56,7 @@ export function useDonationReturn() {
   }, [initial, navigate])
 
   useEffect(() => {
-    if (ret?.kind !== 'success' || !authReady) return
+    if (ret?.kind !== 'success' || !authReady || settledRef.current) return
     if (!loggedIn) {
       // 확인 API는 로그인이 필요하다. 매번 401을 받지 않고 로그인을 안내한다(pending은 남긴다)
       setState({ status: 'needsLogin' })
@@ -64,11 +66,15 @@ export function useDonationReturn() {
     confirmPaymentOnce(ret).then(
       (donation) => {
         clearPending()
+        settledRef.current = true
         if (active) setState({ status: 'approved', donation })
       },
       (error: unknown) => {
         const canRetry = retryable(error)
-        if (!canRetry) clearPending()
+        if (!canRetry) {
+          clearPending()
+          settledRef.current = true
+        }
         if (active) setState({ status: 'failed', message: failureMessage(error, '후원을 확인하지 못했습니다. 네트워크를 확인한 뒤 다시 확인해 주세요.'), canRetry })
       },
     )
@@ -82,6 +88,10 @@ export function useDonationReturn() {
   }, [ret])
 
   // 확인 중에는 닫지 않는다(닫아도 결과가 나중에 다시 뜨므로)
-  const dismiss = useCallback(() => setState((old) => (old.status === 'confirming' ? old : { status: 'idle' })), [])
+  const dismiss = useCallback(() => setState((old) => {
+    if (old.status === 'confirming') return old
+    settledRef.current = true
+    return { status: 'idle' }
+  }), [])
   return { state, retry, dismiss }
 }
