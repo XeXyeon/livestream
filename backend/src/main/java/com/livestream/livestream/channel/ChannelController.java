@@ -29,8 +29,8 @@ public class ChannelController {
 
 	@Operation(summary = "채널 공개 정보", description = "누구나. liveBroadcastId는 진행 중 방송이 없으면 null")
 	@GetMapping("/{id}")
-	public ChannelResponse get(@PathVariable Long id) {
-		return channelService.getPublic(id);
+	public ChannelResponse get(@CurrentMember MemberPrincipal me, @PathVariable Long id) {
+		return channelService.getPublic(me, id);
 	}
 
 	@Operation(summary = "내 채널", description = "로그인 필요. 스트림 키 · 위젯 키 · 송출 안내 포함")

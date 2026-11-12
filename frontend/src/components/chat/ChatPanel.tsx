@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
+import { Button } from '@astryxdesign/core/Button'
 import { useAuth } from '../../store/auth'
+import { inputClassName } from '../common/TextField'
 import ChatMessage from './ChatMessage'
 import { CHAT_MAX_LENGTH, chatInputError, entryKey } from './chatState'
 import type { useBroadcastChat } from './useBroadcastChat'
@@ -49,20 +51,20 @@ export default function ChatPanel({ chat, ended = false, className = '' }: { cha
 
   const notice = inputError || chat.chatError?.message
   return (
-    <aside aria-label="채팅" className={`flex min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-900 ${className}`}>
-      <h2 className="border-b border-slate-800 px-4 py-2 text-sm font-semibold text-slate-200">채팅</h2>
+    <aside aria-label="채팅" className={`flex min-h-0 flex-col rounded-lg border border-border bg-surface ${className}`}>
+      <h2 className="border-b border-border px-4 py-2 text-sm font-semibold text-primary">채팅</h2>
       {chat.connection !== 'connected' && (
-        <p role="status" className="px-4 pt-2 text-xs text-amber-300">{CONNECTION_TEXT[chat.connection]}</p>
+        <p role="status" className="px-4 pt-2 text-xs text-warning">{CONNECTION_TEXT[chat.connection]}</p>
       )}
       <ul ref={listRef} onScroll={onScroll} aria-live="polite" className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2 text-sm">
         {chat.entries.length === 0 && chat.connection === 'connected' && (
-          <li className="px-2 py-4 text-center text-slate-500">아직 채팅이 없습니다.</li>
+          <li className="px-2 py-4 text-center text-secondary">아직 채팅이 없습니다.</li>
         )}
         {chat.entries.map((entry) => <ChatMessage key={entryKey(entry)} entry={entry} />)}
       </ul>
-      <div className="border-t border-slate-800 p-3">
+      <div className="border-t border-border p-3">
         {!authReady ? null : ended ? (
-          <p className="text-center text-sm text-slate-500">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
+          <p className="text-center text-sm text-secondary">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
         ) : loggedIn ? (
           <form onSubmit={submit} className="flex gap-2">
             <label htmlFor="chat-input" className="sr-only">채팅 메시지</label>
@@ -73,19 +75,19 @@ export default function ChatPanel({ chat, ended = false, className = '' }: { cha
               maxLength={CHAT_MAX_LENGTH * 2}
               autoComplete="off"
               placeholder="채팅을 입력하세요"
-              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400 focus:outline-none"
+              className={`min-w-0 flex-1 ${inputClassName.replace('w-full ', '').replace('py-2.5', 'py-2')} text-sm`}
             />
-            <button type="submit" className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500">보내기</button>
+            <Button type="submit" label="보내기" variant="primary" />
           </form>
         ) : (
-          <Link
-            to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
-            className="block rounded-lg border border-slate-700 py-2 text-center text-sm font-medium text-indigo-300 hover:border-indigo-400"
-          >
-            로그인하고 채팅하기
-          </Link>
+          <Button
+            href={`/login?next=${encodeURIComponent(location.pathname + location.search)}`}
+            label="로그인하고 채팅하기"
+            variant="secondary"
+            width="100%"
+          />
         )}
-        {notice && !ended && <p role="alert" className="mt-2 text-xs text-rose-300">{notice}</p>}
+        {notice && !ended && <p role="alert" className="mt-2 text-xs text-error">{notice}</p>}
       </div>
     </aside>
   )

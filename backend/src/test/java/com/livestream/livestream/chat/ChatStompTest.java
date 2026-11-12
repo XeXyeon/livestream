@@ -1,6 +1,8 @@
 package com.livestream.livestream.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.livestream.livestream.broadcast.BroadcastLifecycleService;
 import com.livestream.livestream.broadcast.BroadcastRepository;
@@ -28,6 +30,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.messaging.converter.JacksonJsonMessageConverter;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
+import org.springframework.http.MediaType;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
@@ -266,6 +269,47 @@ class ChatStompTest {
 		@SuppressWarnings("unchecked") List<Map<String, Object>> history =
 				(List<Map<String, Object>>) poll(subscribe(b, topic(broadcastId))).get("messages");
 		assertThat(history).extracting(m -> m.get("type")).containsExactly("donation");
+	}
+
+	@Test
+	void 송출_중_바꾼_방송_정보는_info로_오고_같은_값이면_오지_않는다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		long broadcastId = startBroadcast(streamer);
+		StompSession a = connect(null);
+		BlockingQueue<Map<String, Object>> q = subscribe(a, topic(broadcastId));
+		poll(q);
+		settle();
+
+		String json = "{\"title\":\"새 제목\",\"category\":\"MUSIC\"}";
+		mvc.perform(patch("/api/broadcasts/" + broadcastId).header("Authorization", "Bearer " + streamer.access())
+				.contentType(MediaType.APPLICATION_JSON).content(json)).andExpect(status().isOk());
+		Map<String, Object> info = pollType(q, "info");
+		assertThat(info.get("title")).isEqualTo("새 제목");
+		@SuppressWarnings("unchecked") Map<String, Object> category = (Map<String, Object>) info.get("category");
+		assertThat(category.get("code")).isEqualTo("MUSIC");
+		assertThat(category.get("label")).isNotNull();
+		assertThat(info.get("at")).asString().endsWith("Z");
+
+		// 같은 값으로 다시 저장하면 info 가 오지 않는다(viewers 등 다른 type 은 무시)
+		mvc.perform(patch("/api/broadcasts/" + broadcastId).header("Authorization", "Bearer " + streamer.access())
+				.contentType(MediaType.APPLICATION_JSON).content(json)).andExpect(status().isOk());
+		assertNoInfoWithin(q, 1_000);
+
+		// ENDED 방송은 title 을 바꿔도 info 가 없다
+		lifecycle.endOngoingOf(streamer.channelId());
+		assertThat(pollType(q, "status").get("status")).isEqualTo("ENDED");
+		mvc.perform(patch("/api/broadcasts/" + broadcastId).header("Authorization", "Bearer " + streamer.access())
+				.contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"끝난 뒤 제목\"}")).andExpect(status().isOk());
+		assertNoInfoWithin(q, 1_000);
+	}
+
+	/** 브로커 전달이 비동기라 "없음"은 시간으로만 볼 수 있다(다른 type 은 무시). */
+	private static void assertNoInfoWithin(BlockingQueue<Map<String, Object>> queue, long millis) throws InterruptedException {
+		long deadline = System.currentTimeMillis() + millis;
+		while (System.currentTimeMillis() < deadline) {
+			Map<String, Object> m = queue.poll(100, TimeUnit.MILLISECONDS);
+			assertThat(m == null ? null : m.get("type")).isNotEqualTo("info");
+		}
 	}
 
 	// ---------- 도우미 ----------

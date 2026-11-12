@@ -1,9 +1,14 @@
 import { useState } from 'react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { Card } from '@astryxdesign/core/Card'
+import { Heading } from '@astryxdesign/core/Heading'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { login } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../store/auth'
+import TextField from '../components/common/TextField'
 import { safeNext } from './authNavigation'
 
 export default function Login() {
@@ -32,20 +37,16 @@ export default function Login() {
   }
 
   return (
-    <section className="mx-auto max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8">
-      <h1 className="text-2xl font-bold">로그인</h1>
-      {location.state?.signedUp && <p role="status" className="mt-3 text-sm text-emerald-300">가입이 완료되었습니다. 로그인해 주세요.</p>}
+    <Card padding={8} className="mx-auto max-w-md">
+      <Heading level={1}>로그인</Heading>
+      {location.state?.signedUp && <p role="status" className="mt-3 text-sm text-success">가입이 완료되었습니다. 로그인해 주세요.</p>}
       <form onSubmit={(event) => void handleSubmit(event)} className="mt-7 space-y-5">
-        <label className="block text-sm font-medium">이메일
-          <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white" />
-        </label>
-        <label className="block text-sm font-medium">비밀번호
-          <input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white" />
-        </label>
-        {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-        <button type="submit" disabled={submitting} className="w-full rounded-lg bg-indigo-500 px-4 py-3 font-semibold text-white hover:bg-indigo-400 disabled:opacity-50">{submitting ? '로그인 중…' : '로그인'}</button>
+        <TextField label="이메일" type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+        <TextField label="비밀번호" type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        {error && <Banner role="alert" status="error" title={error} />}
+        <Button type="submit" variant="primary" size="lg" width="100%" isLoading={submitting} label={submitting ? '로그인 중…' : '로그인'} />
       </form>
-      <p className="mt-6 text-center text-sm text-slate-400">계정이 없나요? <Link to={`/signup?next=${encodeURIComponent(next)}`} className="font-medium text-indigo-300 hover:text-indigo-200">회원가입</Link></p>
-    </section>
+      <p className="mt-6 text-center text-sm text-secondary">계정이 없나요? <Link to={`/signup?next=${encodeURIComponent(next)}`} className="font-medium text-accent hover:underline">회원가입</Link></p>
+    </Card>
   )
 }

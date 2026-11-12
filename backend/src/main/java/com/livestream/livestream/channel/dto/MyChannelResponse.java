@@ -19,7 +19,9 @@ public record MyChannelResponse(
 		boolean autoPublishRecording,
 		@Schema(description = "진행 중 방송, 없으면 null") CurrentBroadcast currentBroadcast,
 		Publish publish,
-		@Schema(description = "후원 알림 위젯 URL (OBS 브라우저 소스)") String widgetUrl) {
+		@Schema(description = "후원 알림 위젯 URL (OBS 브라우저 소스)") String widgetUrl,
+		@Schema(description = "팔로워 수") long followerCount,
+		@Schema(description = "내 채널이라 항상 false") boolean isFollowing) {
 
 	public record CurrentBroadcast(Long id, String status) {
 	}

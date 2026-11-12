@@ -12,7 +12,9 @@ public record ChannelResponse(
 		@Schema(description = "진행 중(LIVE · DISCONNECTED) 방송 id, 없으면 null") Long liveBroadcastId,
 		@Schema(description = "공개 다시보기 수") long recordingCount,
 		@Schema(description = "커뮤니티 글 수") long postCount,
-		Owner owner) {
+		Owner owner,
+		@Schema(description = "팔로워 수") long followerCount,
+		@Schema(description = "로그인한 회원이 팔로우 중이면 true. 비로그인 · 자기 채널은 false") boolean isFollowing) {
 
 	public record Owner(String nickname) {
 	}

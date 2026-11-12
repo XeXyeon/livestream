@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
 import { ApiError } from '../../api/client'
 import { CATEGORIES } from '../../api/types'
 import type { CategoryCode } from '../../api/types'
+import { inputClassName } from '../common/TextField'
 import type { BroadcastInfo } from './useBroadcastSession'
 
 type Props = {
@@ -37,21 +40,19 @@ export default function BroadcastInfoForm({ initial, onChange, onSave, compact =
     }
   }
 
-  const input = 'w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white'
+  const input = inputClassName.replace('py-2.5', 'py-2')
   return (
     <form onSubmit={(event) => void handleSubmit(event)} className={compact ? 'flex flex-wrap items-end gap-2' : 'space-y-3'}>
-      <label className={`block text-sm font-medium ${compact ? 'min-w-0 flex-1' : ''}`}>방송 제목
+      <label className={`block text-sm font-medium text-primary ${compact ? 'min-w-0 flex-1' : ''}`}>방송 제목
         <input required maxLength={100} value={info.title} onChange={(event) => update({ ...info, title: event.target.value })} className={`mt-1 ${input}`} />
       </label>
-      <label className="block text-sm font-medium">카테고리
+      <label className="block text-sm font-medium text-primary">카테고리
         <select value={info.category} onChange={(event) => update({ ...info, category: event.target.value as CategoryCode })} className={`mt-1 ${input}`}>
           {CATEGORIES.map((category) => <option key={category.code} value={category.code}>{category.label}</option>)}
         </select>
       </label>
-      <button type="submit" disabled={saving || !info.title.trim()} className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:border-slate-400 disabled:opacity-50">
-        {saving ? '저장 중…' : '정보 저장'}
-      </button>
-      {message && <p role={message.ok ? 'status' : 'alert'} className={`w-full text-sm ${message.ok ? 'text-emerald-300' : 'text-rose-300'}`}>{message.text}</p>}
+      <Button type="submit" label={saving ? '저장 중…' : '정보 저장'} variant="secondary" isLoading={saving} isDisabled={!info.title.trim()} />
+      {message && <div className="w-full"><Banner role={message.ok ? 'status' : 'alert'} status={message.ok ? 'success' : 'error'} title={message.text} /></div>}
     </form>
   )
 }

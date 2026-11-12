@@ -1,7 +1,9 @@
 package com.livestream.livestream.chat;
 
 import com.livestream.livestream.broadcast.BroadcastStatus;
+import com.livestream.livestream.channel.Category;
 import com.livestream.livestream.chat.dto.DonationMessage;
+import com.livestream.livestream.chat.dto.InfoMessage;
 import com.livestream.livestream.chat.dto.StatusMessage;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,11 @@ public class StompBroadcastEventPublisher implements BroadcastEventPublisher {
 	@Override
 	public void status(Long broadcastId, BroadcastStatus status, Instant at) {
 		messagingTemplate.convertAndSend(StompDestinations.broadcastTopic(broadcastId), StatusMessage.of(status, at));
+	}
+
+	@Override
+	public void info(Long broadcastId, String title, Category category, Instant at) {
+		messagingTemplate.convertAndSend(StompDestinations.broadcastTopic(broadcastId), InfoMessage.of(title, category, at));
 	}
 
 	@Override

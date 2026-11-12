@@ -8,6 +8,7 @@ import com.livestream.livestream.common.config.AppProperties;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.member.Member;
 import com.livestream.livestream.post.PostRepository;
+import com.livestream.livestream.follow.FollowRepository;
 import com.livestream.livestream.recording.RecordingRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import java.util.Optional;
@@ -27,7 +28,7 @@ class ChannelServiceTest {
 		when(none.orderedStream()).thenReturn(Stream.empty());
 		AppProperties props = new AppProperties(null, null, null, null, null, null, null, null, null, publicUrl);
 		return new ChannelService(repo, props, mock(ApplicationEventPublisher.class), none, channelId -> Optional.empty(), mock(PostRepository.class),
-				mock(RecordingRepository.class));
+				mock(RecordingRepository.class), mock(FollowRepository.class));
 	}
 
 	private Channel channel() {

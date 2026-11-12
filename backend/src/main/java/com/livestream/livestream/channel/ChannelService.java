@@ -11,6 +11,7 @@ import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
 import com.livestream.livestream.common.security.MemberPrincipal;
 import com.livestream.livestream.common.security.OwnershipGuard;
+import com.livestream.livestream.follow.FollowRepository;
 import com.livestream.livestream.integration.WidgetKeyRotatedEvent;
 import com.livestream.livestream.post.PostRepository;
 import com.livestream.livestream.recording.RecordingRepository;
@@ -41,15 +42,19 @@ public class ChannelService {
 	private final LiveBroadcastLookup liveBroadcastLookup;
 	private final PostRepository postRepository;
 	private final RecordingRepository recordingRepository;
+	private final FollowRepository followRepository;
 
 	@Transactional(readOnly = true)
-	public ChannelResponse getPublic(Long channelId) {
+	public ChannelResponse getPublic(MemberPrincipal me, Long channelId) {
 		Channel channel = channelRepository.findById(channelId)
 				.orElseThrow(() -> new ApiException(ErrorCode.CHANNEL_NOT_FOUND));
 		Long liveBroadcastId = currentBroadcast(channel).map(MyChannelResponse.CurrentBroadcast::id).orElse(null);
 		return new ChannelResponse(channel.getId(), channel.getName(), channel.getDescription(),
 				CategoryResponse.of(channel.getCategory()), liveBroadcastId, recordingCount(channel),
-				postCount(channel), new ChannelResponse.Owner(channel.getMember().getNickname()));
+				postCount(channel), new ChannelResponse.Owner(channel.getMember().getNickname()),
+				followRepository.countByChannelId(channelId),
+				me != null && !channel.getMember().getId().equals(me.id())
+						&& followRepository.existsByMemberIdAndChannelId(me.id(), channelId));
 	}
 
 	@Transactional(readOnly = true)
@@ -110,7 +115,7 @@ public class ChannelService {
 				current,
 				new MyChannelResponse.Publish(whipUrl, whipUrl + "?src=obs", channel.getStreamKey(),
 						"rtmp://" + rtmpHost() + "/live", id + "?user=obs&pass=" + channel.getStreamKey()),
-				widgetUrl(channel.getWidgetKey()));
+				widgetUrl(channel.getWidgetKey()), followRepository.countByChannelId(id), false);
 	}
 
 	// ---- 다른 도메인이 아직 없는 값. 해당 항목이 이 메서드들을 채운다. ----

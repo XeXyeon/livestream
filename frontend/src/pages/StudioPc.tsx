@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { MonitorUp } from 'lucide-react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { Heading } from '@astryxdesign/core/Heading'
 import type { CategoryCode } from '../api/types'
 import { createPcStream } from '../media/mixer'
 import type { MixerWarning, PcStream } from '../media/mixer'
@@ -9,8 +11,11 @@ import SessionStatus from '../components/studio/SessionStatus'
 import { useBroadcastSession } from '../components/studio/useBroadcastSession'
 import type { BroadcastInfo } from '../components/studio/useBroadcastSession'
 import Spinner from '../components/common/Spinner'
+import { inputClassName } from '../components/common/TextField'
 import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
+import DonationBanner from '../components/donation/DonationBanner'
+import { useDonationBanner } from '../components/donation/useDonationBanner'
 
 const WARNING_TEXT: Record<MixerWarning, string> = {
   NO_SYSTEM_AUDIO: '탭/시스템 소리가 포함되지 않았습니다. 탭을 공유할 때 "탭 오디오도 공유"를 켜 주세요.',
@@ -35,13 +40,13 @@ function useAudioInputs(refreshKey: unknown) {
 
 function LevelMeter({ value, label }: { value: number; label: string }) {
   return (
-    <div aria-label={`${label} 음량`} className="h-1.5 w-full overflow-hidden rounded bg-slate-800">
-      <div className="h-full bg-emerald-400 transition-[width] duration-100" style={{ width: `${Math.min(100, Math.round(value * 100))}%` }} />
+    <div aria-label={`${label} 음량`} className="h-1.5 w-full overflow-hidden rounded-sm bg-muted">
+      <div className="h-full bg-success transition-[width] duration-100" style={{ width: `${Math.min(100, Math.round(value * 100))}%` }} />
     </div>
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 채팅(FE-5), 후원 알림은 FE-6.
+// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 후원 알림(FE-6)과 채팅(FE-5).
 export default function StudioPc() {
   const [media, setMedia] = useState<PcStream | null>(null)
   const mediaRef = useRef<PcStream | null>(null)
@@ -65,7 +70,8 @@ export default function StudioPc() {
   const session = useBroadcastSession('pc', { onServerEnded: stopMedia })
   const { end, active } = session
   // 방송인도 같은 토픽을 구독한다(서버는 채널 주인의 구독을 시청자 수에 넣지 않는다). viewers는 방송 상세 캐시로 들어가 상태 표시에 반영된다.
-  const chat = useBroadcastChat(session.broadcastId)
+  const banner = useDonationBanner()
+  const chat = useBroadcastChat(session.broadcastId, { onDonation: banner.push })
   const activeRef = useRef(active)
   useEffect(() => { activeRef.current = active }, [active])
 
@@ -134,15 +140,15 @@ export default function StudioPc() {
 
   if (!supportsDisplayMedia()) {
     return (
-      <section className="mx-auto max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
-        <h1 className="text-xl font-bold">이 브라우저는 화면 공유를 지원하지 않습니다</h1>
-        <p className="mt-2 text-slate-400">PC Chrome에서 열거나, 카메라로 방송하는 모바일 화면을 쓰세요.</p>
-        <Link to="/studio/mobile" className="mt-6 inline-block rounded-lg bg-indigo-500 px-4 py-2.5 font-semibold text-white hover:bg-indigo-400">모바일 화면으로</Link>
+      <section className="mx-auto max-w-lg rounded-lg border border-border bg-surface p-8 text-center">
+        <Heading level={1}>이 브라우저는 화면 공유를 지원하지 않습니다</Heading>
+        <p className="mt-2 text-secondary">PC Chrome에서 열거나, 카메라로 방송하는 모바일 화면을 쓰세요.</p>
+        <div className="mt-6"><Button href="/studio/mobile" label="모바일 화면으로" variant="primary" /></div>
       </section>
     )
   }
   if (session.channel.isPending) return <Spinner label="채널 정보를 불러오는 중" />
-  if (session.channel.isError) return <p role="alert" className="py-20 text-center text-rose-300">채널 정보를 불러오지 못했습니다.</p>
+  if (session.channel.isError) return <div className="py-20"><Banner role="alert" status="error" title="채널 정보를 불러오지 못했습니다." /></div>
 
   const channel = session.channel.data
   const currentInfo = info ?? { title: channel.title, category: channel.category.code as CategoryCode }
@@ -153,14 +159,14 @@ export default function StudioPc() {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">PC 스튜디오</h1>
-          <div className="flex gap-3 text-sm">
-            <Link to="/studio/mobile" className="text-slate-300 hover:text-white">모바일 화면으로</Link>
-            <Link to="/studio/settings" className="text-slate-300 hover:text-white">채널 설정</Link>
+          <Heading level={1}>PC 스튜디오</Heading>
+          <div className="flex gap-1">
+            <Button href="/studio/mobile" label="모바일 화면으로" variant="ghost" size="sm" />
+            <Button href="/studio/settings" label="채널 설정" variant="ghost" size="sm" />
           </div>
         </div>
 
-        <div className="relative aspect-video overflow-hidden rounded-xl bg-black">
+        <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
           <video ref={previewRef} muted autoPlay playsInline className="h-full w-full object-contain" />
           {!media && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400">
@@ -170,17 +176,15 @@ export default function StudioPc() {
           )}
         </div>
 
-        <section aria-label="소스" className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <section aria-label="소스" className="space-y-4 rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={() => void share()} disabled={sharing || active} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50">
-              {media ? '공유 화면 다시 선택' : '화면 공유 시작'}
-            </button>
-            {active && <span className="text-xs text-slate-500">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
+            <Button label={media ? '공유 화면 다시 선택' : '화면 공유 시작'} variant={media ? 'secondary' : 'primary'} icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} isDisabled={active} onClick={() => void share()} />
+            {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <label className="block text-sm font-medium">마이크
-                <select value={mic ?? 'none'} onChange={(event) => void changeMic(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white">
+              <label className="block text-sm font-medium text-primary">마이크
+                <select value={mic ?? 'none'} onChange={(event) => void changeMic(event.target.value)} className={`mt-1 ${inputClassName.replace('py-2.5', 'py-2')}`}>
                   <option value="">기본 마이크</option>
                   {devices.filter((device) => device.deviceId && device.deviceId !== 'default').map((device, index) => (
                     <option key={device.deviceId} value={device.deviceId}>{device.label || `마이크 ${index + 1}`}</option>
@@ -188,54 +192,50 @@ export default function StudioPc() {
                   <option value="none">마이크 사용 안 함</option>
                 </select>
               </label>
-              <label className="block text-xs text-slate-400">마이크 볼륨 {Math.round(micGain * 100)}%
-                <input type="range" min={0} max={2} step={0.05} value={micGain} disabled={mic === null} onChange={(event) => setMicGain(Number(event.target.value))} className="w-full" />
+              <label className="block text-xs text-secondary">마이크 볼륨 {Math.round(micGain * 100)}%
+                <input type="range" min={0} max={2} step={0.05} value={micGain} disabled={mic === null} onChange={(event) => setMicGain(Number(event.target.value))} className="w-full accent-accent-bg" />
               </label>
               <LevelMeter value={levels.mic} label="마이크" />
             </div>
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <input type="checkbox" checked={includeSystem} onChange={(event) => setIncludeSystem(event.target.checked)} />
+              <label className="flex items-center gap-2 text-sm font-medium text-primary">
+                <input type="checkbox" checked={includeSystem} onChange={(event) => setIncludeSystem(event.target.checked)} className="h-4 w-4 accent-accent-bg" />
                 탭/시스템 소리 포함
               </label>
-              <label className="block text-xs text-slate-400">시스템 소리 볼륨 {Math.round(systemGain * 100)}%
-                <input type="range" min={0} max={2} step={0.05} value={systemGain} disabled={!includeSystem} onChange={(event) => setSystemGain(Number(event.target.value))} className="w-full" />
+              <label className="block text-xs text-secondary">시스템 소리 볼륨 {Math.round(systemGain * 100)}%
+                <input type="range" min={0} max={2} step={0.05} value={systemGain} disabled={!includeSystem} onChange={(event) => setSystemGain(Number(event.target.value))} className="w-full accent-accent-bg" />
               </label>
               <LevelMeter value={includeSystem ? levels.system : 0} label="시스템 소리" />
             </div>
           </div>
-          {warnings.map((warning) => <p key={warning} role="alert" className="text-sm text-amber-300">{WARNING_TEXT[warning]}</p>)}
-          {shareError && <p role="alert" className="text-sm text-rose-300">{shareError}</p>}
+          {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
+          {shareError && <Banner role="alert" status="error" title={shareError} />}
         </section>
       </div>
 
       <div className="space-y-4">
-        <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
           <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
           <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
           {active || session.phase === 'ending'
             ? (
-              <button type="button" disabled={session.phase === 'ending'} onClick={() => void end(stopMedia)} className="w-full rounded-lg bg-rose-600 px-4 py-3 font-semibold text-white hover:bg-rose-500 disabled:opacity-50">
-                {session.phase === 'ending' ? '종료하는 중…' : '방송 종료'}
-              </button>
+              <Button label={session.phase === 'ending' ? '종료하는 중…' : '방송 종료'} variant="destructive" size="lg" width="100%" isLoading={session.phase === 'ending'} onClick={() => void end(stopMedia)} />
             )
             : (
-              <button type="button" disabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} className="w-full rounded-lg bg-indigo-500 px-4 py-3 font-semibold text-white hover:bg-indigo-400 disabled:opacity-50">
-                송출 시작
-              </button>
+              <Button label="송출 시작" variant="primary" size="lg" width="100%" isDisabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} />
             )}
-          {!media && !active && <p className="text-xs text-slate-500">먼저 화면 공유를 시작하세요.</p>}
-          {session.phase === 'reconnecting' && <p role="status" className="text-sm text-amber-300">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
-          {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-slate-300">방송을 종료했습니다.</p>}
-          {session.error && <p role="alert" className="text-sm text-rose-300">{session.error}</p>}
+          {!media && !active && <p className="text-xs text-secondary">먼저 화면 공유를 시작하세요.</p>}
+          {session.phase === 'reconnecting' && <p role="status" className="text-sm text-warning">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
+          {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-secondary">방송을 종료했습니다.</p>}
+          {session.error && <Banner role="alert" status="error" title={session.error} />}
           {session.broadcastId !== null && (
-            <Link to={`/live/${channel.id}`} target="_blank" className="block text-sm text-indigo-300 hover:text-indigo-200">시청 화면 새 탭에서 열기</Link>
+            <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
           )}
         </section>
-        {/* FE-6 후원 알림은 이 위에 붙인다 */}
+        <DonationBanner donation={banner.current} />
         {session.broadcastId !== null
           ? <ChatPanel chat={chat} className="h-[28rem]" />
-          : <aside aria-label="채팅" className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">방송을 시작하면 채팅이 열립니다.</aside>}
+          : <aside aria-label="채팅" className="rounded-lg border border-border bg-surface p-4 text-sm text-secondary">방송을 시작하면 채팅이 열립니다.</aside>}
       </div>
     </div>
   )

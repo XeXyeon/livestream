@@ -7,7 +7,7 @@ const OPTIONS: { mode: PlayerMode; label: string; title: string }[] = [
 
 export default function ModeToggle({ mode, onChange }: { mode: PlayerMode; onChange: (mode: PlayerMode) => void }) {
   return (
-    <div role="group" aria-label="재생 모드" className="inline-flex rounded-lg bg-slate-800 p-1 text-sm">
+    <div role="group" aria-label="재생 모드" className="inline-flex rounded-md border border-border bg-surface p-1 text-sm">
       {OPTIONS.map((option) => (
         <button
           key={option.mode}
@@ -15,7 +15,7 @@ export default function ModeToggle({ mode, onChange }: { mode: PlayerMode; onCha
           title={option.title}
           aria-pressed={mode === option.mode}
           onClick={() => onChange(option.mode)}
-          className={`rounded-md px-3 py-1 font-medium ${mode === option.mode ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:text-white'}`}
+          className={`rounded-sm px-3 py-1 font-medium ${mode === option.mode ? 'bg-accent-bg text-on-accent' : 'text-secondary hover:text-primary'}`}
         >
           {option.label}
         </button>

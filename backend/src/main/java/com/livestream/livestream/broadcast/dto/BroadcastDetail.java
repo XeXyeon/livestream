@@ -21,7 +21,9 @@ public record BroadcastDetail(
 		Play play,
 		@Schema(description = "승인된 후원 합계(원)") long donationTotal,
 		@Schema(description = "다시보기, 없으면 null") RecordingRef recording,
-		boolean isOwner) {
+		boolean isOwner,
+		@Schema(description = "이 방송 채널의 팔로워 수") long followerCount,
+		@Schema(description = "로그인한 회원이 이 채널을 팔로우 중이면 true. 비로그인 · 주인은 false") boolean isFollowing) {
 
 	public record Play(
 			@Schema(example = "/live/3/whep") String whepUrl,

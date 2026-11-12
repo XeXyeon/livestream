@@ -59,6 +59,9 @@ export type BroadcastDetail = BroadcastSummary & {
   donationTotal: number
   recording: RecordingRef | null
   isOwner: boolean
+  /** 이 방송 채널 기준(FOLLOW-1). 비로그인 · 자기 채널은 isFollowing false */
+  followerCount: number
+  isFollowing: boolean
 }
 
 export type RecordingStatus = 'RECORDING' | 'PROCESSING' | 'READY' | 'FAILED' | 'FILE_DELETED'
@@ -76,6 +79,30 @@ export type RecordingSummary = {
   commentCount: number
 }
 
+/** GET /recordings/{id}. videoUrl은 READY · PUBLIC일 때만, 비공개는 주인이 video-token으로 받는다 */
+export type RecordingDetail = RecordingSummary & {
+  status: RecordingStatus
+  visibility: Visibility
+  videoUrl: string | null
+  fileDeleted: boolean
+  donationTotal: number
+  isOwner: boolean
+}
+/** POST /recordings/{id}/video-token (5분) */
+export type VideoToken = { token: string; videoUrl: string }
+
+/** GET /members/me/broadcasts 항목 */
+export type MyBroadcastItem = {
+  id: number
+  title: string
+  category: Category
+  thumbnailUrl: string | null
+  status: BroadcastStatus
+  startedAt: string
+  endedAt: string | null
+  recording: RecordingRef | null
+}
+
 export type Recommendations = { lives: BroadcastSummary[]; recordings: RecordingSummary[] }
 
 export type ChannelResponse = {
@@ -87,6 +114,23 @@ export type ChannelResponse = {
   recordingCount: number
   postCount: number
   owner: { nickname: string }
+  followerCount: number
+  /** 로그인한 회원이 팔로우 중이면 true. 비로그인 · 자기 채널은 false */
+  isFollowing: boolean
+}
+
+/** POST · DELETE /channels/{id}/follow (둘 다 멱등) */
+export type FollowStatus = { channelId: number; following: boolean; followerCount: number }
+
+/** GET /members/me/follows 항목. 정렬은 서버 고정(라이브 먼저 · 시청자 수 순, 그다음 최근 팔로우 순) */
+export type FollowedChannel = {
+  channelId: number
+  name: string
+  category: Category
+  isLive: boolean
+  liveBroadcastId: number | null
+  viewerCount: number
+  followedAt: string
 }
 
 export type MyChannelResponse = ChannelResponse & {
@@ -134,4 +178,73 @@ export type DonationMessage = {
 export type StatusMessage = { type: 'status'; status: BroadcastStatus; at: string }
 export type ViewersMessage = { type: 'viewers'; count: number }
 export type HistoryMessage = { type: 'history'; messages: (ChatMessage | DonationMessage)[] }
-export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage
+/** 진행 중 방송의 제목 · 카테고리가 실제로 바뀌었을 때 한 번(현재 값 전체). history에는 없다 */
+export type InfoMessage = { type: 'info'; title: string; category: Category; at: string }
+export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage | InfoMessage
+
+// §4.13 후원
+export type DonationCreateInput = { amount: number; message?: string }
+/** 결제위젯에 넘길 주문 정보(201) */
+export type DonationCreated = {
+  donationId: number
+  orderId: string
+  amount: number
+  clientKey: string
+  orderName: string
+  customerName: string
+}
+/** 결제위젯 성공 리다이렉트로 받은 값 그대로 */
+export type DonationConfirmInput = { paymentKey: string; orderId: string; amount: number }
+/** 승인된 후원 */
+export type Donation = {
+  id: number
+  broadcastId: number
+  donor: { nickname: string }
+  amount: number
+  message: string | null
+  approvedAt: string
+}
+export type DonationPage = Page<Donation> & { totalAmount: number; totalCount: number }
+export type ReceivedDonationByBroadcast = {
+  broadcastId: number
+  title: string
+  startedAt: string
+  totalAmount: number
+  count: number
+}
+export type ReceivedDonations = { totalAmount: number; byBroadcast: ReceivedDonationByBroadcast[] }
+
+// §4.12 댓글 · 게시글
+/** 평면 목록(createdAt 오름차순). 트리는 프론트가 parentId로 만든다 */
+export type Comment = {
+  id: number
+  parentId: number | null
+  /** 삭제된 댓글이면 null("삭제된 댓글입니다") */
+  content: string | null
+  deleted: boolean
+  author: { id: number; nickname: string; isChannelOwner: boolean }
+  createdAt: string
+  updatedAt: string
+}
+export type CommentWriteInput = { content: string; parentId?: number }
+
+export type PostSummary = {
+  id: number
+  title: string
+  /** 본문 앞부분(최대 100자) */
+  preview: string
+  commentCount: number
+  createdAt: string
+  updatedAt: string
+}
+export type Post = {
+  id: number
+  channel: { id: number; name: string; ownerNickname: string }
+  title: string
+  content: string
+  commentCount: number
+  createdAt: string
+  updatedAt: string
+  isOwner: boolean
+}
+export type PostWriteInput = { title: string; content: string }

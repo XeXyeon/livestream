@@ -30,3 +30,8 @@ export function formatRelative(iso: string | null | undefined, now: number = Dat
   if (days < 7) return `${days}일 전`
   return new Date(time).toLocaleDateString('ko-KR')
 }
+
+/** ISO 시각 → "2026. 11. 12. 오후 3:04" (상세 화면 · 내역의 절대 시각) */
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
+}
