@@ -329,7 +329,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.15 공개 연동 SSE (`integration`)
 - `GET /api/public/widget/{widgetKey}/events`(인증 없음, `text/event-stream`): 위젯 키로 채널 조회(없으면 404). 연결 시 `event: ready` `data: {"channelId", "version":1}`. 이후 `event: donation`, `id: <donationId>`, `data: {"version":1,"id","type":"donation","broadcastId","donor":{"nickname"},"amount","message","createdAt"}`. 15초마다 `: ping` 주석.
-- `Last-Event-ID` 헤더가 오면 그 id 이후의 APPROVED 후원(채널 기준, DB 조회, 최대 100건)을 먼저 보낸다.
+- `Last-Event-ID` 헤더 **또는 쿼리 `?lastEventId=`**(둘 다 있으면 헤더 우선, 숫자가 아니면 무시)가 오면 그 id 이후의 APPROVED 후원(채널 기준, DB 조회, 최대 100건)을 먼저 보낸다. 쿼리를 받는 이유(FE-9#1): 브라우저 `EventSource`는 자동 재연결 때만 헤더를 붙이고, 프록시가 내려가 CLOSED가 된 뒤 프론트가 새 `EventSource`를 만들면 헤더가 없다. 프론트는 마지막으로 받은 `donation`의 `event.lastEventId`를 메모리에 기억해 다시 열 때 쿼리로 붙인다(§6.7 S11). 처음 열 때는 붙이지 않는다(옛 후원을 재생하지 않음).
 - `WidgetEventService`: 채널별 `SseEmitter` 목록, 위젯 키 재발급 시 그 채널 연결 모두 `complete()`.
 
 ### 4.16 REST 엔드포인트 요약 (`/api` 접두어)
@@ -446,7 +446,7 @@ frontend/src/
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**, **S10 Post**: §6.3.
-- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`; `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
+- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`(CLOSED 뒤 다시 열 때 `?lastEventId=<마지막 donation id>`, §4.15); `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
 
 ## 7. 인프라 세부 (OPS-3 · OPS-5)
 - `backend/Dockerfile`: 현재 Dockerfile 유지 + 런타임 스테이지에 `RUN apk add --no-cache ffmpeg`.
@@ -577,7 +577,7 @@ frontend/src/
 
 ### FE-9 알림 위젯 S11 · TTS PoC
 - 읽을 절: §6.3 `/widget/:widgetKey`, §6.7 S11, §4.15(이벤트 형식), §8 TTS 위험. WID-1 카드 "API · 스키마 상세"(같은 후원이 두 번 올 수 있는 경우).
-- 완료: ① `/widget/<key>`를 열면 레이아웃 없이 투명 배경으로 `EventSource` 구독, `donation` 이벤트에 카드 6초 표시 + `speechSynthesis`(한국어 음성, 큐 순차 재생) ② 같은 후원 `id`가 두 번 와도 한 번만 표시(vitest, 이벤트 핸들러 단위) ③ 끊기면 브라우저 `EventSource` 자동 재연결에 맡기고 `Last-Event-ID`는 브라우저가 보내는 것을 그대로 쓴다(직접 구현 없음) ④ 옛 키(404)는 "위젯 키가 바뀌었습니다" 문구 ⑤ 일반 Chrome 창에서 TTS 동작 확인, **OBS 브라우저 소스에서 TTS 동작 여부를 카드에 기록**(안 되면 §8의 대응: 일반 Chrome 창 + OBS 창 캡처 안내를 S5 위젯 설정 문구로) ⑥ README 연동 절에 넣을 안내 문구(위젯 주소 · OBS 설정 · 안 될 때)를 카드에 적는다(DOC-2가 합침).
+- 완료: ① `/widget/<key>`를 열면 레이아웃 없이 투명 배경으로 `EventSource` 구독, `donation` 이벤트에 카드 6초 표시 + `speechSynthesis`(한국어 음성, 큐 순차 재생) ② 같은 후원 `id`가 두 번 와도 한 번만 표시(vitest, 이벤트 핸들러 단위) ③ 끊기면 브라우저 `EventSource` 자동 재연결에 맡기되(그때는 브라우저가 `Last-Event-ID`를 보냄), **CLOSED가 되어 새 `EventSource`를 만들 때는 마지막 `donation`의 `event.lastEventId`를 `?lastEventId=`로 붙인다**(FE-9#1; 메모리만 — 페이지를 새로 열면 재생하지 않음, 그 사이 후원은 채팅 · 마이페이지에는 남음). 테스트: 연결 종료 뒤 재개 시 요청 주소에 쿼리가 붙는지(vitest, EventSource mock), 백엔드는 쿼리로 재전송되는 통합 테스트 1개 + 헤더 · 쿼리 둘 다일 때 헤더 우선 ④ 옛 키(404)는 "위젯 키가 바뀌었습니다" 문구 ⑤ 일반 Chrome 창에서 TTS 동작 확인, **OBS 브라우저 소스에서 TTS 동작 여부를 카드에 기록**(안 되면 §8의 대응: 일반 Chrome 창 + OBS 창 캡처 안내를 S5 위젯 설정 문구로) ⑥ README 연동 절에 넣을 안내 문구(위젯 주소 · OBS 설정 · 안 될 때)를 카드에 적는다(DOC-2가 합침).
 
 ### DOC-2 README
 - 읽을 절: PLAN-1 카드 "확정 사항 14"(시연 12단계) · §1 체크 대응 · §4.15 연동 문서. 절: 서비스 URL · 테스트 계정 · 로컬 실행 · 운영 배포 · 기능 확인 절차(12단계, 각 단계에 체크 항목 표기) · 소유자 검증 · 멱등 테스트 이름 · 공개 연동 문서 · 아키텍처 요약(이 문서 링크).
