@@ -100,6 +100,10 @@ export default function StudioSettings() {
         <h2 className="text-lg font-semibold">후원 알림 위젯</h2>
         <p className="text-sm text-slate-400">OBS “브라우저 소스”에 이 URL을 넣으면 후원 알림이 방송 화면에 뜹니다.</p>
         <CopyField label="위젯 URL" value={data.widgetUrl} secret />
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-400">
+          <li>음성 알림을 방송 소리에 섞으려면 브라우저 소스의 “OBS를 통해 오디오 제어”를 켜 주세요.</li>
+          <li>카드는 뜨는데 소리가 나지 않으면 이 URL을 일반 Chrome 창으로 열고 화면을 한 번 클릭한 뒤, OBS에서 그 창을 “윈도우 캡처”와 데스크톱 오디오로 잡아 주세요.</li>
+        </ul>
         <button type="button" onClick={confirmWidgetKey} disabled={widgetKey.isPending} className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:border-slate-400 disabled:opacity-50">
           {widgetKey.isPending ? '재발급 중…' : '위젯 URL 재발급'}
         </button>
