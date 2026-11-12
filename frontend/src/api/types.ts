@@ -178,7 +178,9 @@ export type DonationMessage = {
 export type StatusMessage = { type: 'status'; status: BroadcastStatus; at: string }
 export type ViewersMessage = { type: 'viewers'; count: number }
 export type HistoryMessage = { type: 'history'; messages: (ChatMessage | DonationMessage)[] }
-export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage
+/** 진행 중 방송의 제목 · 카테고리가 실제로 바뀌었을 때 한 번(현재 값 전체). history에는 없다 */
+export type InfoMessage = { type: 'info'; title: string; category: Category; at: string }
+export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage | InfoMessage
 
 // §4.13 후원
 export type DonationCreateInput = { amount: number; message?: string }

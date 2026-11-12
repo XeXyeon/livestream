@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { ApiErrorResponse, BroadcastDetail, DonationMessage } from '../../api/types'
+import type { ApiErrorResponse, DonationMessage } from '../../api/types'
 import { useAuth } from '../../store/auth'
 import { connectBroadcast } from '../../ws/stomp'
 import type { StompConnection } from '../../ws/stomp'
 import { applyChatMessage } from './chatState'
 import type { ChatEntry } from './chatState'
+import { applyTopicToCache, broadcastKey } from './topicCache'
 
 /**
- * 방송 하나의 STOMP 토픽(§4.14 · §6.6): 채팅 목록을 모으고, status · viewers는 ['broadcast', id] 쿼리 캐시에 바로 반영한다
+ * 방송 하나의 STOMP 토픽(§4.14 · §6.6): 채팅 목록을 모으고, status · viewers · info(제목 · 카테고리)는 ['broadcast', id] 쿼리 캐시에 바로 반영한다
  * (S2 · S3가 같은 키를 읽으므로 폴링을 기다리지 않는다). 연결될 때마다 방송 상세를 다시 받아 끊긴 사이의 상태 변화를 메운다.
  * 로그인한 사람이 바뀌면(로그인 · 로그아웃) 연결을 새로 연다. 토큰 갱신만으로는 다시 연결하지 않는다.
  * 앱 시작 때 로그인 복구(bootstrap)가 끝나기 전에는 연결하지 않는다(익명으로 붙었다가 다시 붙는 것을 막는다).
@@ -37,18 +38,12 @@ export function useBroadcastChat(broadcastId: number | null, { onDonation }: { o
 
   useEffect(() => {
     if (broadcastId === null || !authReady) return
-    const key = ['broadcast', broadcastId]
-    const patch = (change: Partial<BroadcastDetail>) =>
-      queryClient.setQueryData<BroadcastDetail>(key, (old) => (old ? { ...old, ...change } : old))
+    const key = broadcastKey(broadcastId)
 
     const conn = connectBroadcast(broadcastId, {
       onMessage: (message) => {
-        if (message.type === 'status') {
-          patch({ status: message.status })
-          void queryClient.invalidateQueries({ queryKey: key, exact: true })
-        } else if (message.type === 'viewers') {
-          patch({ viewerCount: message.count })
-        } else {
+        if (applyTopicToCache(queryClient, broadcastId, message)) return
+        if (message.type === 'history' || message.type === 'chat' || message.type === 'donation') {
           setEntries((old) => applyChatMessage(old, message))
           if (message.type === 'donation') onDonationRef.current?.(message)
         }
