@@ -24,6 +24,16 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 			""")
 	List<Broadcast> findByChannelAndStatuses(Long channelId, Collection<BroadcastStatus> statuses);
 
+	/** 여러 채널의 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송을 한 번에(내 팔로우 목록, FOLLOW-1). */
+	@Query("""
+			select b from Broadcast b join fetch b.channel
+			where b.channel.id in :channelIds
+			  and b.status in (com.livestream.livestream.broadcast.BroadcastStatus.LIVE,
+			                   com.livestream.livestream.broadcast.BroadcastStatus.DISCONNECTED)
+			  and b.deletedAt is null
+			""")
+	List<Broadcast> findOngoingByChannelIds(Collection<Long> channelIds);
+
 	default Optional<Broadcast> findOngoing(Long channelId) {
 		return findByChannelAndStatuses(channelId, List.of(BroadcastStatus.LIVE, BroadcastStatus.DISCONNECTED))
 				.stream().findFirst();
