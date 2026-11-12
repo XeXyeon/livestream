@@ -324,6 +324,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
   - `donation` `{type:"donation", id, donor:{nickname}, amount, message, approvedAt}`
   - `status` `{type:"status", status:"LIVE"|"DISCONNECTED"|"ENDED", at}`
   - `viewers` `{type:"viewers", count}`
+  - `info` `{type:"info", title, category:{code,label}, at}` — 송출 중(LIVE · DISCONNECTED) `PATCH /broadcasts/{id}`로 제목 · 카테고리가 **실제로 바뀌었을 때만** 커밋 뒤 발행(같은 값이면 안 보냄, ENDED 방송 수정은 안 보냄). `title` · `category`는 바뀐 것만이 아니라 현재 값 전체. 시청 화면은 받으면 방송 상세 캐시의 `title` · `category`를 바로 고친다(폴링 30초를 기다리지 않음, FE-5#1). history에는 넣지 않는다
   - `history` `{type:"history", messages:[chat|donation …]}` — 구독 직후 그 세션에만(`convertAndSendToUser` 대신 `SessionSubscribeEvent`에서 세션 id 헤더로 전송)
 - 전송 `/app/broadcasts/{id}/chat` `{content(1~200)}` → 방송 LIVE/DISCONNECTED 확인 → 버퍼 추가 → 토픽 발행.
 - `ChatBufferService`: 방송별 `ArrayDeque`(최대 50, chat + donation). `BroadcastEndedEvent`(§4.6) `@EventListener`에서 30분 뒤 제거 예약.
@@ -514,7 +515,7 @@ frontend/src/
 
 ### FE-2 PC 송출 스튜디오
 - 읽을 절: §6.5 mixer · whip, §6.7 S3, §4.16 `/channels/me`. Chrome 기준. 송출 시작 흐름: `PATCH /channels/me`(방송 정보) → `createPcStream` → `WhipClient.publish` → `GET /channels/me` 폴링(3초)으로 `currentBroadcast` 확인 → 라이브 표시. 종료 순서(중요): **`whip.close()` → `stream.stop()` → `POST /broadcasts/{id}/end`** — 먼저 송출을 끊어 재시도가 돌지 않게 한 뒤 서버에 종료를 알린다(서버는 어차피 30초 차단으로 2중 방어).
-- 완료: Chrome에서 화면 + 탭 소리 + 마이크 송출이 MediaMTX에 붙고(OBS 없이), 다른 브라우저 WHEP(간단 테스트 페이지 또는 FE-4)로 소리 · 화면 확인. 공유 중지 시 자동 종료.
+- 완료: Chrome에서 화면 + 탭 소리 + 마이크 송출이 MediaMTX에 붙고(OBS 없이), 다른 브라우저 WHEP(간단 테스트 페이지 또는 FE-4)로 소리 · 화면 확인. 공유 중지 시 자동 종료. 송출 중 "정보 저장"은 STOMP `info`(§4.14)로 시청 화면에 바로(수 초 안) 반영된다.
 
 ### FE-3 모바일 송출 · 기기 감지 · 채널 설정
 - 송출 시작 · 종료 순서는 FE-2와 같다(`PATCH /channels/me` → `createMobileStream` → `WhipClient.publish(whipUrl + '?src=mobile')` → `/channels/me` 폴링 / 종료는 `whip.close()` → `stream.stop()` → `end`).
