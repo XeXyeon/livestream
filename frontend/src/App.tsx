@@ -1,19 +1,21 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { bootstrapAuth, shouldRetryQuery } from './api/client'
 import Header from './components/layout/Header'
 import Protected from './components/layout/Protected'
 import Home from './pages/Home'
-import Live from './pages/Live'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
-import StudioEntry from './pages/StudioEntry'
-import StudioMobile from './pages/StudioMobile'
-import StudioPc from './pages/StudioPc'
-import StudioSettings from './pages/StudioSettings'
-import Widget from './pages/Widget'
 import Placeholder from './pages/Placeholder'
+
+// 무거운 화면(플레이어 · 송출 · 위젯)은 따로 받는다. 대기 표시는 Header의 Suspense가 맡는다.
+const Live = lazy(() => import('./pages/Live'))
+const StudioEntry = lazy(() => import('./pages/StudioEntry'))
+const StudioPc = lazy(() => import('./pages/StudioPc'))
+const StudioMobile = lazy(() => import('./pages/StudioMobile'))
+const StudioSettings = lazy(() => import('./pages/StudioSettings'))
+const Widget = lazy(() => import('./pages/Widget'))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
 
@@ -21,7 +23,7 @@ function AppRoutes() {
   useEffect(() => { void bootstrapAuth() }, [])
   return (
     <Routes>
-      <Route path="/widget/:widgetKey" element={<Widget />} />
+      <Route path="/widget/:widgetKey" element={<Suspense fallback={null}><Widget /></Suspense>} />
       <Route element={<Header />}>
         <Route path="/" element={<Home />} />
         <Route path="/live/:channelId" element={<Live />} />

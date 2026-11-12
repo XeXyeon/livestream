@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -6,6 +6,7 @@ import { LinkProvider } from '@astryxdesign/core/Link'
 import { logout } from '../../api/auth'
 import { ApiError } from '../../api/client'
 import { useAuth } from '../../store/auth'
+import Spinner from '../common/Spinner'
 
 // 앱 공통 셸: 헤더 + 본문. ASTRYX의 href 링크(Button · Link)가 react-router Link로 이동하도록 LinkProvider를 여기서 둔다
 // (BrowserRouter 안이어야 한다). 셸 밖인 /widget은 링크가 없어 필요 없다.
@@ -57,7 +58,7 @@ export default function Header() {
             </div>
           )}
         </header>
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-10"><Outlet /></main>
+        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-10"><Suspense fallback={<Spinner />}><Outlet /></Suspense></main>
       </div>
     </LinkProvider>
   )
