@@ -7,6 +7,7 @@ import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { ApiError } from '../api/client'
 import { getRecording } from '../api/recordings'
+import CommentList from '../components/comment/CommentList'
 import { formatDuration } from '../components/broadcast/format'
 import Spinner from '../components/common/Spinner'
 import RecordingVideo from '../components/recording/RecordingVideo'
@@ -16,7 +17,7 @@ import { canChangeVisibility } from '../components/recording/recordingState'
 
 const date = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 
-/** S6 다시보기(§6.3 · §6.7). 댓글은 FE-8이 아래에 붙인다 */
+/** S6 다시보기(§6.3 · §6.7). 댓글은 녹화가 READY · FILE_DELETED일 때만 쓸 수 있다(서버 409) */
 export default function Video() {
   const recordingId = Number(useParams().recordingId)
   const valid = Number.isInteger(recordingId) && recordingId > 0
@@ -63,6 +64,11 @@ export default function Video() {
           </div>
         )}
       </div>
+      <CommentList
+        target={{ kind: 'recording', id: recording.id }}
+        count={recording.commentCount}
+        closedReason={recording.status === 'READY' || recording.status === 'FILE_DELETED' ? undefined : '다시보기가 준비되면 댓글을 쓸 수 있습니다.'}
+      />
     </div>
   )
 }
