@@ -75,6 +75,17 @@ export async function ensureFreshToken(now: number = Date.now()): Promise<string
   }
 }
 
+/** 서버가 토큰을 만료로 거절했을 때(STOMP CONNECT `TOKEN_EXPIRED`) exp와 무관하게 refresh한다. 실패하면 로그아웃 상태로. */
+export async function forceRefreshToken(): Promise<string | null> {
+  if (!useAuth.getState().accessToken) return null
+  try {
+    return (await refreshSession()).accessToken
+  } catch {
+    useAuth.getState().clear()
+    return null
+  }
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const request = (token: string | null) => {
     const headers = new Headers(init.headers)

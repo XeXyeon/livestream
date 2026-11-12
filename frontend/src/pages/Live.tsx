@@ -8,11 +8,14 @@ import { ApiError } from '../api/client'
 import type { BroadcastDetail, ChannelResponse } from '../api/types'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import { formatCount, formatRelative } from '../components/broadcast/format'
+import ChatPanel from '../components/chat/ChatPanel'
+import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
 import Player from '../components/player/Player'
 
-// S2 시청. 채널 → liveBroadcastId → 방송 상세(5초 폴링). 방송이 끝나 liveBroadcastId가 null이 돼도
-// 마지막으로 본 방송을 그대로 보여 줘 종료 화면이 유지된다. 채팅 · 후원은 FE-5 · FE-6, 폴링은 FE-5에서 STOMP로 바꾼다.
+// S2 시청. 채널 → liveBroadcastId → 방송 상세. 방송이 끝나 liveBroadcastId가 null이 돼도
+// 마지막으로 본 방송을 그대로 보여 줘 종료 화면이 유지된다. 상태 · 시청자 수는 STOMP status · viewers가
+// 방송 상세 캐시를 바로 고치고(useBroadcastChat), 폴링은 30초 백업이다(FE-5). 후원 UI는 FE-6.
 export default function Live() {
   const channelId = Number(useParams().channelId)
   const validId = Number.isInteger(channelId) && channelId > 0
@@ -38,11 +41,14 @@ export default function Live() {
     // ENDED 뒤에도 녹화 병합이 끝날 때까지(RECORDING · PROCESSING) 15초마다 다시 봐서 다시보기 버튼을 켠다.
     refetchInterval: (query) => {
       const data = query.state.data
-      if (data?.status !== 'ENDED') return 5000
+      if (data?.status !== 'ENDED') return 30_000 // STOMP가 끊겼을 때의 백업
       const pending = data.recording?.status === 'RECORDING' || data.recording?.status === 'PROCESSING'
       return pending ? 15_000 : false
     },
   })
+  const broadcastGone = broadcast.error instanceof ApiError && broadcast.error.status === 404
+  // 없는 방송(404)의 토픽에는 붙지 않는다
+  const chat = useBroadcastChat(broadcastGone ? null : broadcastId)
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {
     return <p className="py-20 text-center text-slate-400">채널을 찾을 수 없습니다.</p>
@@ -50,7 +56,6 @@ export default function Live() {
   if (channel.isPending) return <Spinner />
   if (channel.isError) return <p role="alert" className="py-20 text-center text-rose-300">채널 정보를 불러오지 못했습니다.</p>
 
-  const broadcastGone = broadcast.error instanceof ApiError && broadcast.error.status === 404
   if (broadcastId === null || broadcastGone) return <OfflineView channel={channel.data} />
   if (broadcast.isPending) return <Spinner label="방송을 불러오는 중" />
   if (broadcast.isError) return <p role="alert" className="py-20 text-center text-rose-300">방송 정보를 불러오지 못했습니다.</p>
@@ -61,10 +66,8 @@ export default function Live() {
         <Player key={broadcast.data.id} broadcast={broadcast.data} initialMode={broadcast.data.recommendedMode} />
         <BroadcastInfo broadcast={broadcast.data} />
       </div>
-      {/* FE-5 ChatPanel 자리 (모바일은 플레이어 아래) */}
-      <aside aria-label="채팅" className="min-h-64 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
-        채팅은 곧 열립니다.
-      </aside>
+      {/* 모바일은 플레이어 아래 */}
+      <ChatPanel chat={chat} ended={broadcast.data.status === 'ENDED'} className="h-[28rem] lg:h-[calc(100vh-8rem)] lg:max-h-[48rem]" />
     </div>
   )
 }

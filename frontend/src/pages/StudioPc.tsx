@@ -9,6 +9,8 @@ import SessionStatus from '../components/studio/SessionStatus'
 import { useBroadcastSession } from '../components/studio/useBroadcastSession'
 import type { BroadcastInfo } from '../components/studio/useBroadcastSession'
 import Spinner from '../components/common/Spinner'
+import ChatPanel from '../components/chat/ChatPanel'
+import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 
 const WARNING_TEXT: Record<MixerWarning, string> = {
   NO_SYSTEM_AUDIO: '탭/시스템 소리가 포함되지 않았습니다. 탭을 공유할 때 "탭 오디오도 공유"를 켜 주세요.',
@@ -39,7 +41,7 @@ function LevelMeter({ value, label }: { value: number; label: string }) {
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 채팅 · 후원 알림은 FE-5 · FE-6에서 오른쪽 칸에 붙인다.
+// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 채팅(FE-5), 후원 알림은 FE-6.
 export default function StudioPc() {
   const [media, setMedia] = useState<PcStream | null>(null)
   const mediaRef = useRef<PcStream | null>(null)
@@ -62,6 +64,8 @@ export default function StudioPc() {
 
   const session = useBroadcastSession('pc', { onServerEnded: stopMedia })
   const { end, active } = session
+  // 방송인도 같은 토픽을 구독한다(서버는 채널 주인의 구독을 시청자 수에 넣지 않는다). viewers는 방송 상세 캐시로 들어가 상태 표시에 반영된다.
+  const chat = useBroadcastChat(session.broadcastId)
   const activeRef = useRef(active)
   useEffect(() => { activeRef.current = active }, [active])
 
@@ -228,8 +232,10 @@ export default function StudioPc() {
             <Link to={`/live/${channel.id}`} target="_blank" className="block text-sm text-indigo-300 hover:text-indigo-200">시청 화면 새 탭에서 열기</Link>
           )}
         </section>
-        {/* FE-5 ChatPanel · FE-6 후원 알림 자리 */}
-        <aside aria-label="채팅" className="min-h-48 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">채팅은 곧 열립니다.</aside>
+        {/* FE-6 후원 알림은 이 위에 붙인다 */}
+        {session.broadcastId !== null
+          ? <ChatPanel chat={chat} className="h-[28rem]" />
+          : <aside aria-label="채팅" className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">방송을 시작하면 채팅이 열립니다.</aside>}
       </div>
     </div>
   )

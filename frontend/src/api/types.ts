@@ -114,3 +114,24 @@ export type ChannelUpdateInput = Partial<{
 }>
 
 export type BroadcastUpdateInput = Partial<{ title: string; category: CategoryCode }>
+
+// §4.14 STOMP `/topic/broadcasts/{id}` 메시지(type으로 구분)
+export type ChatMessage = {
+  type: 'chat'
+  id: string
+  member: { id: number; nickname: string; isChannelOwner: boolean }
+  content: string
+  sentAt: string
+}
+export type DonationMessage = {
+  type: 'donation'
+  id: number
+  donor: { nickname: string }
+  amount: number
+  message: string | null
+  approvedAt: string
+}
+export type StatusMessage = { type: 'status'; status: BroadcastStatus; at: string }
+export type ViewersMessage = { type: 'viewers'; count: number }
+export type HistoryMessage = { type: 'history'; messages: (ChatMessage | DonationMessage)[] }
+export type BroadcastTopicMessage = ChatMessage | DonationMessage | StatusMessage | ViewersMessage | HistoryMessage
