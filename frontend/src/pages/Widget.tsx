@@ -45,11 +45,17 @@ export default function Widget() {
   )
 
   // 투명 배경: OBS 브라우저 소스가 방송 화면 위에 겹친다.
+  // 앱 테마가 <html>을 color-scheme: dark로 두면 브라우저가 바탕 캔버스를 어둡게 칠할 수 있어 위젯에서는 normal로 되돌린다.
   useEffect(() => {
     const targets = [document.documentElement, document.body]
     const previous = targets.map((element) => element.style.background)
+    const previousScheme = document.documentElement.style.colorScheme
     targets.forEach((element) => { element.style.background = 'transparent' })
-    return () => targets.forEach((element, index) => { element.style.background = previous[index] })
+    document.documentElement.style.colorScheme = 'normal'
+    return () => {
+      targets.forEach((element, index) => { element.style.background = previous[index] })
+      document.documentElement.style.colorScheme = previousScheme
+    }
   }, [])
 
   useEffect(() => {
