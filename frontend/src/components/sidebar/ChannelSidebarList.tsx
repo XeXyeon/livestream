@@ -142,8 +142,9 @@ function ExpandedGroup({ group, onNavigate }: { group: SidebarGroup; onNavigate?
 function ChannelAvatar({ channel }: { channel: SidebarChannel }) {
   const isLive = channel.viewerCount != null
   return (
-    <span className={`relative block shrink-0 rounded-full ${isLive ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-surface' : ''}`}>
-      <Avatar name={channel.name} size={32} />
+    // 이름은 옆 글자 · 링크 aria-label · title이 맡는다. 툴팁을 켜 두면 Avatar가 탭 정지(tabIndex 0)가 되고 이름을 한 번 더 읽는다.
+    <span aria-hidden className={`relative block shrink-0 rounded-full ${isLive ? 'ring-2 ring-rose-600 ring-offset-2 ring-offset-surface' : ''}`}>
+      <Avatar name={channel.name} size={32} tooltip={false} />
     </span>
   )
 }
