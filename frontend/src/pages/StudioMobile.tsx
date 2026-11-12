@@ -153,7 +153,7 @@ export default function StudioMobile() {
           </button>
         )}
         {showInfo && currentInfo && (
-          <div className="rounded-xl bg-slate-900/90 p-3">
+          <div className="rounded-lg bg-surface/90 p-3">
             <BroadcastInfoForm compact initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
           </div>
         )}
