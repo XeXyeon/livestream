@@ -1,10 +1,12 @@
 package com.livestream.livestream.recording;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,6 +42,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -65,7 +68,7 @@ class RecordingMergeTest {
 	@Autowired BroadcastLifecycleService lifecycle;
 	@Autowired BroadcastRepository broadcastRepository;
 	@Autowired RecordingRepository recordingRepository;
-	@Autowired RecordingSegmentRepository segmentRepository;
+	@MockitoSpyBean RecordingSegmentRepository segmentRepository;
 	@Autowired RecordingMergeService mergeService;
 	@Autowired RecordingRetentionScheduler retentionScheduler;
 	@Autowired TransactionTemplate tx;
@@ -136,7 +139,7 @@ class RecordingMergeTest {
 
 		Recording done = recordingRepository.findById(rec.getId()).orElseThrow();
 		assertThat(done.getStatus()).isEqualTo(RecordingStatus.READY);
-		assertThat(done.getFilePath()).matches("vod/[0-9a-f-]{36}\\.mp4");
+		assertThat(done.getFilePath()).matches("vod/[0-9a-f-]{36}\\.mp4"); // 채널 기본값 autoPublish → PUBLIC → vod/
 		assertThat(done.getDurationSeconds()).isEqualTo(13);
 		assertThat(done.getSizeBytes()).isEqualTo(12L);
 		assertThat(done.getFailureReason()).isNull();
@@ -144,14 +147,64 @@ class RecordingMergeTest {
 		assertThat(Files.exists(Path.of(seg1))).isFalse();
 		assertThat(Files.exists(Path.of(seg2))).isFalse();
 		assertThat(segmentRepository.countByRecordingId(rec.getId())).isZero();
-		// concat 목록 파일은 남기지 않는다
-		try (var s = Files.list(recordingsDir.resolve("vod"))) {
-			assertThat(s.map(p -> p.getFileName().toString())).noneMatch(n -> n.startsWith(".concat-"));
-		}
+		// private/ 에 쓴 결과는 vod/ 로 옮겨 남지 않고, concat 목록 파일도 남기지 않는다
+		String name = done.getFilePath().substring("vod/".length());
+		assertThat(recordingsDir.resolve("private/" + name)).doesNotExist();
+		assertThat(fileNames("private")).noneMatch(n -> n.startsWith(".concat-"));
 
 		// 다시 불러도(이미 READY) 아무것도 하지 않는다
 		mergeService.merge(rec.getId());
 		assertThat(recordingRepository.findById(rec.getId()).orElseThrow().getFilePath()).isEqualTo(done.getFilePath());
+	}
+
+	@Test
+	void ffmpeg는_private에_쓰고_READY_때_비공개면_private에_남긴다() throws Exception {
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		segmentHook(a.channelId(), rawSegment(a, "s1.mp4", "secret"));
+		end(a);
+		Recording rec = recordingOf(a);
+		// 병합 중에 주인이 비공개로 바꿨다(READY 가 아니라 visibility 만 바뀐다)
+		tx.executeWithoutResult(s -> recordingRepository.updateVisibility(rec.getId(), Visibility.PRIVATE, Instant.now()));
+		AtomicReference<String> output = new AtomicReference<>();
+		doAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			output.set(args.getLast());
+			return fakeConcat(args);
+		}).when(ffmpeg).ffmpeg(anyList(), any());
+
+		mergeService.merge(rec.getId());
+
+		assertThat(Path.of(output.get()).getParent()).isEqualTo(recordingsDir.resolve("private"));
+		Recording done = recordingRepository.findById(rec.getId()).orElseThrow();
+		assertThat(done.getStatus()).isEqualTo(RecordingStatus.READY);
+		assertThat(done.getFilePath()).matches("private/[0-9a-f-]{36}\\.mp4");
+		assertThat(Files.readString(recordingsDir.resolve(done.getFilePath()))).isEqualTo("secret");
+		assertThat(recordingsDir.resolve("vod/" + done.getFilePath().substring("private/".length()))).doesNotExist();
+	}
+
+	@Test
+	void vod로_옮긴_뒤_저장이_실패하면_옮긴_파일도_지운다() throws Exception {
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		segmentHook(a.channelId(), rawSegment(a, "s1.mp4", "x"));
+		end(a);
+		Recording rec = recordingOf(a);
+		AtomicReference<String> output = new AtomicReference<>();
+		doAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			output.set(args.getLast());
+			return fakeConcat(args);
+		}).when(ffmpeg).ffmpeg(anyList(), any());
+		// 옮긴 뒤 같은 트랜잭션의 조각 행 삭제가 실패 → 롤백
+		doThrow(new IllegalStateException("DB 실패 흉내")).when(segmentRepository).deleteAllByIdInBatch(any());
+
+		assertThatThrownBy(() -> mergeService.merge(rec.getId())).isInstanceOf(IllegalStateException.class);
+
+		assertThat(recordingRepository.findById(rec.getId()).orElseThrow().getStatus()).isEqualTo(RecordingStatus.PROCESSING);
+		String name = Path.of(output.get()).getFileName().toString();
+		assertThat(recordingsDir.resolve("private/" + name)).doesNotExist();
+		assertThat(recordingsDir.resolve("vod/" + name)).doesNotExist();
 	}
 
 	@Test
@@ -331,10 +384,8 @@ class RecordingMergeTest {
 
 		Recording r = recordingRepository.findById(rec.getId()).orElseThrow();
 		assertThat(r.getStatus()).isEqualTo(RecordingStatus.PROCESSING);
-		try (var s = Files.list(recordingsDir.resolve("vod"))) {
-			assertThat(s.filter(p -> p.getFileName().toString().endsWith(".mp4")))
-					.allSatisfy(p -> assertThat(recordingRepository.findAll()).anyMatch(x -> p.toString().endsWith(String.valueOf(x.getFilePath()))));
-		}
+		assertThat(fileNames("private")).filteredOn(n -> n.endsWith(".mp4"))
+				.allSatisfy(n -> assertThat(recordingRepository.findAll()).anyMatch(x -> ("private/" + n).equals(x.getFilePath())));
 	}
 
 	// ---------- 보관 ----------
@@ -364,7 +415,39 @@ class RecordingMergeTest {
 		assertThat(vod).doesNotExist();
 	}
 
+	@Test
+	void 보관_정리는_file_path와_다른_폴더의_같은_파일도_지운다() throws Exception {
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		segmentHook(a.channelId(), rawSegment(a, "s1.mp4", "keep"));
+		end(a);
+		Long id = recordingOf(a).getId();
+		mergeService.merge(id);
+		Recording ready = recordingRepository.findById(id).orElseThrow();
+		String name = ready.getFilePath().substring("vod/".length());
+		// 옮긴 뒤 DB 커밋만 실패해 파일이 private/ 에 있는 상황
+		Files.createDirectories(recordingsDir.resolve("private"));
+		Files.move(recordingsDir.resolve(ready.getFilePath()), recordingsDir.resolve("private/" + name));
+
+		retentionScheduler.purgeExpired(ready.getCreatedAt().plus(Duration.ofDays(props.recording().retentionDays())).plusSeconds(60));
+
+		assertThat(recordingRepository.findById(id).orElseThrow().getStatus()).isEqualTo(RecordingStatus.FILE_DELETED);
+		assertThat(recordingsDir.resolve("private/" + name)).doesNotExist();
+		assertThat(recordingsDir.resolve("vod/" + name)).doesNotExist();
+	}
+
 	// ---------- 도우미 ----------
+
+	/** 녹화 디렉터리의 한 폴더 안 파일 이름들. 폴더가 없으면 빈 목록. */
+	private List<String> fileNames(String folder) throws IOException {
+		Path dir = recordingsDir.resolve(folder);
+		if (!Files.isDirectory(dir)) {
+			return List.of();
+		}
+		try (var s = Files.list(dir)) {
+			return s.map(p -> p.getFileName().toString()).toList();
+		}
+	}
 
 	private Recording recordingOf(Account a) {
 		Long id = recordingRepository.findLatestIdByChannel(a.channelId(),

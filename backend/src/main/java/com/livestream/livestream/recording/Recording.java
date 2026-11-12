@@ -34,7 +34,7 @@ public class Recording extends BaseEntity {
 	@Column(name = "status", nullable = false, length = 20)
 	private RecordingStatus status;
 
-	/** vod/&lt;uuid&gt;.mp4 상대 경로 */
+	/** 영상 파일이 지금 있는 상대 경로: PUBLIC 이면 vod/&lt;uuid&gt;.mp4, PRIVATE 면 private/&lt;uuid&gt;.mp4 (DESIGN §4.10) */
 	@Column(name = "file_path", length = 255)
 	private String filePath;
 

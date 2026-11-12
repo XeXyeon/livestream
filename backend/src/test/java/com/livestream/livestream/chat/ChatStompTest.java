@@ -40,7 +40,7 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
 
 /**
  * CHAT-1 (DESIGN §4.14 · §9 CHAT-1): 실제 STOMP 클라이언트로 익명 구독 · history, 로그인 전송 · 브로드캐스트,
- * 익명 전송 거부, CONNECT 토큰 거절, 전송 실패 → /user/queue/errors, 브로커 목적지 직접 SEND 거부, 구독 수 · viewers, status 이벤트.
+ * 익명 전송 거부, CONNECT 토큰 거절, 전송 실패 → /user/queue/errors, 브로커 목적지 직접 SEND 거부, 구독 수(채널 주인 제외) · viewers, status 이벤트.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -214,6 +214,34 @@ class ChatStompTest {
 		// 상세 API 도 같은 값을 쓴다
 		mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/broadcasts/" + broadcastId))
 				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.viewerCount").value(1));
+	}
+
+	@Test
+	void 채널_주인의_구독은_탭이_여러_개여도_세지_않고_익명과_다른_회원은_센다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account viewer = TestAccounts.create(mvc);
+		long broadcastId = startBroadcast(streamer);
+
+		// 스튜디오 탭 두 개
+		subscribe(connect(streamer.access()), topic(broadcastId));
+		subscribe(connect(streamer.access()), topic(broadcastId));
+		settle();
+		assertThat(viewerCounter.count(broadcastId)).isZero();
+
+		StompSession anon = connect(null);
+		subscribe(anon, topic(broadcastId));
+		StompSession v = connect(viewer.access());
+		subscribe(v, topic(broadcastId));
+		await(() -> viewerCounter.count(broadcastId) == 2);
+
+		// 주인 세션이 끊겨도 수는 그대로
+		StompSession third = connect(streamer.access());
+		subscribe(third, topic(broadcastId));
+		third.disconnect();
+		settle();
+		assertThat(viewerCounter.count(broadcastId)).isEqualTo(2);
+		mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/broadcasts/" + broadcastId))
+				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.viewerCount").value(2));
 	}
 
 	@Test

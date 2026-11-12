@@ -13,6 +13,8 @@ import com.livestream.livestream.channel.LiveBroadcastLookup;
 import com.livestream.livestream.channel.dto.CategoryResponse;
 import com.livestream.livestream.channel.dto.MyChannelResponse;
 import com.livestream.livestream.chat.ViewerCounter;
+import com.livestream.livestream.comment.CommentCounter;
+import com.livestream.livestream.comment.CommentRepository;
 import com.livestream.livestream.common.config.AppProperties;
 import com.livestream.livestream.common.dto.PageResponse;
 import com.livestream.livestream.common.error.ApiException;
@@ -67,6 +69,8 @@ public class BroadcastService implements LiveBroadcastLookup {
 	private final ViewerCounter viewerCounter;
 	private final DonationRepository donationRepository;
 	private final AppProperties props;
+	private final CommentRepository commentRepository;
+	private final CommentCounter commentCounter;
 
 	// ---------- 조회 ----------
 
@@ -118,9 +122,10 @@ public class BroadcastService implements LiveBroadcastLookup {
 		if (!channelRepository.existsById(channelId)) {
 			throw new ApiException(ErrorCode.CHANNEL_NOT_FOUND);
 		}
-		// TODO(CMT-1): commentCount
-		return PageResponse.of(recordingRepository.findPublicByChannel(channelId,
-				PageResponse.pageable(page, size, Sort.unsorted())), r -> RecordingSummary.of(r, 0));
+		Page<Recording> recordings = recordingRepository.findPublicByChannel(channelId,
+				PageResponse.pageable(page, size, Sort.unsorted()));
+		Map<Long, Long> comments = commentCounter.ofRecordings(recordings.map(Recording::getId).getContent());
+		return PageResponse.of(recordings, r -> RecordingSummary.of(r, comments.getOrDefault(r.getId(), 0L)));
 	}
 
 	@Override
@@ -174,7 +179,9 @@ public class BroadcastService implements LiveBroadcastLookup {
 		Instant now = Instant.now();
 		b.markDeleted(now);
 		recording.ifPresent(r -> r.markFileDeleted(now));
-		// TODO(CMT-1): recording 의 댓글을 같은 트랜잭션에서 물리 삭제 — commentRepository.deleteByRecordingId(recordingId)
+		// 다시보기 댓글은 같은 트랜잭션에서 물리 삭제한다(recording 행은 남아 FK cascade 가 돌지 않는다). 녹화 잠금을 쥔 채라
+		// 댓글 작성(녹화 공유 잠금)과 직렬화된다.
+		recording.ifPresent(r -> commentRepository.deleteAllOfRecording(r.getId()));
 		String vod = recording.map(Recording::getFilePath).orElse(null);
 		String thumbnail = b.getThumbnailPath() != null ? b.getThumbnailPath() : "thumbnails/" + b.getId() + ".jpg";
 		AfterCommit.run("녹화 파일 삭제", () -> recordingService.deleteFiles(vod, thumbnail));

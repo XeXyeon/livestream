@@ -28,8 +28,9 @@
 		handle @hls {
 			reverse_proxy mediamtx:8888
 		}
+		# 그 외 /live/<channelId> 는 SPA 시청 화면이다 (OPS-3#1). 404 가 아니라 프론트를 내준다.
 		handle {
-			respond 404
+			import /etc/caddy/frontend-{$FRONTEND_MODE:static}.caddy
 		}
 	}
 

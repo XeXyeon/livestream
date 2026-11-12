@@ -34,4 +34,21 @@ class RecordingFilesTest {
 		String list = RecordingMergeService.concatList(List.of(Path.of("/r/raw/a.mp4"), Path.of("/r/it's/b.mp4")));
 		assertThat(list).isEqualTo("file '/r/raw/a.mp4'\nfile '/r/it'\\''s/b.mp4'\n");
 	}
+
+	@Test
+	void 영상_경로는_공개_설정에_맞는_폴더로_바꾸고_영상_폴더_밖은_거절한다() {
+		assertThat(RecordingFiles.videoPathFor("vod/a.mp4", Visibility.PRIVATE)).isEqualTo("private/a.mp4");
+		assertThat(RecordingFiles.videoPathFor("private/a.mp4", Visibility.PUBLIC)).isEqualTo("vod/a.mp4");
+		assertThat(RecordingFiles.videoPathFor("vod/a.mp4", Visibility.PUBLIC)).isEqualTo("vod/a.mp4");
+		assertThat(RecordingFiles.counterpart("vod/a.mp4")).isEqualTo("private/a.mp4");
+		assertThat(RecordingFiles.counterpart("private/a.mp4")).isEqualTo("vod/a.mp4");
+
+		assertThat(RecordingFiles.counterpart(null)).isNull();
+		assertThat(RecordingFiles.counterpart("raw/live/1/a.mp4")).isNull();
+		assertThat(RecordingFiles.counterpart("vod/")).isNull();
+		assertThat(RecordingFiles.counterpart("vod/..")).isNull();
+		assertThat(RecordingFiles.counterpart("vod/../x.mp4")).isNull();
+		assertThat(RecordingFiles.counterpart("private/sub/a.mp4")).isNull();
+		assertThat(RecordingFiles.videoPathFor("thumbnails/1.jpg", Visibility.PUBLIC)).isNull();
+	}
 }

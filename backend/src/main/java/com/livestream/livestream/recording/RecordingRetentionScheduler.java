@@ -13,7 +13,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 다시보기 영상 보관 (DESIGN §4.10): 매일 04:00(KST) {@code READY AND created_at < now - retention-days} →
- * FILE_DELETED + file_deleted_at, 커밋 뒤 vod 파일 삭제. 기록(방송 · 댓글)은 남는다.
+ * FILE_DELETED + file_deleted_at, 커밋 뒤 영상 파일 삭제({@code vod/} · {@code private/} 둘 다 본다). 기록(방송 · 댓글)은 남는다.
  */
 @Slf4j
 @Component
@@ -44,7 +44,7 @@ public class RecordingRetentionScheduler {
 					.map(r -> {
 						String filePath = r.getFilePath();
 						r.markFileDeleted(now);
-						AfterCommit.run("보관 만료 vod 삭제", () -> files.deleteQuietly(filePath));
+						AfterCommit.run("보관 만료 영상 삭제", () -> files.deleteVideoQuietly(filePath));
 						return true;
 					}).orElse(false));
 			if (Boolean.TRUE.equals(done)) {

@@ -1,5 +1,6 @@
 server:
   port: 8080
+  forward-headers-strategy: native # Caddy 뒤에서 클라이언트 IP를 X-Forwarded-For 로 받는다 (DESIGN §4.7 시도 횟수 제한)
 spring:
   application:
     name: livestream
@@ -47,6 +48,10 @@ app:
     access-minutes: 15
     refresh-days: 14
     refresh-rotation-grace-seconds: 10
+  auth:
+    login-max-failures: 10
+    signup-max-attempts: 10
+    attempt-window-seconds: 300
   seed:
     enabled: false
   public-url: http://localhost

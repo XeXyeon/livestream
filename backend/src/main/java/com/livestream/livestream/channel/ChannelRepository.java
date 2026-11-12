@@ -10,6 +10,9 @@ public interface ChannelRepository extends JpaRepository<Channel, Long> {
 
 	Optional<Channel> findByMemberId(Long memberId);
 
+	/** 알림 위젯 SSE 연결(WID-1). widget_key 는 유니크. */
+	Optional<Channel> findByWidgetKey(String widgetKey);
+
 	/**
 	 * 수정 · 재발급용. 행을 잠가 같은 채널의 PATCH · 재발급이 직렬로 돈다(전체 컬럼 UPDATE가 옛 키를 되살리는 갱신 유실 방지).
 	 * member_id 는 unique 라 gap lock 없이 행 잠금만 잡는다.

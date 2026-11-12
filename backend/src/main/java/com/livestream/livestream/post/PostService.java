@@ -2,6 +2,7 @@ package com.livestream.livestream.post;
 
 import com.livestream.livestream.channel.Channel;
 import com.livestream.livestream.channel.ChannelRepository;
+import com.livestream.livestream.comment.CommentCounter;
 import com.livestream.livestream.common.dto.PageResponse;
 import com.livestream.livestream.common.error.ApiException;
 import com.livestream.livestream.common.error.ErrorCode;
@@ -11,6 +12,7 @@ import com.livestream.livestream.post.dto.PostResponse;
 import com.livestream.livestream.post.dto.PostSummary;
 import com.livestream.livestream.post.dto.PostUpdateRequest;
 import com.livestream.livestream.post.dto.PostWriteRequest;
+import java.util.Map;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -33,6 +35,7 @@ public class PostService {
 
 	private final PostRepository postRepository;
 	private final ChannelRepository channelRepository;
+	private final CommentCounter commentCounter;
 
 	@Transactional(readOnly = true)
 	public PageResponse<PostSummary> list(Long channelId, Integer page, Integer size) {
@@ -40,8 +43,9 @@ public class PostService {
 			throw new ApiException(ErrorCode.CHANNEL_NOT_FOUND);
 		}
 		Page<Post> posts = postRepository.findByChannelId(channelId, PageResponse.pageable(page, size, LATEST));
+		Map<Long, Long> comments = commentCounter.ofPosts(posts.map(Post::getId).getContent());
 		return PageResponse.of(posts, p -> new PostSummary(p.getId(), p.getTitle(), preview(p.getContent()),
-				commentCount(p), p.getCreatedAt(), p.getUpdatedAt()));
+				comments.getOrDefault(p.getId(), 0L), p.getCreatedAt(), p.getUpdatedAt()));
 	}
 
 	@Transactional(readOnly = true)
@@ -93,9 +97,9 @@ public class PostService {
 				post.getTitle(), post.getContent(), commentCount(post), post.getCreatedAt(), post.getUpdatedAt(), isOwner);
 	}
 
-	/** TODO(CMT-1): 삭제 표시 안 된 댓글 수. */
+	/** 삭제 표시 안 된 댓글 수(대댓글 포함). */
 	private long commentCount(Post post) {
-		return 0;
+		return post.getId() == null ? 0 : commentCounter.ofPost(post.getId());
 	}
 
 	private static String title(String raw) {

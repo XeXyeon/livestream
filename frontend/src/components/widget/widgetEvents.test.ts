@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { WIDGET_REOPEN_MS, subscribeWidgetEvents, widgetEventsUrl } from './widgetEvents'
+import type { WidgetStatus } from './widgetEvents'
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  readyState = 0
+  onerror: ((event: Event) => void) | null = null
+  closed = false
+  private readonly listeners = new Map<string, ((event: Event) => void)[]>()
+  readonly url: string
+
+  constructor(url: string) {
+    this.url = url
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: (event: Event) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+
+  close() {
+    this.closed = true
+    this.readyState = 2
+  }
+
+  emit(type: string, data?: string, lastEventId = '') {
+    this.listeners.get(type)?.forEach((listener) => listener({ data, lastEventId } as MessageEvent))
+  }
+
+  fail(readyState: number) {
+    this.readyState = readyState
+    this.onerror?.(new Event('error'))
+  }
+}
+
+describe('subscribeWidgetEvents', () => {
+  let statuses: WidgetStatus[]
+  let donations: number[]
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeEventSource.instances = []
+    statuses = []
+    donations = []
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const subscribe = (fetchStatus: (url: string) => Promise<number | null>) => subscribeWidgetEvents('k/ey', {
+    onDonation: (d) => donations.push(d.id),
+    onStatus: (s) => statuses.push(s),
+    createEventSource: (url) => new FakeEventSource(url) as unknown as EventSource,
+    fetchStatus,
+  })
+
+  it('위젯 키를 인코딩한 주소로 구독하고, ready · donation을 전달한다', () => {
+    subscribe(() => Promise.resolve(200))
+    const source = FakeEventSource.instances[0]
+    expect(source.url).toBe(widgetEventsUrl('k/ey'))
+    expect(source.url).toBe('/api/public/widget/k%2Fey/events')
+
+    source.emit('ready', '{"channelId":3,"version":1}')
+    source.emit('donation', JSON.stringify({ version: 1, type: 'donation', id: 9, broadcastId: 1, donor: { nickname: 'a' }, amount: 1000, message: null, createdAt: 'x' }))
+    source.emit('donation', 'broken')
+    expect(statuses).toEqual(['connecting', 'connected'])
+    expect(donations).toEqual([9])
+  })
+
+  it('브라우저가 스스로 재연결하는 끊김(CONNECTING)은 새 연결을 만들지 않는다(Last-Event-ID는 브라우저 몫)', () => {
+    const fetchStatus = vi.fn(() => Promise.resolve(200))
+    subscribe(fetchStatus)
+    FakeEventSource.instances[0].fail(0)
+    expect(statuses.at(-1)).toBe('reconnecting')
+    expect(fetchStatus).not.toHaveBeenCalled()
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
+  it('닫힌 연결이 404(옛 키)면 "키가 바뀜"으로 멈추고 다시 열지 않는다', async () => {
+    subscribe(() => Promise.resolve(404))
+    FakeEventSource.instances[0].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS * 2)
+    expect(statuses.at(-1)).toBe('invalid-key')
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
+  it('닫힌 연결이 서버 오류(502)면 잠시 뒤 새 연결을 연다', async () => {
+    subscribe(() => Promise.resolve(502))
+    FakeEventSource.instances[0].fail(2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(statuses.at(-1)).toBe('reconnecting')
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(2)
+  })
+
+  it('닫힌 뒤 새로 열 때는 마지막 donation id를 ?lastEventId=로 붙인다(처음 열 때는 붙이지 않음)', async () => {
+    const donation = (id: number) => JSON.stringify({ version: 1, type: 'donation', id, broadcastId: 1, donor: { nickname: 'a' }, amount: 1000, message: null, createdAt: 'x' })
+    subscribe(() => Promise.resolve(200))
+    const first = FakeEventSource.instances[0]
+    expect(first.url).toBe(widgetEventsUrl('k/ey'))
+    expect(first.url).not.toContain('?')
+
+    first.emit('ready', '{}')
+    first.emit('donation', donation(9), '9')
+    first.emit('donation', donation(12), '12')
+    first.fail(2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(FakeEventSource.instances[1].url).toBe(`${widgetEventsUrl('k/ey')}?lastEventId=12`)
+
+    // 새 연결에서 donation 없이 다시 닫혀도 마지막 id를 그대로 넘긴다
+    FakeEventSource.instances[1].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS * 2) // ready 없이 또 닫혀 두 번째는 10초 뒤
+    expect(FakeEventSource.instances[2].url).toBe(widgetEventsUrl('k/ey', '12'))
+  })
+
+  it('구독을 끊으면 연결을 닫고 예약된 재연결도 취소한다', async () => {
+    const unsubscribe = subscribe(() => Promise.resolve(502))
+    FakeEventSource.instances[0].fail(2)
+    await vi.advanceTimersByTimeAsync(0)
+    unsubscribe()
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(1)
+  })
+
+  it('서버 오류가 이어지면 5초 → 10초로 늘려 다시 열고, 상태 확인이 200이면 첫 번째는 바로 연다', async () => {
+    const statuses = [502, 502, 200]
+    subscribe(() => Promise.resolve(statuses.shift() ?? 502))
+    FakeEventSource.instances[0].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(2)
+    FakeEventSource.instances[1].fail(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(WIDGET_REOPEN_MS)
+    expect(FakeEventSource.instances).toHaveLength(3)
+
+    FakeEventSource.instances[2].emit('ready', '{}')
+    FakeEventSource.instances[2].fail(2) // ready 뒤 실패 횟수가 초기화돼 200이면 바로
+    await vi.advanceTimersByTimeAsync(0)
+    expect(FakeEventSource.instances).toHaveLength(4)
+  })
+})

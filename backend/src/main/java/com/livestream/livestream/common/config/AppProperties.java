@@ -1,6 +1,7 @@
 package com.livestream.livestream.common.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /**
  * application.yaml 의 {@code app.*} 설정값 (DESIGN §4.1). 환경변수 {@code APP_…} 로 덮어쓴다.
@@ -17,8 +18,40 @@ public record AppProperties(
 		Toss toss,
 		Jwt jwt,
 		Seed seed,
-		String publicUrl
+		String publicUrl,
+		Auth auth
 ) {
+
+	/** auth 가 없으면(설정이 비었거나 테스트에서 직접 만들 때) 설계 기본값을 쓴다. */
+	@ConstructorBinding
+	public AppProperties {
+		if (auth == null) {
+			auth = new Auth(10, 10, 300);
+		}
+	}
+
+	/** auth 설정 없이 만드는 기존 생성자(테스트 · 호환용). */
+	public AppProperties(Grid grid, Broadcast broadcast, Thumbnail thumbnail, Recording recording, Uploads uploads,
+			Mediamtx mediamtx, Toss toss, Jwt jwt, Seed seed, String publicUrl) {
+		this(grid, broadcast, thumbnail, recording, uploads, mediamtx, toss, jwt, seed, publicUrl, null);
+	}
+
+	/**
+	 * 로그인 · 가입 시도 횟수 제한(DESIGN §4.7, AUTH-1#1).
+	 *
+	 * @param loginMaxFailures     로그인: IP+이메일당 창 안에서 허용하는 실패 횟수
+	 * @param signupMaxAttempts    가입: IP당 창 안에서 허용하는 요청 횟수
+	 * @param attemptWindowSeconds 고정 창 길이(초)
+	 */
+	public record Auth(int loginMaxFailures, int signupMaxAttempts, int attemptWindowSeconds) {
+
+		/** 일부만 덮어써서 0이 되면 제한이 조용히 꺼지므로 기동 때 막는다. */
+		public Auth {
+			if (loginMaxFailures <= 0 || signupMaxAttempts <= 0 || attemptWindowSeconds <= 0) {
+				throw new IllegalArgumentException("app.auth.* 값은 모두 1 이상이어야 합니다");
+			}
+		}
+	}
 
 	/** @param threshold 이 동시 시청자 수부터 recommendedMode=grid */
 	public record Grid(int threshold) {

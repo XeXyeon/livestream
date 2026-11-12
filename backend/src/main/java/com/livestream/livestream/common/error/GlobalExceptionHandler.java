@@ -2,6 +2,7 @@ package com.livestream.livestream.common.error;
 
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -26,6 +28,13 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
 		ErrorCode code = e.getErrorCode();
 		return ResponseEntity.status(code.getStatus()).body(ErrorResponse.of(code, e.getMessage()));
+	}
+
+	@ExceptionHandler(TooManyRequestsException.class)
+	public ResponseEntity<ErrorResponse> handleTooManyRequests(TooManyRequestsException e) {
+		ErrorCode code = e.getErrorCode();
+		return ResponseEntity.status(code.getStatus()).header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+				.body(ErrorResponse.of(code, e.getMessage()));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
@@ -81,6 +90,11 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler({AccessDeniedException.class, AuthenticationException.class})
 	public void rethrowSecurity(Exception e) throws Exception {
 		throw e;
+	}
+
+	/** 클라이언트가 끊은 비동기 응답(SSE 등): 쓸 수 없는 응답이므로 아무것도 쓰지 않고 로그도 남기지 않는다. */
+	@ExceptionHandler(AsyncRequestNotUsableException.class)
+	public void handleDisconnected(AsyncRequestNotUsableException e) {
 	}
 
 	@ExceptionHandler(Exception.class)

@@ -64,7 +64,7 @@
 |---|---|---|
 | `/api/*` | `backend:8080` | `flush_interval -1`(SSE) |
 | `/ws` | `backend:8080` | WebSocket 업그레이드 |
-| `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`) | 경로 끝으로 분기 |
+| `/live/*` | `mediamtx:8889`(`/whip`, `/whep` 끝) · `mediamtx:8888`(`.m3u8`, `.mp4`, `.m4s`, `.ts`) · **그 외는 `/*`와 같은 프론트 서빙** | 경로 끝으로 분기. SPA 시청 화면 `/live/:channelId`(§6.3)와 접두어가 겹치므로, 미디어 모양이 아닌 경로는 404가 아니라 index.html을 내준다(정적 모드 `try_files`, dev 모드 Vite 프록시 모두). 주소창으로 바로 열거나 새로고침해도 시청 화면이 떠야 한다(OPS-3#1) |
 | `/vod/*` | 정적 `/srv/media/vod` | mp4, Range. **공개 영상만** 이 폴더에 있다. 비공개 영상은 `/srv/media/private`에 있어 Caddy가 내주지 않는다(§4.10) |
 | `/uploads/*` | 정적 `/srv/uploads` | 썸네일 |
 | `/tracker` | `tracker:8000` | WebSocket |
@@ -118,8 +118,8 @@ SPRING_DATASOURCE_PASSWORD=livestream
 JWT_SECRET=32바이트_이상
 APP_MEDIAMTX_API_URL=http://mediamtx:9997
 APP_MEDIAMTX_INTERNAL_TOKEN=${INTERNAL_TOKEN}
-APP_TOSS_CLIENT_KEY=test_ck_...
-APP_TOSS_SECRET_KEY=test_sk_...
+APP_TOSS_CLIENT_KEY=test_gck_...   # 결제위젯 키(gck · gsk). ck · sk(API 개별 연동 키)는 결제창 SDK용이라 위젯에 못 쓴다(§4.13)
+APP_TOSS_SECRET_KEY=test_gsk_...
 APP_GRID_THRESHOLD=100
 APP_SEED_ENABLED=false
 APP_RECORDING_RETENTION_DAYS=30
@@ -154,6 +154,8 @@ livestream/
 | `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
 | `app.jwt.secret` / `app.jwt.access-minutes` / `app.jwt.refresh-days` | — / 15 / 14 | 기존 `custom.jwt.secret`을 `app.jwt.secret`으로 옮긴다 |
 | `app.seed.enabled` | false | 시드 투입 |
+| `app.auth.login-max-failures` / `app.auth.signup-max-attempts` / `app.auth.attempt-window-seconds` | 10 / 10 / 300 | 로그인 · 가입 시도 횟수 제한(§4.7). 로그인은 IP+이메일당 실패 횟수, 가입은 IP당 요청 횟수를 고정 창으로 센다 |
+| `server.forward-headers-strategy` | `native` | Caddy 뒤에서 클라이언트 IP를 `X-Forwarded-For`로 받는다(§4.7 시도 횟수 제한). Tomcat `RemoteIpValve`의 기본 `internal-proxies`(사설 대역)만 신뢰하므로 compose 네트워크의 Caddy는 신뢰, 그 밖은 무시 |
 | `spring.task.scheduling.pool.size` | 4 | 기본 스케줄러가 스레드 1개라 썸네일 캡처(방송당 최대 10초)가 유예 종료 · 보관 정리 스케줄러를 막지 않게 |
 | `app.public-url` | `http://localhost` | 안내 문자열(WHIP URL 등)에 사용 |
 
@@ -182,18 +184,18 @@ seed/        SeedRunner
 계층: Controller(요청 검증 · DTO) → Service(규칙 · 트랜잭션 · 권한) → Repository(JPA). 엔티티는 Lombok `@Getter`, 생성자는 정적 팩토리, setter 없음.
 
 ### 4.3 테이블 · 엔티티
-공통 컬럼: `id BIGINT AUTO_INCREMENT PK`, `created_at DATETIME(6)`, `updated_at DATETIME(6)` (`@CreatedDate`/`@LastModifiedDate`, JPA Auditing). 문자열은 `VARCHAR`, enum은 `@Enumerated(STRING)`. 유니크 · check는 `@Table(uniqueConstraints)` · `@Check`로.
+공통 컬럼: `id BIGINT AUTO_INCREMENT PK`, `created_at DATETIME(6)`, `updated_at DATETIME(6)` (`@CreatedDate`/`@LastModifiedDate`, JPA Auditing). 문자열은 `VARCHAR`, enum은 `@Enumerated(STRING)`. 유니크 · check는 `@Table(uniqueConstraints)` · `@Check`로. 단, MySQL은 `ON DELETE CASCADE` FK 컬럼이 들어간 CHECK를 거부하므로(ERROR 3823) 그런 규칙은 엔티티 생성 메서드로 지킨다(comment 참고).
 
 | 테이블 | 컬럼 | 제약 |
 |---|---|---|
-| `member` | `email VARCHAR(255)`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt |
+| `member` | `email VARCHAR(255) COLLATE utf8mb4_bin`, `password_hash VARCHAR(100)`, `nickname VARCHAR(20)` | unique(email), unique(nickname). 비밀번호 BCrypt. **email은 `utf8mb4_bin`**(`@Column(columnDefinition = "VARCHAR(255) COLLATE utf8mb4_bin")`, AUTH-1#4): MySQL 8 기본 `utf8mb4_0900_ai_ci`는 악센트 · 전각 · ß/ss를 같게 보아 `findByEmail`이 다른 글자의 이메일을 같은 회원으로 잡고 로그인 제한 키(§4.7)와 어긋난다. 가입 · 로그인이 `strip` + 소문자로 정규화하므로 bin이어도 대소문자 문제는 없다. `ddl-auto=update`는 기존 컬럼의 콜레이션을 바꾸지 않으므로 이미 만들어진 로컬 DB는 `ALTER TABLE member MODIFY email VARCHAR(255) COLLATE utf8mb4_bin NOT NULL`을 손으로 하거나 볼륨을 지운다(운영 DB는 OPS-5 전이라 없음) |
 | `refresh_token` | `member_id FK`, `token_hash CHAR(64)`, `expires_at`, `revoked_at NULL`, `replaced_by_id BIGINT NULL` | **unique(token_hash)**(AUTH-1에서 index → unique로 바꿈: 해시 조회 시 gap lock 데드락 방지). 토큰 원문은 쿠키에만, DB는 SHA-256. `replaced_by_id`는 회전으로 revoke됐을 때 새 토큰 id(로그아웃 revoke는 null) |
 | `channel` | `member_id FK`, `name VARCHAR(30)`, `description VARCHAR(500)`, `stream_key CHAR(32)`, `widget_key CHAR(32)`, `auto_publish_recording BOOLEAN default true`, `title VARCHAR(100)`, `category VARCHAR(20)` | unique(member_id), unique(stream_key), unique(widget_key). 가입 시 자동 생성(name = nickname, title = "{nickname}의 방송", category = ETC) |
 | `broadcast` | `channel_id FK`, `title`, `category`, `thumbnail_path VARCHAR(255) NULL`, `status VARCHAR(20)`, `source VARCHAR(20)`, `started_at`, `disconnected_at NULL`, `ended_at NULL`, `deleted_at NULL` | index(channel_id, status), index(status, started_at). soft delete: 모든 조회는 `deleted_at IS NULL` |
 | `recording` | `broadcast_id FK`, `status VARCHAR(20)`, `file_path VARCHAR(255) NULL`, `duration_seconds INT NULL`, `size_bytes BIGINT NULL`, `visibility VARCHAR(10)`, `file_deleted_at NULL`, `failure_reason VARCHAR(255) NULL` | unique(broadcast_id). file_path는 `app.recording.dir` 기준 상대 경로로 **지금 파일이 있는 곳**을 가리킨다: PUBLIC이면 `vod/<uuid>.mp4`, PRIVATE면 `private/<uuid>.mp4`(§4.10) |
 | `recording_segment` | `recording_id FK`, `file_path VARCHAR(255)`, `sequence INT` | 조각 도착 순서 |
 | `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
-| `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | check((recording_id IS NULL) <> (post_id IS NULL)). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
+| `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | 대상 하나 규칙 `(recording_id IS NULL) <> (post_id IS NULL)`은 **DB CHECK가 아니라 `Comment.onRecording` · `Comment.onPost` 생성 메서드로** 지킨다(생성자는 private; cascade FK 컬럼은 MySQL CHECK에 못 씀 — `da44053`). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
 | `donation` | `broadcast_id FK`, `channel_id FK`, `donor_member_id FK`, `amount INT`, `message VARCHAR(100) NULL`, `order_id CHAR(36)`, `payment_key VARCHAR(200) NULL`, `status VARCHAR(20)`, `approved_at NULL` | unique(order_id), unique(payment_key). index(broadcast_id, status), index(channel_id, status) |
 
 Enum:
@@ -215,6 +217,7 @@ Enum:
 | `EMAIL_DUPLICATED` · `NICKNAME_DUPLICATED` | 409 |
 | `BROADCAST_NOT_LIVE`(채팅 · 후원 · category 수정이 LIVE/DISCONNECTED가 아닐 때) · `BROADCAST_ALREADY_ENDED`(end API를 ENDED에 부를 때) · `RECORDING_NOT_READY` · `COMMENT_DEPTH_EXCEEDED` · `RECORDING_COMMENT_NOT_OPEN` | 409 |
 | `DONATION_AMOUNT_MISMATCH` · `DONATION_ALREADY_PROCESSED` · `PAYMENT_CONFIRM_FAILED` | 400 / 409 / 502 |
+| `TOO_MANY_REQUESTS`(로그인 · 가입 시도 횟수 초과, §4.7. 응답에 `Retry-After: <창이 끝날 때까지 남은 초>` 헤더) | 429 |
 
 ### 4.5 날짜 · 시각
 DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론트.
@@ -247,6 +250,11 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 로그아웃 `POST /api/auth/logout`(쿠키) → 그 회원의 refresh 토큰 **전부** revoke(`replaced_by_id` null) + 쿠키 삭제, 200. 다른 탭 · 기기도 다음 갱신부터 로그아웃된다. (access는 만료까지 유효 — 15분)
 - Access JWT(jjwt): `sub=memberId`, `nickname`, `channelId`, 만료 15분, HS256 `app.jwt.secret`. 헤더 `Authorization: Bearer`. `JwtAuthenticationFilter`가 `SecurityContext`에 `MemberPrincipal(id, nickname, channelId)` 설정. 컨트롤러는 `@CurrentMember MemberPrincipal`(커스텀 리졸버, 없으면 null).
 - **만료 · 잘못된 access 처리(AUTH-1#3 결정):** `Authorization` 헤더가 **있는데** 토큰이 만료 · 위조면 공개 경로라도 **401 `TOKEN_EXPIRED` / `TOKEN_INVALID`** 로 응답한다(필터에서 바로 `ErrorResponse` JSON). 헤더가 없으면 익명으로 통과. 이유: 프론트는 로그인 상태일 때만 헤더를 붙이므로, 만료를 조용히 익명 처리하면 `isOwner=false` 같은 잘못된 응답을 refresh 없이 쓰게 된다. 401을 주면 `apiFetch`의 "refresh 1회 후 재시도"가 그대로 동작한다. **예외: `/api/auth/**`는 필터가 검사하지 않는다** — 로그아웃 · 로그인 · refresh는 만료된 access가 헤더에 남아 있어도 처리돼야 한다(`apiFetch`가 `/auth/` 경로에서는 refresh 재시도를 하지 않으므로, 여기서 401을 주면 refresh 쿠키가 폐기되지 않은 채 로그아웃이 실패한다). BC-1(334dd03)에서 구현됨.
+- **시도 횟수 제한(AUTH-1#1 결정):** `auth/AuthRateLimiter` — `ChatRateLimiter`와 같은 고정 창 · 인메모리 · 서버 1대 가정, 지난 창은 스케줄러가 지운다. 한도는 §4.1 `app.auth.*`.
+  - 로그인: 키 = **클라이언트 IP + 정규화한 이메일**(`AuthService`의 `strip` + 소문자와 같은 규칙. 구현은 NFKD · 악센트 제거까지 접는데, `member.email`이 `utf8mb4_bin`이라(§4.3) DB 비교가 제한 키보다 엄격하므로 글자를 바꾼 이메일로 제한을 피하면서 같은 계정을 맞히는 경로는 없다). 창(300초) 안 **실패**가 `login-max-failures`(10)에 이르면 그 다음부터 429 `TOO_MANY_REQUESTS`. 검사는 DB 조회 · BCrypt 비교 **전에** 하고, 실패(`LOGIN_FAILED`)일 때만 세며, 성공하면 그 키의 카운터를 지운다. 이메일만 키로 쓰면 남의 계정을 잠글 수 있어 IP를 함께 쓴다(한 IP가 이메일을 바꿔 가며 찌르는 것은 막지 못한다 — 받아들인 한계).
+  - 가입: 키 = **클라이언트 IP**. 창 안 요청이 `signup-max-attempts`(10)에 이르면 429. 성공 · 실패를 가리지 않고 요청마다 센다(검증 전에 검사).
+  - 클라이언트 IP: `HttpServletRequest.getRemoteAddr()`. Caddy의 `reverse_proxy`는 `trusted_proxies`가 없으면 들어온 `X-Forwarded-*`를 버리고 실제 접속 IP만 `X-Forwarded-For`에 넣으며, Spring은 `server.forward-headers-strategy=native`로 그 값을 `getRemoteAddr()`에 반영한다(§4.1). backend 컨테이너는 compose에서 포트를 공개하지 않아 Caddy 말고는 닿지 않는다.
+  - 응답 형식은 §4.4 그대로(`message`: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"). 프론트는 분기 없이 `message`를 보여 준다. refresh · logout에는 제한을 두지 않는다(쿠키 기반이라 무차별 대입 대상이 아님).
 - Security: 세션 STATELESS, CSRF 비활성(쿠키는 `/api/auth` 경로 전용 + SameSite=Strict로 방어), `permitAll` 목록은 §4.8의 "누구나" 행. 그 외 `/api/**`는 인증 필요. `/api/internal/**`는 `InternalTokenFilter`(`X-Internal-Token` 비교)만.
 - `/swagger-ui/**`, `/v3/api-docs/**` 공개.
 
@@ -291,6 +299,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 - 게시글: 채널 주인만 작성 · 수정 · 삭제(물리 삭제, 댓글 cascade). 본문 텍스트(최대 5,000자).
 
 ### 4.13 후원 (`donation`, Toss 결제위젯 v2 · 테스트 키)
+- **키 종류(DON-1#2 결정):** 결제위젯 v2를 유지하고 키는 **결제위젯 테스트 키 `test_gck_…`(클라이언트) · `test_gsk_…`(시크릿)**를 쓴다. 개발자센터 가입만으로 보이는 API 개별 연동 키(`test_ck_` · `test_sk_`)는 결제창(구 SDK) · 브랜드페이용이라 위젯 SDK가 거부한다. 결제위젯 키는 전자결제 신청 뒤에 발급되므로, 그 전에는 토스 문서가 공개한 결제위젯 테스트 키(`test_gck_docs_…` / `test_gsk_docs_…`, docs.tosspayments.com API 키 문서)를 `.env`에 넣어 쓴다 — 코드 변경 없이 `.env`만 바꾸면 자기 키로 교체된다. 백엔드 confirm은 `Basic base64(secretKey + ':')`라 어느 키든 같다. 문서 공개 키로 한 테스트 결제는 자기 개발자센터 대시보드에 보이지 않는다(받아들임).
 1. `POST /api/broadcasts/{id}/donations` `{amount(1000~100000, 1000 단위 아님 허용), message(≤100, 선택)}` → 로그인 · 방송 LIVE/DISCONNECTED 검증 → `donation`(PENDING, `order_id = UUID`, channel_id = 방송 채널) → 201 `{donationId, orderId, amount, clientKey, orderName:"후원", customerName:<닉네임>}`.
 2. 프론트 결제위젯 결제 → 성공 콜백 `{paymentKey, orderId, amount}`.
 3. `POST /api/donations/confirm` `{paymentKey, orderId, amount}`(로그인, 본인 후원만):
@@ -320,7 +329,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 
 ### 4.15 공개 연동 SSE (`integration`)
 - `GET /api/public/widget/{widgetKey}/events`(인증 없음, `text/event-stream`): 위젯 키로 채널 조회(없으면 404). 연결 시 `event: ready` `data: {"channelId", "version":1}`. 이후 `event: donation`, `id: <donationId>`, `data: {"version":1,"id","type":"donation","broadcastId","donor":{"nickname"},"amount","message","createdAt"}`. 15초마다 `: ping` 주석.
-- `Last-Event-ID` 헤더가 오면 그 id 이후의 APPROVED 후원(채널 기준, DB 조회, 최대 100건)을 먼저 보낸다.
+- `Last-Event-ID` 헤더 **또는 쿼리 `?lastEventId=`**(둘 다 있으면 헤더 우선, 숫자가 아니면 무시)가 오면 그 id 이후의 APPROVED 후원(채널 기준, DB 조회, 최대 100건)을 먼저 보낸다. 쿼리를 받는 이유(FE-9#1): 브라우저 `EventSource`는 자동 재연결 때만 헤더를 붙이고, 프록시가 내려가 CLOSED가 된 뒤 프론트가 새 `EventSource`를 만들면 헤더가 없다. 프론트는 마지막으로 받은 `donation`의 `event.lastEventId`를 메모리에 기억해 다시 열 때 쿼리로 붙인다(§6.7 S11). 처음 열 때는 붙이지 않는다(옛 후원을 재생하지 않음).
 - `WidgetEventService`: 채널별 `SseEmitter` 목록, 위젯 키 재발급 시 그 채널 연결 모두 `complete()`.
 
 ### 4.16 REST 엔드포인트 요약 (`/api` 접두어)
@@ -353,7 +362,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러, 댓글 check 제약.
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
@@ -369,7 +378,7 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
 frontend/src/
 ├─ main.tsx · App.tsx(라우터 · QueryClient · 부트스트랩 refresh)
 ├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · types.ts(응답 타입 = §4.16)
-├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear) · player.ts(mode · stats)
+├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear)   ※ player.ts(mode · stats)는 두지 않는다 — 모드 · 통계는 Player 안의 로컬 상태(GRID-2). 다른 화면이 모드를 읽어야 할 때 store로 옮긴다
 ├─ media/      mixer.ts · whip.ts · whep.ts · gridPlayer.ts · devices.ts(기기 감지)
 ├─ ws/         stomp.ts(연결 · 구독 · 전송, 토큰 헤더)
 ├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · common/(Button · Input · Modal · Spinner · Thumbnail)
@@ -419,7 +428,12 @@ frontend/src/
 
 `media/whep.ts` — `class WhepPlayer { attach(video, url) ; close() ; onState(cb) }`: `addTransceiver('video', recvonly)` · `('audio', recvonly)`, offer → `POST url`(헤더 없음) → answer, `ontrack`으로 `video.srcObject`. 끊기면 `'waiting'`; `status: LIVE` 이벤트가 오면 재연결.
 
-`media/gridPlayer.ts` — `createGridPlayer(video, hlsUrl, { trackerUrl, onStats })`: `HlsJsP2PEngine`(p2p-media-loader) + `Hls({ lowLatencyMode: true, liveSyncDuration: 1.5 })`, `announceTrackers: [wss://<host>/tracker]`, swarm id = hlsUrl. 통계: `onChunkDownloaded(bytes, source: 'http'|'p2p')`, `onChunkUploaded(bytes)` → 누적 → `onStats({ httpBytes, p2pDownBytes, p2pUpBytes, peers })`. **GRID-1 PoC에서 API 이름을 실제 라이브러리 버전으로 맞춘다.**
+`media/gridPlayer.ts` — `createGridPlayer(video, hlsUrl, { trackerUrl, onStats })`: `HlsJsP2PEngine`(p2p-media-loader 2.3.x) + `Hls(GRID_HLS_CONFIG)`, `announceTrackers: [wss://<host>/tracker]`. 통계: `onChunkDownloaded(bytes, source: 'http'|'p2p')`, `onChunkUploaded(bytes)` → 누적 → `onStats({ httpBytes, p2pDownBytes, p2pUpBytes, peers })`. GRID-1 · GRID-2에서 정해진 것(구현 `1125b03` · `2db679b` 기준, 설계보다 우선):
+- **`GRID_HLS_CONFIG = { lowLatencyMode: false, liveSyncDuration: 6 }`**, 코어 `GRID_P2P_CORE_CONFIG = { highDemandTimeWindow: 2 }`. p2p-media-loader는 LL-HLS part를 P2P로 받지 않고, 재생 위치에서 highDemand 창(기본 15초) 안의 세그먼트는 곧바로 HTTP로 받는다. 그래서 그리드 모드는 지연(7~8초 예상)을 내주고 세그먼트 단위로 받아 피어 교환 틈을 만든다. 기본 모드(WHEP)는 영향 없음. `liveSyncDuration`을 직접 줘야 엔진이 `liveSyncDurationCount`를 크게 늘리지 않는다. 서버 쪽 LL-HLS 설정(§2.3)은 그대로이며, 같은 스트림을 그리드는 비LL로, 다른 소비자는 LL로 쓸 수 있다.
+- hls.js는 `lowLatencyMode`를 꺼도 서버가 `CAN-BLOCK-RELOAD=YES`면 재생목록을 `?_HLS_msn=…&_HLS_part=…`로 다시 받고, 그러면 P2P 엔진이 재생목록을 잃는다. 재생목록 응답 주소에서 `_HLS_msn` · `_HLS_part` · `_HLS_skip`을 빼는 playlist loader를 끼운다.
+- **swarm id = 경로 `/live/{channelId}/index.m3u8`**(`swarmIdOf(hlsUrl)`), 전체 URL이 아니다. 접속 호스트(localhost · 운영 도메인 · IP)가 달라도 같은 스웜이 되게 한다.
+- P2P 코어는 Vite `resolve.conditions`의 `p2pml:core-as-bundle`(폴리필 포함 번들)로 불러온다. 새 의존성 없음.
+- 재측정(기기 3대)에서 절감이 모자라면 재기획: **B** MediaMTX `hlsSegmentCount`를 늘리고(기본 7, 1초 세그먼트라 지금은 sync를 6초보다 키울 수 없음) sync 10초 이상, 또는 **C** §8의 비LL 변형(`hlsVariant` 변경). 둘 다 infra 변경이라 GRID-2 세션이 측정 결과와 함께 지휘 세션 · 설계자에게 올린다.
 
 `components/player/Player.tsx` — props `{ broadcast, initialMode }`. 상태 `mode: 'whep'|'grid'`(초기값 `recommendedMode`), `ModeToggle`로 전환(이전 플레이어 `close()` 후 생성), `PlayerStats`는 grid일 때 "서버 n MB · 피어 m MB · 절감 k% · 피어 p명". `status` 이벤트: `DISCONNECTED` → 오버레이 "방송인 연결이 끊겼습니다. 재연결을 기다리는 중…", `ENDED` → 종료 화면(`EndedView`: 안내 · 다시보기 버튼(recording READY면 활성, 아니면 "준비 중") · `RecommendList`).
 
@@ -432,7 +446,7 @@ frontend/src/
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**, **S10 Post**: §6.3.
-- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`; `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생.
+- **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`(CLOSED 뒤 다시 열 때 `?lastEventId=<마지막 donation id>`, §4.15); `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
 
 ## 7. 인프라 세부 (OPS-3 · OPS-5)
 - `backend/Dockerfile`: 현재 Dockerfile 유지 + 런타임 스테이지에 `RUN apk add --no-cache ffmpeg`.
@@ -444,10 +458,10 @@ frontend/src/
 ## 8. 미확인 위험 · PoC (구현 항목에서 먼저 확인)
 | 위험 | 어디서 | 안 되면 |
 |---|---|---|
-| LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 | GRID-1 | `hlsVariant: mpegts`/일반 fMP4 HLS(3~6초)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
+| LL-HLS 부분 세그먼트에서 p2p-media-loader가 피어 교환을 하는지 — **확인(GRID-1): part는 P2P로 안 받는다.** 클라이언트만 비LL로(`lowLatencyMode: false`, sync 6초, §6.5) 세그먼트 단위 교환으로 대응 중, 절감률은 GRID-2 재측정 대기 | GRID-1 → GRID-2 | 재측정이 모자라면 B(`hlsSegmentCount` 증가 + sync 10초 이상) 또는 C(`hlsVariant` 비LL 변형)로 그리드 모드만 전환, 기본 모드(WHEP)는 유지 |
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
-| OBS 브라우저 소스에서 `speechSynthesis` 동작 | WID-1 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
+| OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
 ## 9. 항목별 구현 지침 (로드맵 ID)
@@ -460,11 +474,13 @@ frontend/src/
 
 ### OPS-3 로컬 실행 환경
 - 읽을 절: §2.1~2.4, §7. `infra/compose.yaml`, `compose.dev.yaml`, `Caddyfile`, `mediamtx.yml`, `tracker/`, `.env.example`. `application.yaml`에 §4.1 `app.*` 전부(기본값) + `AppProperties`(`@ConfigurationProperties("app")`).
-- 완료: `docker compose -f infra/compose.dev.yaml up`로 MySQL · MediaMTX · Caddy · tracker가 뜨고, IDE에서 backend 실행 후 `https://localhost/api/...`가 프록시되며, OBS로 `rtmp://localhost/live` + `1?user=obs&pass=x`가 MediaMTX에 닿는다(인증 콜백은 BC-1 전이라 `authMethod: internal`로 잠시 두고 주석으로 표시).
+- 완료: `docker compose -f infra/compose.dev.yaml up`로 MySQL · MediaMTX · Caddy · tracker가 뜨고, IDE에서 backend 실행 후 `https://localhost/api/...`가 프록시되며, OBS로 `rtmp://localhost/live` + `1?user=obs&pass=x`가 MediaMTX에 닿는다(인증 콜백은 BC-1 전이라 `authMethod: internal`로 잠시 두고 주석으로 표시). `https://localhost/live/<channelId>`를 주소창에 직접 입력하거나 새로고침해도 SPA가 뜬다(`/live/*` 블록의 마지막 handle이 프론트 서빙, §2.2).
 
 ### AUTH-1 회원가입 · 로그인 · 갱신 · 로그아웃
 - 읽을 절: §4.2 common/auth/member, §4.3 member · refresh_token · channel(자동 생성만, 나머지 채널 로직은 CH-1), §4.4, §4.7, §4.8의 공개 경로. `channel` 엔티티는 여기서 만든다(CH-1이 확장).
 - 완료: 가입 → 로그인 → `/members/me` → refresh 회전 → 로그아웃 후 refresh 401 통합 테스트. 중복 409 테스트.
+- 추가(AUTH-1#1): `AuthRateLimiter` 단위 테스트(`Clock` 주입 — 10회 실패 뒤 429, 성공 시 초기화, 창이 지나면 다시 허용, 다른 IP · 다른 이메일은 영향 없음) + 로그인 통합 테스트(11번째 실패가 429 · `Retry-After` 있음, 429일 때 BCrypt · DB 조회가 안 일어남은 로그나 mock으로). 가입은 IP당 11번째 요청 429. `X-Forwarded-For`를 사설 IP에서 보낸 요청이 그 값을 키로 쓰는지 테스트 1개(MockMvc `remoteAddr` 127.0.0.1 + 헤더).
+- 추가(AUTH-1#4): 통합 테스트(Testcontainers MySQL) — `victim@example.com` 가입 뒤 `vīctim@example.com` · 전각 `ｖictim@example.com` 로그인이 `LOGIN_FAILED`(회원을 못 찾음)이고, 가입도 중복 409가 아니라 새 회원이 된다(콜레이션이 bin임을 동작으로 확인).
 
 ### FE-1 프론트 기반
 - 읽을 절: §6.1~6.4, S7. `App.tsx` 라우터(모든 경로를 placeholder 페이지로), `api/client.ts`, `store/auth.ts`, `Header`(로그인 상태 · 방송하기 버튼 → `/studio`), `Protected`, Login · Signup 페이지.
@@ -523,9 +539,9 @@ frontend/src/
 - 읽을 절: §6.7 S2 DonateDialog · DonationBanner, S8 받은 후원, §4.13 1~3. Toss 결제위젯 v2 SDK(테스트 클라이언트 키), 결제 성공 URL은 `/live/:channelId?payment=success&paymentKey=&orderId=&amount=`로 돌아와 confirm 호출.
 - 완료: 테스트 카드로 결제 → 채팅 강조 + 배너 + 스튜디오 알림, 마이페이지 방송별 합계.
 
-### WID-1 위젯 키 SSE · 알림 위젯
-- 읽을 절: §4.15, §6.7 S11, §8 TTS 위험. README 연동 문서 초안(이벤트 형식 · curl 예시)은 `docs/`가 아니라 README 절로(DOC-2가 합침) — 이 항목에서는 카드에 적어 둔다.
-- 완료: curl로 SSE 수신, 후원 시 위젯에 카드 + TTS(일반 Chrome), OBS 브라우저 소스 TTS 동작 여부 카드에 기록, `Last-Event-ID` 복구.
+### WID-1 위젯 키 SSE (백엔드)
+- 읽을 절: §4.15. README 연동 문서 초안(이벤트 형식 · curl 예시)은 `docs/`가 아니라 README 절로(DOC-2가 합침) — 이 항목에서는 카드에 적어 둔다. 알림 위젯 S11 화면 · TTS는 FE-9(2026-11-11 분리).
+- 완료: curl로 SSE 수신(ready → donation, 15초 ping), `Last-Event-ID` 복구, 위젯 키 재발급 시 연결 종료, 없는 키 404 통합 테스트.
 
 ### REC-1 녹화 세그먼트 수집 · 병합 · 정리
 - 읽을 절: §4.10, §4.3 recording · recording_segment, `FfmpegRunner`, §2.3 record 설정.
@@ -558,6 +574,10 @@ frontend/src/
 ### OPS-5 배포
 - 읽을 절: §2, §7, ARCH-1 카드 "맥미니 대체 조사"(호스트는 사용자 결정 대기). 운영 `compose.yaml`로 전체 기동, 도메인 HTTPS, 포트 개방, `webrtcAdditionalHosts`.
 - 완료: 외부 기기(LTE)에서 가입 · 송출 · 시청 · 채팅이 동작. 서버 재시작 후 데이터 유지 확인.
+
+### FE-9 알림 위젯 S11 · TTS PoC
+- 읽을 절: §6.3 `/widget/:widgetKey`, §6.7 S11, §4.15(이벤트 형식), §8 TTS 위험. WID-1 카드 "API · 스키마 상세"(같은 후원이 두 번 올 수 있는 경우).
+- 완료: ① `/widget/<key>`를 열면 레이아웃 없이 투명 배경으로 `EventSource` 구독, `donation` 이벤트에 카드 6초 표시 + `speechSynthesis`(한국어 음성, 큐 순차 재생) ② 같은 후원 `id`가 두 번 와도 한 번만 표시(vitest, 이벤트 핸들러 단위) ③ 끊기면 브라우저 `EventSource` 자동 재연결에 맡기되(그때는 브라우저가 `Last-Event-ID`를 보냄), **CLOSED가 되어 새 `EventSource`를 만들 때는 마지막 `donation`의 `event.lastEventId`를 `?lastEventId=`로 붙인다**(FE-9#1; 메모리만 — 페이지를 새로 열면 재생하지 않음, 그 사이 후원은 채팅 · 마이페이지에는 남음). 테스트: 연결 종료 뒤 재개 시 요청 주소에 쿼리가 붙는지(vitest, EventSource mock), 백엔드는 쿼리로 재전송되는 통합 테스트 1개 + 헤더 · 쿼리 둘 다일 때 헤더 우선 ④ 옛 키(404)는 "위젯 키가 바뀌었습니다" 문구 ⑤ 일반 Chrome 창에서 TTS 동작 확인, **OBS 브라우저 소스에서 TTS 동작 여부를 카드에 기록**(안 되면 §8의 대응: 일반 Chrome 창 + OBS 창 캡처 안내를 S5 위젯 설정 문구로) ⑥ README 연동 절에 넣을 안내 문구(위젯 주소 · OBS 설정 · 안 될 때)를 카드에 적는다(DOC-2가 합침).
 
 ### DOC-2 README
 - 읽을 절: PLAN-1 카드 "확정 사항 14"(시연 12단계) · §1 체크 대응 · §4.15 연동 문서. 절: 서비스 URL · 테스트 계정 · 로컬 실행 · 운영 배포 · 기능 확인 절차(12단계, 각 단계에 체크 항목 표기) · 소유자 검증 · 멱등 테스트 이름 · 공개 연동 문서 · 아키텍처 요약(이 문서 링크).

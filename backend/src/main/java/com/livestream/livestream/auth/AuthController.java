@@ -8,6 +8,7 @@ import com.livestream.livestream.common.config.AppProperties;
 import com.livestream.livestream.common.error.ApiException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.time.Duration;
@@ -35,16 +36,17 @@ public class AuthController {
 	private final AuthService authService;
 	private final AppProperties props;
 
-	@Operation(summary = "회원가입", description = "채널이 함께 자동 생성된다. 이메일 · 닉네임 중복은 409.")
+	@Operation(summary = "회원가입", description = "채널이 함께 자동 생성된다. 이메일 · 닉네임 중복은 409. IP당 시도 횟수 초과는 429.")
 	@PostMapping("/signup")
-	public ResponseEntity<SignupResponse> signup(@Valid @RequestBody SignupRequest request) {
-		return ResponseEntity.status(HttpStatus.CREATED).body(new SignupResponse(authService.signup(request)));
+	public ResponseEntity<SignupResponse> signup(@Valid @RequestBody SignupRequest request, HttpServletRequest http) {
+		return ResponseEntity.status(HttpStatus.CREATED)
+				.body(new SignupResponse(authService.signup(request, http.getRemoteAddr())));
 	}
 
-	@Operation(summary = "로그인", description = "access 토큰은 본문, refresh 토큰은 HttpOnly 쿠키로 내려간다.")
+	@Operation(summary = "로그인", description = "access 토큰은 본문, refresh 토큰은 HttpOnly 쿠키로 내려간다. IP+이메일당 실패 횟수 초과는 429(Retry-After).")
 	@PostMapping("/login")
-	public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-		AuthResult result = authService.login(request);
+	public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest http) {
+		AuthResult result = authService.login(request, http.getRemoteAddr());
 		return withRefreshCookie(result);
 	}
 
