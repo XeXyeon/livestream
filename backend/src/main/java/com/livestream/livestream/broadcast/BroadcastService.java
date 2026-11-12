@@ -12,6 +12,7 @@ import com.livestream.livestream.channel.ChannelRepository;
 import com.livestream.livestream.channel.LiveBroadcastLookup;
 import com.livestream.livestream.channel.dto.CategoryResponse;
 import com.livestream.livestream.channel.dto.MyChannelResponse;
+import com.livestream.livestream.chat.BroadcastEventPublisher;
 import com.livestream.livestream.chat.ViewerCounter;
 import com.livestream.livestream.comment.CommentCounter;
 import com.livestream.livestream.comment.CommentRepository;
@@ -68,6 +69,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	private final BroadcastLifecycleService lifecycle;
 	private final RecommendationService recommendationService;
 	private final ViewerCounter viewerCounter;
+	private final BroadcastEventPublisher eventPublisher;
 	private final FollowRepository followRepository;
 	private final DonationRepository donationRepository;
 	private final AppProperties props;
@@ -147,6 +149,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	/**
 	 * PATCH /broadcasts/{id} (§4.6): LIVE · DISCONNECTED 면 방송과 채널 방송 정보를 둘 다 갱신한다(다음 방송 · 재연결 때도 유지).
 	 * ENDED 면 title 만 바꾸고 category 가 오면 409 BROADCAST_NOT_LIVE.
+	 * 진행 중 방송의 값이 실제로 바뀌면 커밋 뒤 토픽에 {@code info} 이벤트를 보낸다(§4.14, FE-5#1). 같은 값이면 보내지 않는다.
 	 */
 	@Transactional
 	public BroadcastDetail update(MemberPrincipal me, Long id, BroadcastUpdateRequest request) {
@@ -154,8 +157,15 @@ public class BroadcastService implements LiveBroadcastLookup {
 		String title = request.title() == null ? null : requireTitle(request.title());
 		Category category = request.category();
 		if (b.getStatus().isOngoing()) {
+			boolean changed = (title != null && !title.equals(b.getTitle()))
+					|| (category != null && category != b.getCategory());
 			b.updateInfo(title, category);
 			b.getChannel().updateInfo(null, null, title, category, null);
+			if (changed) {
+				String newTitle = b.getTitle();
+				Category newCategory = b.getCategory();
+				AfterCommit.run("정보 이벤트", () -> eventPublisher.info(id, newTitle, newCategory, Instant.now()));
+			}
 		} else {
 			if (category != null) {
 				throw new ApiException(ErrorCode.BROADCAST_NOT_LIVE, "지난 방송은 카테고리를 바꿀 수 없습니다");
