@@ -107,6 +107,7 @@ export default function MyBroadcastRow({ item }: { item: MyBroadcastItem }) {
         <Button label="삭제" variant="destructive" size="sm" onClick={() => setConfirmOpen(true)} />
       </div>
       <AlertDialog
+        cancelLabel="취소"
         isOpen={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="방송을 삭제할까요?"

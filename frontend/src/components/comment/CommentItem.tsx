@@ -73,6 +73,7 @@ export default function CommentItem({ comment, memberId, onReply, onUpdate, onDe
       )}
       {error && <p role="alert" className="mt-1 text-sm text-error">{error}</p>}
       <AlertDialog
+        cancelLabel="취소"
         isOpen={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="댓글을 삭제할까요?"

@@ -93,6 +93,7 @@ export default function Post() {
       {error && <Banner role="alert" status="error" title={error} />}
       <CommentList target={{ kind: 'post', id: post.id }} count={post.commentCount} />
       <AlertDialog
+        cancelLabel="취소"
         isOpen={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="게시글을 삭제할까요?"
