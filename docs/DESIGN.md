@@ -179,6 +179,7 @@ comment/     Comment · CommentRepository · CommentService · CommentController
 post/        Post · PostRepository · PostService · PostController
 donation/    Donation · DonationStatus · DonationRepository · DonationService · TossPaymentsClient · DonationController
 integration/ WidgetEventController(SSE) · WidgetEventService
+follow/      Follow · FollowRepository · FollowService · FollowController · dto(FollowStatusResponse · FollowedChannelResponse)
 seed/        SeedRunner
 ```
 계층: Controller(요청 검증 · DTO) → Service(규칙 · 트랜잭션 · 권한) → Repository(JPA). 엔티티는 Lombok `@Getter`, 생성자는 정적 팩토리, setter 없음.
@@ -197,6 +198,7 @@ seed/        SeedRunner
 | `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
 | `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | 대상 하나 규칙 `(recording_id IS NULL) <> (post_id IS NULL)`은 **DB CHECK가 아니라 `Comment.onRecording` · `Comment.onPost` 생성 메서드로** 지킨다(생성자는 private; cascade FK 컬럼은 MySQL CHECK에 못 씀 — `da44053`). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
 | `donation` | `broadcast_id FK`, `channel_id FK`, `donor_member_id FK`, `amount INT`, `message VARCHAR(100) NULL`, `order_id CHAR(36)`, `payment_key VARCHAR(200) NULL`, `status VARCHAR(20)`, `approved_at NULL` | unique(order_id), unique(payment_key). index(broadcast_id, status), index(channel_id, status) |
+| `follow` | `member_id FK`(팔로우하는 회원), `channel_id FK`(팔로우 대상 채널) | **unique(member_id, channel_id)**, index(channel_id)(팔로워 수). FK on delete cascade(member · channel). 자기 채널 팔로우 금지는 DB가 아니라 `FollowService`가 검사(FOLLOW-1). `created_at`이 팔로우한 시각 |
 
 Enum:
 - `Category { GAME("게임"), TALK("토크"), MUSIC("음악"), STUDY("공부"), ETC("기타") }` — 응답에는 `code`와 `label` 둘 다.
@@ -270,6 +272,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | 댓글 작성 | 로그인. 다시보기 댓글은 recording READY/FILE_DELETED(=방송 ENDED)이고 PUBLIC(PRIVATE는 주인만) |
 | 댓글 수정 · 삭제 | `comment.member_id == me`만(채널 주인도 남의 댓글 불가) |
 | 채팅 쓰기, 후원 생성 · 승인 | 로그인 + 방송 LIVE/DISCONNECTED |
+| 채널 팔로우 · 해제, 내 팔로우 목록 | 로그인. 자기 채널은 팔로우 불가(400 `VALIDATION_ERROR`) |
 검증 헬퍼: `OwnershipGuard.requireChannelOwner(channel, me)`, `requireAuthor(comment, me)`. 테스트 `OwnerAuthorizationTest`: 다른 회원 토큰으로 수정 · 종료 · 삭제 · 공개 설정 · 게시글 · 댓글 → 403.
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
@@ -337,18 +340,20 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 |---|---|---|
 | `POST /auth/signup` · `/login` · `/refresh` · `/logout` | §4.7 | |
 | `GET /members/me` | 로그인 | `{id, email, nickname, channelId, createdAt}` |
-| `GET /channels/{id}` | 누구나 | `{id, name, description, category, liveBroadcastId(null 가능), recordingCount, postCount, owner:{nickname}}` |
-| `GET /channels/me` | 로그인 | 위 + `{title, streamKey, widgetKey, autoPublishRecording, currentBroadcast:{id,status}, publish:{whipUrl, obsWhipUrl, obsWhipBearer, rtmpUrl, rtmpStreamKey}, widgetUrl}` — `whipUrl = {public-url}/live/{id}/whip`(브라우저가 `?src=pc`/`?src=mobile`을 붙임), `obsWhipUrl = whipUrl + "?src=obs"`, `obsWhipBearer = streamKey`(OBS "Bearer 토큰" 칸에 넣을 값 그대로), `rtmpUrl = rtmp://{host}/live`, `rtmpStreamKey = "{id}?user=obs&pass={streamKey}"`, `widgetUrl = {public-url}/widget/{widgetKey}` |
+| `GET /channels/{id}` | 누구나 | `{id, name, description, category, liveBroadcastId(null 가능), recordingCount, postCount, owner:{nickname}, followerCount, isFollowing}` — `isFollowing`은 로그인한 회원이 이 채널을 팔로우 중이면 true, 비로그인 · 자기 채널은 false(FOLLOW-1) |
+| `GET /channels/me` | 로그인 | 위(`isFollowing`은 항상 false) + `{title, streamKey, widgetKey, autoPublishRecording, currentBroadcast:{id,status}, publish:{whipUrl, obsWhipUrl, obsWhipBearer, rtmpUrl, rtmpStreamKey}, widgetUrl}` — `whipUrl = {public-url}/live/{id}/whip`(브라우저가 `?src=pc`/`?src=mobile`을 붙임), `obsWhipUrl = whipUrl + "?src=obs"`, `obsWhipBearer = streamKey`(OBS "Bearer 토큰" 칸에 넣을 값 그대로), `rtmpUrl = rtmp://{host}/live`, `rtmpStreamKey = "{id}?user=obs&pass={streamKey}"`, `widgetUrl = {public-url}/widget/{widgetKey}` |
 | `PATCH /channels/me` | 로그인 | `{name?, description?, title?, category?, autoPublishRecording?}` → 채널 |
 | `POST /channels/me/stream-key/rotate` | 로그인 | → `{streamKey}`. 라이브 중이면 `end` 후 재발급 |
 | `POST /channels/me/widget-key/rotate` | 로그인 | → `{widgetKey, widgetUrl}` |
+| `POST /channels/{id}/follow` · `DELETE /channels/{id}/follow` | 로그인 | → `FollowStatus {channelId, following, followerCount}`(둘 다 200). **멱등**: 이미 팔로우 중인데 POST, 팔로우 안 했는데 DELETE도 같은 모양으로 200(동시 요청의 unique 위반은 "이미 팔로우 중"으로 처리). 자기 채널은 400 `VALIDATION_ERROR`("자기 채널은 팔로우할 수 없습니다"), 없는 채널 404, 비로그인 401 |
 | `GET /channels/{id}/broadcasts?page=` | 누구나 | ENDED이고 recording READY·PUBLIC인 방송 기록(최신순) |
 | `GET /channels/{id}/posts?page=` · `POST /channels/me/posts` | 누구나 / 주인 | `{title, content}` |
 | `GET /broadcasts?status=LIVE&category=&page=&size=20` | 누구나 | `status`는 `LIVE`(기본) · `DISCONNECTED`만(ENDED는 400 `VALIDATION_ERROR` — 지난 방송은 `/recordings` · `/channels/{id}/broadcasts`). 시청자 수가 메모리 값이라 진행 중 방송을 모두 읽어 **메모리에서** 정렬 · 페이징: 시청자 수 내림차순 → startedAt 내림차순 → id 내림차순. `BroadcastSummary {id, title, category:{code,label}, thumbnailUrl, status, startedAt, viewerCount, channel:{id, name}}` |
-| `GET /broadcasts/{id}` | 누구나 | `BroadcastDetail = Summary + {endedAt, source, viewerCount, recommendedMode:"whep"|"grid", play:{whepUrl:"/live/{channelId}/whep", hlsUrl:"/live/{channelId}/index.m3u8"}, donationTotal, recording:{id, status, visibility}(null 가능), isOwner}` |
+| `GET /broadcasts/{id}` | 누구나 | `BroadcastDetail = Summary + {endedAt, source, viewerCount, recommendedMode:"whep"|"grid", play:{whepUrl:"/live/{channelId}/whep", hlsUrl:"/live/{channelId}/index.m3u8"}, donationTotal, recording:{id, status, visibility}(null 가능), isOwner, followerCount, isFollowing}` — `followerCount` · `isFollowing`은 이 방송 채널 기준(`GET /channels/{id}`와 같은 규칙, FOLLOW-1) |
 | `GET /broadcasts/{id}/recommendations` | 누구나 | 다른 채널 LIVE: 같은 카테고리 → 시청자 수, 최대 4 / 없으면 최근 공개 다시보기 4 → `{lives:[Summary], recordings:[RecordingSummary]}` |
 | `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end`(204) · `DELETE /broadcasts/{id}`(204) | 주인 | §4.6 |
 | `GET /members/me/broadcasts?page=` | 로그인 | 내 방송 기록(삭제 제외) + recording 상태 · visibility |
+| `GET /members/me/follows` | 로그인 | 페이징 없이 전체 배열 `[FollowedChannel {channelId, name, category:{code,label}, isLive, liveBroadcastId(null 가능), viewerCount, followedAt}]`. `isLive`는 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송이 있을 때(= `liveBroadcastId != null`), `viewerCount`는 그 방송의 시청자 수(없으면 0). 정렬은 고정: **라이브 먼저(시청자 수 내림차순 → 방송 시작 내림차순), 그다음 팔로우한 순(최신 먼저)**. 시청자 수가 메모리 값이라 메모리에서 정렬. 진행 중 방송은 채널 id 목록으로 한 번에 조회(N+1 금지). 사이드바(UI-7 "팔로우" 칸)가 30초마다 다시 부른다 |
 | `GET /recordings?page=&sort=recent` | 누구나 | READY · PUBLIC → `RecordingSummary {id, broadcastId, title, category, thumbnailUrl, durationSeconds, startedAt, channel:{id,name}, commentCount}` |
 | `GET /recordings/{id}` | 누구나/주인 | `{…Summary, status, visibility, videoUrl(READY·PUBLIC일 때), fileDeleted, donationTotal, isOwner}` |
 | `PATCH /recordings/{id}` | 주인 | `{visibility}` |
@@ -362,7 +367,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드).
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
@@ -442,10 +447,11 @@ frontend/src/
 
 ### 6.7 화면별 요소 (PLAN-1 최종 화면 목록 기준)
 - **S1 Home**: 카테고리 칩(전체 + 5), `LiveCard` 그리드(썸네일 · LIVE 배지 · 시청자 수 · 제목 · 채널명), 아래 "다시보기" 탭(`RecordingCard`). 30초 refetch.
-- **S2 Live**: 상단 Player(16:9, 모바일은 세로 비율 자동), 제목 · 채널 링크 · 시청자 수 · 카테고리, 우측(모바일은 하단) ChatPanel(비로그인은 입력창 대신 "로그인하고 채팅하기"), 후원 버튼 → `DonateDialog`(금액 1,000/5,000/10,000 + 직접 입력, 메시지 100자) → Toss 결제위젯 → confirm. 후원 발생 시 `DonationBanner`(플레이어 위 5초) + 채팅 강조.
+- **S2 Live**: 상단 Player(16:9, 모바일은 세로 비율 자동), 제목 · 채널 링크 · 시청자 수 · 카테고리, 채널 링크 옆 **팔로우 버튼**(`FollowButton`, FOLLOW-2: `isFollowing`으로 "팔로우"/"팔로잉" 토글 + `followerCount`, `isOwner`면 숨김, 비로그인 클릭은 `/login?next=`), 우측(모바일은 하단) ChatPanel(비로그인은 입력창 대신 "로그인하고 채팅하기"), 후원 버튼 → `DonateDialog`(금액 1,000/5,000/10,000 + 직접 입력, 메시지 100자) → Toss 결제위젯 → confirm. 후원 발생 시 `DonationBanner`(플레이어 위 5초) + 채팅 강조.
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
-- **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**, **S10 Post**: §6.3.
+- **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**(헤더에 팔로워 수 + 같은 `FollowButton`), **S10 Post**: §6.3.
+- **왼쪽 채널 사이드바**(UI-7 · FOLLOW-2, 라우트 아님): 맨 위 "팔로우" 칸은 로그인 상태에서만 `GET /members/me/follows`를 30초마다 불러 채널 이름 · 라이브 점 · 시청자 수를 보여 주고, 누르면 `/live/:channelId`. 비로그인이면 "로그인하면 팔로우한 채널이 여기 보입니다" 한 줄 + 로그인 링크. 팔로우 · 해제 응답을 받으면 목록을 바로 다시 불러 사이드바와 버튼이 어긋나지 않게 한다.
 - **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`(CLOSED 뒤 다시 열 때 `?lastEventId=<마지막 donation id>`, §4.15); `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
 
 ## 7. 인프라 세부 (OPS-3 · OPS-5)
@@ -558,6 +564,16 @@ frontend/src/
 ### POST-1 커뮤니티 게시글 API
 - 읽을 절: §4.12 게시글, §4.16 `/posts*`, `/channels/{id}/posts`.
 - 완료: 주인만 작성 · 수정 · 삭제(403 테스트), 목록 최신순, 삭제 시 댓글 cascade.
+
+### FOLLOW-1 채널 팔로우 정의 · API
+- 읽을 절: §4.3 follow, §4.8 팔로우 행, §4.16 `/channels/{id}/follow` · `/members/me/follows` · `GET /channels/{id}` · `GET /broadcasts/{id}`의 `followerCount` · `isFollowing`.
+- 구조: 새 패키지 `follow/`(§4.2). `Follow` 엔티티는 `BaseEntity` 상속, 생성은 `Follow.of(member, channel)` 정적 팩토리. `FollowService`: `follow(me, channelId)` · `unfollow(me, channelId)` · `myFollows(me)`. 채널 · 방송 상세의 두 필드는 `ChannelService` · `BroadcastService`가 `FollowRepository`의 `countByChannelId` · `existsByMemberIdAndChannelId`로 채운다(비로그인은 조회 없이 false). 진행 중 방송은 `BroadcastRepository`에 채널 id 목록 조회를 더해 한 번에, 시청자 수는 `ViewerCounter`. 새 설정값 · 새 에러 코드 없음.
+- 멱등 처리: `follow`는 `existsBy…`로 먼저 보고 없으면 저장하되, 저장에서 unique 위반(`DataIntegrityViolationException`)이 나면 이미 팔로우된 것으로 보고 상태만 돌려준다. `unfollow`는 `deleteBy…` 결과와 무관하게 상태를 돌려준다.
+- 완료: 통합 테스트 `FollowApiTest` — 팔로우 → `following: true` · `followerCount: 1` · 두 번 POST도 같은 응답 / 해제 → `false` · `0` · 두 번 DELETE도 같은 응답 / 자기 채널 400 `VALIDATION_ERROR` / 비로그인 401 / 없는 채널 404 / `GET /channels/{id}` · `GET /broadcasts/{id}`의 `followerCount` · `isFollowing`(팔로우한 회원 true, 다른 회원 · 비로그인 false) / `GET /members/me/follows` 정렬(라이브 채널이 먼저, 그다음 최근 팔로우 순)과 `isLive` · `liveBroadcastId` · `viewerCount`. 라이브 방송은 다른 통합 테스트처럼 `Broadcast.start`로 저장소에 직접 만든다. 실행 확인(실제 화면)은 지휘 세션이 한다.
+
+### FOLLOW-2 팔로우 UI
+- 읽을 절: §6.7 S2 · S9 · 사이드바, §4.16 위 네 엔드포인트. 공용 `components/FollowButton.tsx`(props: `channelId`, `isFollowing`, `followerCount`, `isOwner`; 응답으로 상태 갱신, 사이드바 목록 refetch). `api/types.ts`에 `FollowStatus` · `FollowedChannel`.
+- 완료: 채널 페이지 · 시청 화면에서 팔로우 · 해제가 되고 사이드바 "팔로우" 칸에 바로 반영된다. 비로그인 클릭은 `/login?next=`. 자기 채널에는 버튼이 없다.
 
 ### FE-7 다시보기 · 마이페이지 · 채널 페이지
 - 읽을 절: §6.3 · §6.7 S6 · S8 · S9(커뮤니티 탭은 FE-8). 비공개 재생은 video-token 흐름.
