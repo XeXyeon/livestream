@@ -17,6 +17,8 @@ const StudioMobile = lazy(() => import('./pages/StudioMobile'))
 const StudioSettings = lazy(() => import('./pages/StudioSettings'))
 const Widget = lazy(() => import('./pages/Widget'))
 const Me = lazy(() => import('./pages/Me'))
+const Video = lazy(() => import('./pages/Video'))
+const Channel = lazy(() => import('./pages/Channel'))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
 
@@ -28,8 +30,8 @@ function AppRoutes() {
       <Route element={<Header />}>
         <Route path="/" element={<Home />} />
         <Route path="/live/:channelId" element={<Live />} />
-        <Route path="/videos/:recordingId" element={<Placeholder title="다시보기" />} />
-        <Route path="/channel/:channelId" element={<Placeholder title="채널" />} />
+        <Route path="/videos/:recordingId" element={<Video />} />
+        <Route path="/channel/:channelId" element={<Channel />} />
         <Route path="/posts/:postId" element={<Placeholder title="커뮤니티 글" />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />

@@ -76,6 +76,30 @@ export type RecordingSummary = {
   commentCount: number
 }
 
+/** GET /recordings/{id}. videoUrl은 READY · PUBLIC일 때만, 비공개는 주인이 video-token으로 받는다 */
+export type RecordingDetail = RecordingSummary & {
+  status: RecordingStatus
+  visibility: Visibility
+  videoUrl: string | null
+  fileDeleted: boolean
+  donationTotal: number
+  isOwner: boolean
+}
+/** POST /recordings/{id}/video-token (5분) */
+export type VideoToken = { token: string; videoUrl: string }
+
+/** GET /members/me/broadcasts 항목 */
+export type MyBroadcastItem = {
+  id: number
+  title: string
+  category: Category
+  thumbnailUrl: string | null
+  status: BroadcastStatus
+  startedAt: string
+  endedAt: string | null
+  recording: RecordingRef | null
+}
+
 export type Recommendations = { lives: BroadcastSummary[]; recordings: RecordingSummary[] }
 
 export type ChannelResponse = {
@@ -167,3 +191,38 @@ export type ReceivedDonationByBroadcast = {
   count: number
 }
 export type ReceivedDonations = { totalAmount: number; byBroadcast: ReceivedDonationByBroadcast[] }
+
+// §4.12 댓글 · 게시글
+/** 평면 목록(createdAt 오름차순). 트리는 프론트가 parentId로 만든다 */
+export type Comment = {
+  id: number
+  parentId: number | null
+  /** 삭제된 댓글이면 null("삭제된 댓글입니다") */
+  content: string | null
+  deleted: boolean
+  author: { id: number; nickname: string; isChannelOwner: boolean }
+  createdAt: string
+  updatedAt: string
+}
+export type CommentWriteInput = { content: string; parentId?: number }
+
+export type PostSummary = {
+  id: number
+  title: string
+  /** 본문 앞부분(최대 100자) */
+  preview: string
+  commentCount: number
+  createdAt: string
+  updatedAt: string
+}
+export type Post = {
+  id: number
+  channel: { id: number; name: string; ownerNickname: string }
+  title: string
+  content: string
+  commentCount: number
+  createdAt: string
+  updatedAt: string
+  isOwner: boolean
+}
+export type PostWriteInput = { title: string; content: string }
