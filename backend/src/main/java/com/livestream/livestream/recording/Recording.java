@@ -1,0 +1,101 @@
+package com.livestream.livestream.recording;
+
+import com.livestream.livestream.broadcast.Broadcast;
+import com.livestream.livestream.common.entity.BaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import java.time.Instant;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/**
+ * 방송 한 회의 다시보기 (DESIGN §4.3 recording). 방송 시작 때 RECORDING으로 만들고(BC-1), 종료 때 PROCESSING으로 바꾼다.
+ * 병합 · READY · 보관은 REC-1.
+ */
+@Getter
+@Entity
+@Table(name = "recording", uniqueConstraints = @UniqueConstraint(name = "uk_recording_broadcast", columnNames = "broadcast_id"))
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Recording extends BaseEntity {
+
+	@OneToOne(fetch = FetchType.LAZY, optional = false)
+	@JoinColumn(name = "broadcast_id", nullable = false)
+	private Broadcast broadcast;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "status", nullable = false, length = 20)
+	private RecordingStatus status;
+
+	/** vod/&lt;uuid&gt;.mp4 상대 경로 */
+	@Column(name = "file_path", length = 255)
+	private String filePath;
+
+	@Column(name = "duration_seconds")
+	private Integer durationSeconds;
+
+	@Column(name = "size_bytes")
+	private Long sizeBytes;
+
+	@Enumerated(EnumType.STRING)
+	@Column(name = "visibility", nullable = false, length = 10)
+	private Visibility visibility;
+
+	@Column(name = "file_deleted_at", columnDefinition = "DATETIME(6)")
+	private Instant fileDeletedAt;
+
+	@Column(name = "failure_reason", length = 255)
+	private String failureReason;
+
+	/** 방송 시작과 함께 만든다. 공개 여부는 채널의 auto_publish_recording 을 따른다. */
+	public static Recording startFor(Broadcast broadcast, boolean autoPublish) {
+		Recording r = new Recording();
+		r.broadcast = broadcast;
+		r.status = RecordingStatus.RECORDING;
+		r.visibility = autoPublish ? Visibility.PUBLIC : Visibility.PRIVATE;
+		return r;
+	}
+
+	/** 방송 삭제: 진행 중인 병합은 이 상태를 보고 결과를 버린다(§4.10). 파일은 커밋 뒤 지운다. */
+	public void markFileDeleted(Instant now) {
+		this.status = RecordingStatus.FILE_DELETED;
+		this.fileDeletedAt = now;
+	}
+
+	/** 방송 종료: 녹화 중이었으면 병합 대기(PROCESSING)로. 그 외 상태는 그대로 둔다. */
+	public void markProcessing() {
+		if (status == RecordingStatus.RECORDING) {
+			status = RecordingStatus.PROCESSING;
+		}
+	}
+
+	/** 병합 성공(REC-1). 호출 전에 status 가 PROCESSING 인지 확인한다. */
+	public void markReady(String filePath, Integer durationSeconds, long sizeBytes) {
+		this.status = RecordingStatus.READY;
+		this.filePath = filePath;
+		this.durationSeconds = durationSeconds;
+		this.sizeBytes = sizeBytes;
+		this.failureReason = null;
+	}
+
+	/** 병합 실패(REC-1). 사유는 앞 200자만 남긴다. */
+	public void markFailed(String reason) {
+		this.status = RecordingStatus.FAILED;
+		this.failureReason = reason == null ? null
+				: reason.codePointCount(0, reason.length()) <= FAILURE_REASON_MAX ? reason
+				: reason.substring(0, reason.offsetByCodePoints(0, FAILURE_REASON_MAX));
+	}
+
+	public boolean isProcessing() {
+		return status == RecordingStatus.PROCESSING;
+	}
+
+	private static final int FAILURE_REASON_MAX = 200;
+}

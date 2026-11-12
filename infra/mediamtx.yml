@@ -1,0 +1,44 @@
+# MediaMTX 설정 (DESIGN §2.3)
+# webrtcAdditionalHosts 는 이 파일이 아니라 compose 의 환경변수 MTX_WEBRTCADDITIONALHOSTS(=PUBLIC_HOST)로 넣는다.
+api: yes
+apiAddress: :9997
+rtsp: yes            # 썸네일 캡처용(내부)
+rtmp: yes
+hls: yes
+hlsVariant: lowLatency
+hlsPartDuration: 500ms
+hlsSegmentDuration: 1s
+hlsAlwaysRemux: yes  # 시청자 없어도 HLS 준비(그리드 전환 지연 방지)
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+
+# 송출(publish)은 backend 인증 콜백이 스트림 키로 검사하고, 재생(read · playback)은 콜백이 모두 허용한다 (DESIGN §4.9).
+# 콜백 주소는 docker 내부망 전용이다(Caddy 가 /api/internal/* 를 바깥에 노출하지 않음).
+authMethod: http
+authHTTPAddress: http://backend:8080/api/internal/mediamtx/auth
+authHTTPExclude:
+  - action: api        # Control API는 내부망만 (compose 가 9997 을 127.0.0.1 · 내부망에만 연다)
+  - action: metrics
+  - action: pprof
+
+pathDefaults:
+  overridePublisher: yes      # 두 번째 송출 연결이 기존을 교체
+  record: yes
+  recordPath: /recordings/raw/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 6h
+  recordDeleteAfter: 0s
+  # ${INTERNAL_TOKEN}은 MediaMTX가 아니라 훅을 실행하는 셸이 mediamtx 컨테이너 환경변수에서 푼다(compose가 전달).
+  # 훅이 실패해도(backend 꺼짐 등) curl 이 실패할 뿐 송출에는 영향이 없다. $MTX_QUERY 에 따옴표 등이 들어오면
+  # 이 명령과 JSON 이 깨지므로, 인증 콜백이 안전한 문자([A-Za-z0-9._~=&%+-])만 있는 쿼리의 publish 만 허용한다.
+  # runOnReady · runOnNotReady 는 1.21.3 에서 deprecated 경고가 나지만 동작한다(BC-1 에서 이름 유지로 결정).
+  runOnReady: >-
+    curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH","sourceType":"$MTX_SOURCE_TYPE","query":"$MTX_QUERY"}' http://backend:8080/api/internal/mediamtx/ready
+  runOnNotReady: >-
+    curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH"}' http://backend:8080/api/internal/mediamtx/not-ready
+  runOnRecordSegmentComplete: >-
+    curl -s -X POST -H "X-Internal-Token: ${INTERNAL_TOKEN}" -H "Content-Type: application/json" -d '{"path":"$MTX_PATH","segmentPath":"$MTX_SEGMENT_PATH"}' http://backend:8080/api/internal/mediamtx/segment-complete
+paths:
+  ~^live/\d+$: {}

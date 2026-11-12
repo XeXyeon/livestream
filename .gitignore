@@ -26,6 +26,13 @@ log/
 .env
 .env.*
 !.env.example
-src/main/resources/application-local.yaml
+backend/src/main/resources/application-local.yaml
 ### Spring Initializr ###
 HELP.md
+
+# frontend
+frontend/node_modules/
+frontend/dist/
+
+# 로컬 개발 데이터 (compose.dev.yaml 의 녹화 · 업로드 바인드 마운트)
+.local/
