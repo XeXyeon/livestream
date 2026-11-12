@@ -5,15 +5,13 @@ import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
-import { listBroadcasts } from '../api/broadcasts'
-import { listRecordings } from '../api/recordings'
 import { CATEGORIES } from '../api/types'
-import type { CategoryCode, Page } from '../api/types'
+import type { CategoryCode } from '../api/types'
+import { liveBroadcastsQuery, recentRecordingsQuery } from '../components/broadcast/listQueries'
 import LiveCard from '../components/broadcast/LiveCard'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import Spinner from '../components/common/Spinner'
 
-const nextPage = <T,>(last: Page<T>) => (last.hasNext ? last.page + 1 : undefined)
 const isCategory = (value: string | null): value is CategoryCode => CATEGORIES.some((category) => category.code === value)
 
 function MoreButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
@@ -30,19 +28,8 @@ export default function Home() {
   const raw = params.get('category')
   const category = isCategory(raw) ? raw : undefined
 
-  const lives = useInfiniteQuery({
-    queryKey: ['broadcasts', 'LIVE', category ?? 'ALL'],
-    queryFn: ({ pageParam }) => listBroadcasts({ status: 'LIVE', category, page: pageParam }),
-    initialPageParam: 0,
-    getNextPageParam: nextPage,
-    refetchInterval: 30_000,
-  })
-  const recordings = useInfiniteQuery({
-    queryKey: ['recordings', 'recent'],
-    queryFn: ({ pageParam }) => listRecordings(pageParam),
-    initialPageParam: 0,
-    getNextPageParam: nextPage,
-  })
+  const lives = useInfiniteQuery(liveBroadcastsQuery(category))
+  const recordings = useInfiniteQuery(recentRecordingsQuery())
 
   function selectCategory(code: CategoryCode | undefined) {
     setParams(code ? { category: code } : {}, { replace: true })

@@ -5,7 +5,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { Drawer, DrawerHeader } from '@astryxdesign/core/Drawer'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { LinkProvider } from '@astryxdesign/core/Link'
-import { Menu } from 'lucide-react'
+import { Menu, X } from 'lucide-react'
 import { useAuth } from '../../store/auth'
 import Spinner from '../common/Spinner'
 import ChannelSidebar from '../sidebar/ChannelSidebar'
@@ -79,7 +79,11 @@ export default function Header() {
         </div>
         {sidebar && (
           <Drawer isOpen={drawerOpen} onOpenChange={setDrawerOpen} side="start" width={280} label="채널 목록" padding={2}>
-            <DrawerHeader title="채널" onOpenChange={setDrawerOpen} />
+            {/* DrawerHeader 기본 닫기 버튼은 이름이 영어(Close)라 직접 둔다 */}
+            <DrawerHeader
+              title="채널"
+              endContent={<IconButton label="닫기" icon={<X aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" onClick={() => setDrawerOpen(false)} />}
+            />
             <ChannelSidebarList onNavigate={() => setDrawerOpen(false)} />
           </Drawer>
         )}
