@@ -3,9 +3,9 @@ import { Banner } from '@astryxdesign/core/Banner'
 import { Heading } from '@astryxdesign/core/Heading'
 import { getReceivedDonations } from '../../api/donations'
 import Spinner from '../common/Spinner'
+import { formatDateTime } from '../broadcast/format'
 
 const won = (amount: number) => `${amount.toLocaleString('ko-KR')}원`
-const date = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 
 // §6.7 S8 받은 후원: 내 채널이 받은 후원(승인만) 합계와 방송별 합계(GET /members/me/donations/received)
 export default function ReceivedDonations() {
@@ -28,7 +28,7 @@ export default function ReceivedDonations() {
             <li key={row.broadcastId} className="flex flex-wrap items-center justify-between gap-2 py-3">
               <div className="min-w-0">
                 <p className="truncate font-medium text-primary">{row.title}</p>
-                <p className="text-xs text-secondary">{date(row.startedAt)} · {row.count.toLocaleString('ko-KR')}건</p>
+                <p className="text-xs text-secondary">{formatDateTime(row.startedAt)} · {row.count.toLocaleString('ko-KR')}건</p>
               </div>
               <p className="font-semibold text-primary">{won(row.totalAmount)}</p>
             </li>

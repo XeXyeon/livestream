@@ -13,8 +13,8 @@ import { isEdited } from '../components/comment/commentTree'
 import Spinner from '../components/common/Spinner'
 import PostEditor from '../components/post/PostEditor'
 import { useAuth } from '../store/auth'
+import { formatDateTime } from '../components/broadcast/format'
 
-const date = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 
 /** S10 커뮤니티 글(§6.3): 본문 · 주인 수정 · 삭제 · 댓글 */
 export default function Post() {
@@ -77,7 +77,7 @@ export default function Post() {
             <div className="min-w-0">
               <Heading level={1}>{post.title}</Heading>
               <p className="mt-1 text-sm text-secondary">
-                {post.channel.ownerNickname} · <time dateTime={post.createdAt}>{date(post.createdAt)}</time>{isEdited(post) && ' (수정됨)'}
+                {post.channel.ownerNickname} · <time dateTime={post.createdAt}>{formatDateTime(post.createdAt)}</time>{isEdited(post) && ' (수정됨)'}
               </p>
             </div>
             {post.isOwner && (

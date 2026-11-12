@@ -8,14 +8,13 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { ApiError } from '../api/client'
 import { getRecording } from '../api/recordings'
 import CommentList from '../components/comment/CommentList'
-import { formatDuration } from '../components/broadcast/format'
+import { formatDuration, formatDateTime } from '../components/broadcast/format'
 import Spinner from '../components/common/Spinner'
 import RecordingVideo from '../components/recording/RecordingVideo'
 import VisibilitySwitch from '../components/recording/VisibilitySwitch'
 import { useAuth } from '../store/auth'
 import { canChangeVisibility } from '../components/recording/recordingState'
 
-const date = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 
 /** S6 다시보기(§6.3 · §6.7). 댓글은 녹화가 READY · FILE_DELETED일 때만 쓸 수 있다(서버 409) */
 export default function Video() {
@@ -52,7 +51,7 @@ export default function Video() {
               {recording.channel.name}
             </Link>
             <Badge variant="neutral" label={recording.category.label} />
-            <span>{date(recording.startedAt)}</span>
+            <span>{formatDateTime(recording.startedAt)}</span>
             <span>{formatDuration(recording.durationSeconds)}</span>
             {recording.visibility === 'PRIVATE' && <Badge variant="warning" label="비공개" />}
             {recording.donationTotal > 0 && <span>후원 {recording.donationTotal.toLocaleString('ko-KR')}원</span>}

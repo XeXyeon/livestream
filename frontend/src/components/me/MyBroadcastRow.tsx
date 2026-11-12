@@ -12,8 +12,8 @@ import { inputClassName } from '../common/TextField'
 import Thumbnail from '../common/Thumbnail'
 import VisibilitySwitch from '../recording/VisibilitySwitch'
 import { BROADCAST_STATUS_BADGE, RECORDING_STATUS_TEXT, canChangeVisibility } from '../recording/recordingState'
+import { formatDateTime } from '../broadcast/format'
 
-const date = (iso: string) => new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 const message = (cause: unknown, fallback: string) => (cause instanceof ApiError ? cause.message : fallback)
 
 export default function MyBroadcastRow({ item }: { item: MyBroadcastItem }) {
@@ -89,7 +89,7 @@ export default function MyBroadcastRow({ item }: { item: MyBroadcastItem }) {
         <p className="flex flex-wrap items-center gap-2 text-sm text-secondary">
           <Badge variant={status.variant} label={status.label} />
           <span>{item.category.label}</span>
-          <span>{date(item.startedAt)}</span>
+          <span>{formatDateTime(item.startedAt)}</span>
         </p>
         <p className="text-sm text-secondary">
           {recording ? RECORDING_STATUS_TEXT[recording.status] : '다시보기 없음'}
