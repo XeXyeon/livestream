@@ -16,6 +16,7 @@ const StudioPc = lazy(() => import('./pages/StudioPc'))
 const StudioMobile = lazy(() => import('./pages/StudioMobile'))
 const StudioSettings = lazy(() => import('./pages/StudioSettings'))
 const Widget = lazy(() => import('./pages/Widget'))
+const Me = lazy(() => import('./pages/Me'))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
 
@@ -37,7 +38,7 @@ function AppRoutes() {
           <Route path="/studio/pc" element={<StudioPc />} />
           <Route path="/studio/mobile" element={<StudioMobile />} />
           <Route path="/studio/settings" element={<StudioSettings />} />
-          <Route path="/me" element={<Placeholder title="마이페이지" />} />
+          <Route path="/me" element={<Me />} />
         </Route>
         <Route path="*" element={<Placeholder title="페이지를 찾을 수 없습니다" />} />
       </Route>
