@@ -1,3 +1,8 @@
+/**
+ * PC 라이브 방송 화면 (`/studio/pc`).
+ * PC 화면 캡처(`getDisplayMedia`)로 화면을 실시간 송출하고, 탭 · 시스템 소리와 마이크 음성을 Web Audio로 믹싱해(`createPcStream`, media/mixer.ts)
+ * 함께 보낸다. 송출은 `useBroadcastSession`이 WHIP(`WhipClient`, media/whip.ts)로 하며, 종료는 whip.close() → 스트림 정지 → POST /api/broadcasts/{id}/end 순서다.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MonitorUp } from 'lucide-react'
 import { Banner } from '@astryxdesign/core/Banner'

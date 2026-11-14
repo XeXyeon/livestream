@@ -1,4 +1,13 @@
-// §6.5 mixer: 화면(탭) 공유 영상 1개 + (탭/시스템 소리 + 마이크)를 Web Audio로 섞은 오디오 1개.
+/**
+ * 브라우저 미디어 캡처 · 믹싱 모듈 (§6.5). 송출할 MediaStream을 만든다.
+ *
+ * - PC 화면 캡처: `createPcStream`이 `getDisplayMedia({ video, audio: true })`로 화면(탭 · 창 · 전체 화면) 영상과 탭 · 시스템 소리를 받는다.
+ * - 탭/시스템 소리 + 마이크 믹싱: `getUserMedia({ audio })`로 연 마이크와 위 소리를 `AudioContext`의 GainNode로 각각 조절해
+ *   `MediaStreamAudioDestinationNode` 하나로 합치고, 화면 영상 트랙과 묶어 한 스트림으로 내보낸다.
+ * - 모바일 카메라 송출: `createMobileStream`이 `getUserMedia({ video: facingMode, audio: true })`로 휴대폰 카메라 영상과 마이크 음성을 함께 받는다(전 · 후면 전환 지원).
+ *
+ * 만든 스트림은 `media/whip.ts`의 WhipClient(WebRTC/WHIP)가 MediaMTX로 송출한다.
+ */
 export type MixerWarning = 'NO_SYSTEM_AUDIO' | 'MIC_UNAVAILABLE'
 
 export type PcStream = {
