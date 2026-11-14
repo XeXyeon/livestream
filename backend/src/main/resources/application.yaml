@@ -54,6 +54,8 @@ app:
     attempt-window-seconds: 300
   seed:
     enabled: false
+    password: ""            # APP_SEED_PASSWORD (enabled 일 때 필수)
+    sample-path: /seed/sample.mp4
   public-url: http://localhost
 
 ---
@@ -71,4 +73,6 @@ app:
   mediamtx:
     api-url: http://localhost:9997
     rtsp-url: rtsp://localhost:8554
+  seed:
+    sample-path: ../infra/seed/sample.mp4
   public-url: https://localhost

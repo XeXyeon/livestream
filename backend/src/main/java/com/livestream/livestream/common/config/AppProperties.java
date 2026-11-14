@@ -107,7 +107,13 @@ public record AppProperties(
 	public record Jwt(String secret, int accessMinutes, int refreshDays, int refreshRotationGraceSeconds) {
 	}
 
-	/** @param enabled 시드 데이터 투입 */
-	public record Seed(boolean enabled) {
+	/**
+	 * 시연 시드 (DESIGN §5, OPS-4).
+	 *
+	 * @param enabled    시드 데이터 투입
+	 * @param password   시드 계정 두 개의 비밀번호(환경변수 {@code APP_SEED_PASSWORD}). enabled 일 때 비어 있으면 기동 실패
+	 * @param samplePath 샘플 다시보기 원본 영상(저장소 {@code infra/seed/sample.mp4})
+	 */
+	public record Seed(boolean enabled, String password, String samplePath) {
 	}
 }

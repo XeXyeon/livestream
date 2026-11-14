@@ -36,10 +36,12 @@ services:
       APP_TOSS_SECRET_KEY: ${APP_TOSS_SECRET_KEY:-}
       APP_GRID_THRESHOLD: ${APP_GRID_THRESHOLD:-100}
       APP_SEED_ENABLED: ${APP_SEED_ENABLED:-false}
+      APP_SEED_PASSWORD: ${APP_SEED_PASSWORD:-}
       APP_RECORDING_RETENTION_DAYS: ${APP_RECORDING_RETENTION_DAYS:-30}
     volumes:
       - media:/recordings
       - uploads:/uploads
+      - ./seed:/seed:ro   # 시드 샘플 영상 (OPS-4)
     depends_on:
       mysql:
         condition: service_healthy
