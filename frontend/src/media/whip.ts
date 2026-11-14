@@ -1,3 +1,8 @@
+/**
+ * WHIP 송출 클라이언트 (PC · 모바일 공용). `media/mixer.ts`가 만든 화면 · 카메라 · 마이크 MediaStream을
+ * `RTCPeerConnection`(sendonly 트랙)으로 SDP offer를 만들어 WHIP(HTTP POST)로 MediaMTX에 실시간 송출한다.
+ * 끊기면 자동 재연결하고, 종료는 `close()`로 한다.
+ */
 import { resolveLocation, waitForIceGathering, discardSession } from './webrtc'
 
 // §6.5 WhipClient: 브라우저 송출. Authorization: Bearer <streamKey>로 MediaMTX에 publish한다.
