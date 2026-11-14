@@ -1,3 +1,8 @@
+/**
+ * 모바일 라이브 방송 화면 (`/studio/mobile`).
+ * 휴대폰 카메라 영상과 마이크 음성을 함께(`getUserMedia`, `createMobileStream` in media/mixer.ts) 받아 WHIP(`WhipClient`, media/whip.ts)로 실시간 송출한다.
+ * 전 · 후면 카메라 전환, 마이크 켜기/끄기, 송출 중 화면 꺼짐 방지(Wake Lock)를 지원한다.
+ */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Mic, MicOff, SwitchCamera, X } from 'lucide-react'
