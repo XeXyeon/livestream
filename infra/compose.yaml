@@ -1,0 +1,93 @@
+# 운영용: 전부 compose (DESIGN §2.1). OPS-5에서 서버에 올려 확인한다.
+# 실행: docker compose --env-file .env -f infra/compose.yaml up -d --build   (루트 .env 는 .env.example 참고)
+# 프론트는 먼저 `cd frontend && npm run build` 로 frontend/dist 를 만든다.
+name: livestream
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: livestream
+      MYSQL_USER: ${SPRING_DATASOURCE_USERNAME:?SPRING_DATASOURCE_USERNAME 필요}
+      MYSQL_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?SPRING_DATASOURCE_PASSWORD 필요}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 필요}
+      TZ: Asia/Seoul
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ../backend
+    environment:
+      SPRING_PROFILES_ACTIVE: prod   # `local` 프로파일(호스트 경로 값)을 쓰지 않는다
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:mysql://mysql:3306/livestream?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 필요}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN 필요}
+      APP_PUBLIC_URL: https://${PUBLIC_HOST:?PUBLIC_HOST 필요}
+      APP_TOSS_CLIENT_KEY: ${APP_TOSS_CLIENT_KEY:-}
+      APP_TOSS_SECRET_KEY: ${APP_TOSS_SECRET_KEY:-}
+      APP_GRID_THRESHOLD: ${APP_GRID_THRESHOLD:-100}
+      APP_SEED_ENABLED: ${APP_SEED_ENABLED:-false}
+      APP_SEED_PASSWORD: ${APP_SEED_PASSWORD:-}
+      APP_RECORDING_RETENTION_DAYS: ${APP_RECORDING_RETENTION_DAYS:-30}
+    volumes:
+      - media:/recordings
+      - uploads:/uploads
+      - ./seed:/seed:ro   # 시드 샘플 영상 (OPS-4)
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mediamtx:
+    build: ./mediamtx
+    ports:
+      - "1935:1935"
+      - "8189:8189/udp"
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_HOST}
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - media:/recordings
+    restart: unless-stopped
+
+  tracker:
+    build: ./tracker
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      FRONTEND_MODE: static
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend-dev.caddy:/etc/caddy/frontend-dev.caddy:ro
+      - ./frontend-static.caddy:/etc/caddy/frontend-static.caddy:ro
+      - ../frontend/dist:/srv/frontend:ro
+      - media:/srv/media:ro
+      - uploads:/srv/uploads:ro
+      - caddy_data:/data
+    depends_on:
+      - backend
+      - mediamtx
+      - tracker
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  media:
+  uploads:
+  caddy_data:

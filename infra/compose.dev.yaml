@@ -1,0 +1,72 @@
+# 로컬 개발용: mysql · mediamtx · caddy · tracker 만 띄운다 (DESIGN §2.1).
+#   backend  → IDE 에서 실행 (포트 8080, 기본 `local` 프로파일)
+#   frontend → `cd frontend && npm run dev -- --host` (포트 5173)
+# 실행: docker compose -f infra/compose.dev.yaml up        접속: https://localhost
+# 값을 바꾸려면 루트 .env 를 만들고: docker compose --env-file .env -f infra/compose.dev.yaml up
+# Caddy · MediaMTX 컨테이너에서 호스트(IDE)의 backend · frontend 는 `backend` · `frontend` 이름으로 보이게 했다.
+name: livestream-dev
+
+services:
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "${MYSQL_PORT:-3306}:3306" # 호스트에 이미 MySQL 이 3306 을 쓰면 MYSQL_PORT 로 바꾼다 (backend 의 SPRING_DATASOURCE_URL 도 같이)
+    environment:
+      MYSQL_DATABASE: livestream
+      MYSQL_USER: ${SPRING_DATASOURCE_USERNAME:-livestream}
+      MYSQL_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-livestream}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      TZ: Asia/Seoul
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mediamtx:
+    build: ./mediamtx
+    ports:
+      - "1935:1935"           # RTMP (OBS)
+      - "8189:8189/udp"       # WebRTC ICE
+      - "127.0.0.1:9997:9997" # Control API (IDE 의 backend 용, 외부 노출 금지)
+      - "127.0.0.1:8554:8554" # RTSP (썸네일 캡처용)
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-change-me}
+      MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_HOST:-localhost}
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ../.local/media:/recordings
+    extra_hosts:
+      - "backend:host-gateway"
+
+  tracker:
+    build: ./tracker
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+      FRONTEND_MODE: dev
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend-dev.caddy:/etc/caddy/frontend-dev.caddy:ro
+      - ./frontend-static.caddy:/etc/caddy/frontend-static.caddy:ro
+      - ../.local/media:/srv/media:ro
+      - ../.local/uploads:/srv/uploads:ro
+      - caddy_data:/data
+    extra_hosts:
+      - "backend:host-gateway"
+      - "frontend:host-gateway"
+    depends_on:
+      - mediamtx
+      - tracker
+
+volumes:
+  mysql_data:
+  caddy_data:

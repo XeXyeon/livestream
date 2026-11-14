@@ -1,0 +1,78 @@
+server:
+  port: 8080
+  forward-headers-strategy: native # Caddy 뒤에서 클라이언트 IP를 X-Forwarded-For 로 받는다 (DESIGN §4.7 시도 횟수 제한)
+spring:
+  application:
+    name: livestream
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/livestream?serverTimezone=Asia/Seoul&characterEncoding=UTF-8}
+    username: ${SPRING_DATASOURCE_USERNAME:livestream}
+    password: ${SPRING_DATASOURCE_PASSWORD:livestream}
+  task:
+    scheduling:
+      pool:
+        size: 4 # 유예 종료 · 썸네일 캡처(방송당 최대 10초) · 녹화 보관 스케줄러가 서로를 막지 않게
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    open-in-view: false
+
+# 서비스 설정값 (DESIGN §4.1). 환경변수 APP_… 로 덮어쓴다 (예: APP_GRID_THRESHOLD=2).
+# 기본값은 컨테이너 안(compose 운영)에서 backend 가 도는 경우 기준이고,
+# IDE 에서 backend 를 직접 띄우는 `local` 프로파일 값은 아래 두 번째 문서에서 덮어쓴다.
+app:
+  grid:
+    threshold: 100
+  broadcast:
+    disconnect-grace-seconds: 60
+    end-block-seconds: 30
+    viewer-broadcast-interval-seconds: 5
+  thumbnail:
+    interval-seconds: 30
+  recording:
+    retention-days: 30
+    dir: /recordings
+  uploads:
+    dir: /uploads
+  mediamtx:
+    api-url: http://mediamtx:9997
+    rtsp-url: rtsp://mediamtx:8554
+    internal-token: ${INTERNAL_TOKEN:change-me}
+  toss:
+    client-key: ${TOSS_CLIENT_KEY:}
+    secret-key: ${TOSS_SECRET_KEY:}
+  jwt:
+    secret: ${JWT_SECRET:livestream-local-dev-secret-key-must-be-at-least-32-bytes}
+    access-minutes: 15
+    refresh-days: 14
+    refresh-rotation-grace-seconds: 10
+  auth:
+    login-max-failures: 10
+    signup-max-attempts: 10
+    attempt-window-seconds: 300
+  seed:
+    enabled: false
+    password: ""            # APP_SEED_PASSWORD (enabled 일 때 필수)
+    sample-path: /seed/sample.mp4
+  public-url: http://localhost
+
+---
+# IDE 에서 backend 를 직접 실행할 때 (infra/compose.dev.yaml 과 함께 사용).
+# MediaMTX · 녹화 · 업로드 경로는 compose.dev 가 호스트에 노출한 값과 맞춘다.
+spring:
+  config:
+    activate:
+      on-profile: local
+app:
+  recording:
+    dir: ../.local/media
+  uploads:
+    dir: ../.local/uploads
+  mediamtx:
+    api-url: http://localhost:9997
+    rtsp-url: rtsp://localhost:8554
+  seed:
+    sample-path: ../infra/seed/sample.mp4
+  public-url: https://localhost

@@ -1,0 +1,2 @@
+# 로컬: 호스트에서 도는 Vite dev 서버(5173)로 프록시 (HMR WebSocket 포함).
+reverse_proxy frontend:5173

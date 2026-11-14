@@ -1,0 +1,21 @@
+spring:
+  datasource:
+    url: jdbc:tc:mysql:8.4:///livestreamdb
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+    hikari:
+      minimum-idle: 1
+      idle-timeout: 10000
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+# 통합 테스트는 같은 IP(127.0.0.1)로 가입을 많이 하므로 시도 횟수 제한은 사실상 끈다.
+# 제한 자체를 검증하는 테스트(AuthRateLimitTest)만 @TestPropertySource 로 작은 값을 준다.
+app:
+  auth:
+    login-max-failures: 100000
+    signup-max-attempts: 100000
+
+logging:
+  level:
+    org.testcontainers: INFO
