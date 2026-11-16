@@ -97,8 +97,9 @@ export default function Header() {
                   {member ? (
                     <>
                       <Button href="/studio" label="방송하기" variant="primary" size="sm" />
-                      {/* 휴대폰 폭에서는 긴 닉네임이 로고를 밀어내므로 아이콘 버튼으로 줄인다 */}
-                      {wide ? (
+                      {/* lg 미만에서는 긴 닉네임(최대 20자)이 검색창을 밀어 로고와 겹치므로 아이콘 버튼으로 줄인다.
+                          sm~lg는 펼친 사이드바가 본문 폭을 줄이는 구간이라 헤더도 같은 폭 기준을 쓴다 */}
+                      {lgWide ? (
                         <Button href="/me" label={`${member.nickname}님`} variant="ghost" size="sm" />
                       ) : (
                         <IconButton href="/me" label={`${member.nickname}님`} icon={<UserRound aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" />
