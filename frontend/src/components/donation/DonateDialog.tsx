@@ -77,7 +77,8 @@ export default function DonateDialog({ broadcastId, channelId, isOpen, onOpenCha
     <>
       <Dialog isOpen={isOpen} onOpenChange={(open) => (open ? onOpenChange(true) : close())} purpose={creating ? 'required' : 'form'} width={440}>
         <DialogHeader title="후원하기" subtitle="결제는 토스페이먼츠 테스트 결제로 진행됩니다." onOpenChange={(open) => !open && close()} />
-        <form onSubmit={submit} className="space-y-5 pt-2" noValidate>
+        {/* DialogHeader가 안쪽 여백 16px를 한 번 더 두므로 본문도 px-4로 제목 · 닫기 버튼과 줄을 맞춘다 */}
+        <form onSubmit={submit} className="space-y-5 px-4 pb-4 pt-2" noValidate>
           <fieldset>
             <legend className="text-sm font-medium text-primary">금액</legend>
             <div className="mt-2 flex flex-wrap gap-2">
