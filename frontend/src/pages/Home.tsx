@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { Radio } from 'lucide-react'
@@ -22,7 +23,17 @@ function MoreButton({ onClick, loading }: { onClick: () => void; loading: boolea
   )
 }
 
-// S1 홈: 카테고리 칩 · 라이브 목록(시청자 수 순, 30초 갱신) · 다시보기 목록
+/** 라이브 · 다시보기 모두 처음 최대 8개, "더 보기"마다 8개씩 더 보인다 */
+const STEP = 8
+
+/** 처음 상태에서는 화면 폭별로 두 줄만 보인다(1열 2개 · 2열 4개 · 4열 8개) */
+function firstRowsClass(index: number): string {
+  if (index < 2) return ''
+  if (index < 4) return 'hidden sm:block'
+  return 'hidden lg:block'
+}
+
+// S1 홈: 카테고리 칩 · 라이브 목록(시청자 수 순, 30초 갱신) · 다시보기 목록(처음엔 두 줄, 더 보기로 펼침)
 export default function Home() {
   const [params, setParams] = useSearchParams()
   const raw = params.get('category')
@@ -30,6 +41,28 @@ export default function Home() {
 
   const lives = useInfiniteQuery(liveBroadcastsQuery(category))
   const recordings = useInfiniteQuery(recentRecordingsQuery())
+  const [recordingLimit, setRecordingLimit] = useState(STEP)
+  const [liveLimit, setLiveLimit] = useState(STEP)
+  // 카테고리를 바꾸면 라이브는 다시 처음 8개부터
+  const [prevCategory, setPrevCategory] = useState(category)
+  if (prevCategory !== category) {
+    setPrevCategory(category)
+    setLiveLimit(STEP)
+  }
+
+  // 8개를 더 보인다. 받아 둔 것이 모자라면 다음 쪽을 받는다
+  function showMoreLives() {
+    const next = liveLimit + STEP
+    setLiveLimit(next)
+    if (liveItems.length < next && lives.hasNextPage && !lives.isFetchingNextPage) void lives.fetchNextPage()
+  }
+
+  // 8개를 더 보인다. 받아 둔 것이 모자라면 다음 쪽을 받는다
+  function showMoreRecordings() {
+    const next = recordingLimit + STEP
+    setRecordingLimit(next)
+    if (recordingItems.length < next && recordings.hasNextPage && !recordings.isFetchingNextPage) void recordings.fetchNextPage()
+  }
 
   function selectCategory(code: CategoryCode | undefined) {
     setParams(code ? { category: code } : {}, { replace: true })
@@ -54,13 +87,13 @@ export default function Home() {
         <div className="mt-6">
           {lives.isPending ? <Spinner />
             : lives.isError ? <Banner role="alert" status="error" title="라이브 목록을 불러오지 못했습니다." />
-              : liveItems.length === 0 ? <div className="rounded-lg border border-dashed border-border py-6"><EmptyState title="지금 방송 중인 채널이 없습니다." icon={<Radio aria-hidden className="h-8 w-8" />} /></div>
+              : liveItems.length === 0 ? <div className="rounded-xl bg-surface py-6"><EmptyState title="지금 방송 중인 채널이 없습니다." icon={<Radio aria-hidden className="h-8 w-8" />} /></div>
                 : (
                   <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                    {liveItems.map((broadcast) => <LiveCard key={broadcast.id} broadcast={broadcast} />)}
+                    {liveItems.slice(0, liveLimit).map((broadcast) => <LiveCard key={broadcast.id} broadcast={broadcast} />)}
                   </div>
                 )}
-          {lives.hasNextPage && <MoreButton onClick={() => void lives.fetchNextPage()} loading={lives.isFetchingNextPage} />}
+          {(liveItems.length > liveLimit || lives.hasNextPage) && <MoreButton onClick={showMoreLives} loading={lives.isFetchingNextPage} />}
         </div>
       </section>
 
@@ -72,10 +105,16 @@ export default function Home() {
               : recordingItems.length === 0 ? <p className="text-sm text-secondary">아직 공개된 다시보기가 없습니다.</p>
                 : (
                   <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                    {recordingItems.map((recording) => <RecordingCard key={recording.id} recording={recording} />)}
+                    {recordingItems.slice(0, recordingLimit).map((recording, index) => (
+                      <div key={recording.id} className={recordingLimit === STEP ? firstRowsClass(index) : ''}>
+                        <RecordingCard recording={recording} />
+                      </div>
+                    ))}
                   </div>
                 )}
-          {recordings.hasNextPage && <MoreButton onClick={() => void recordings.fetchNextPage()} loading={recordings.isFetchingNextPage} />}
+          {(recordingItems.length > recordingLimit || recordings.hasNextPage || (recordingLimit === STEP && recordingItems.length > 2)) && (
+            <MoreButton onClick={showMoreRecordings} loading={recordings.isFetchingNextPage} />
+          )}
         </div>
       </section>
     </div>
