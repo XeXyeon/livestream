@@ -33,6 +33,7 @@ services:
       - "8189:8189/udp"       # WebRTC ICE
       - "127.0.0.1:9997:9997" # Control API (IDE 의 backend 용, 외부 노출 금지)
       - "127.0.0.1:8554:8554" # RTSP (썸네일 캡처용)
+      - "127.0.0.1:9996:9996" # 재생 서버 (IDE 의 backend 가 라이브 클립을 받는다, 외부 노출 금지)
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-change-me}
       MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_HOST:-localhost}

@@ -38,6 +38,7 @@ services:
       APP_SEED_ENABLED: ${APP_SEED_ENABLED:-false}
       APP_SEED_PASSWORD: ${APP_SEED_PASSWORD:-}
       APP_RECORDING_RETENTION_DAYS: ${APP_RECORDING_RETENTION_DAYS:-30}
+      APP_MEDIAMTX_PLAYBACK_URL: ${APP_MEDIAMTX_PLAYBACK_URL:-http://mediamtx:9996}   # 라이브 클립(§4.18). 9996 은 내부망만(ports 에 넣지 않는다)
     volumes:
       - media:/recordings
       - uploads:/uploads
