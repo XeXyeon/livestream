@@ -398,6 +398,7 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
   - 공통 마무리: `ffprobe`로 길이(0이면 FAILED `EMPTY`) · 파일 크기, 썸네일 `ffmpeg -ss 1 -i {clip} -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/clips/<clipId>.tmp.jpg` → rename `<clipId>.jpg`(실패해도 클립은 READY, 썸네일만 null). 그다음 새 트랜잭션에서 clip을 잠그고 PROCESSING일 때만 READY로 바꾸되, 그때의 `visibility`가 PUBLIC이면 `vod/clips/<uuid>.mp4`로 옮긴 뒤 `file_path`를 적는다(§4.10과 같은 "항상 private에 먼저" 규칙). 그 사이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + `failure_reason`(앞 200자). 타임아웃 `app.clip.timeout`(2분).
 - **원본과의 관계.** 클립은 만들어진 뒤 독립 파일이다: 원본 다시보기가 PRIVATE로 바뀌거나 보관 만료(FILE_DELETED)돼도 클립은 그대로 재생된다(`recordingAvailable`만 false). 방송이 삭제되면(`DELETE /broadcasts/{id}`) 그 방송의 클립도 같은 트랜잭션에서 soft delete하고 커밋 뒤 파일 · 썸네일을 지운다(`ClipService.deleteAllOfBroadcast`, `BroadcastService.delete`에서 호출).
 - **기본값.** `title`은 trim 뒤 비었으면 방송 제목, `visibility` 생략은 PUBLIC. 회원당 동시 처리 1개(`existsByCreatorIdAndStatus(me, PROCESSING)` → 409 `CLIP_IN_PROGRESS`).
+- **재생 서버 노출 금지.** MediaMTX `playback`(9996)은 인증 콜백이 모두 허용하므로 비공개 방송의 녹화 구간도 내준다. 운영 `compose.yaml`은 포트를 공개하지 않고 backend만 내부망으로 부른다(로컬 `compose.dev.yaml`만 `127.0.0.1:9996`).
 - **서빙.** PUBLIC READY → `videoUrl = "/vod/clips/<uuid>.mp4"`(Caddy `/vod/*` 정적, §2.2 그대로). PRIVATE → video-token(§4.16). 썸네일 `/uploads/thumbnails/clips/<clipId>.jpg`. 보관 만료 정리는 두지 않는다(클립은 작다).
 - **기동 복구.** `ClipProcessingService.resumePending()`(`ApplicationReadyEvent`)이 PROCESSING 클립을 다시 큐에 넣는다. LIVE 원천은 요청 시각의 `[start, start+N)`을 clip에 저장해 두므로(`start_seconds` + 방송 `started_at`로 복원) 재시작 뒤에도 같은 구간을 받는다.
 - 새 에러 코드: `CLIP_NOT_FOUND`(404 "클립을 찾을 수 없습니다"), `CLIP_IN_PROGRESS`(409 "이미 만드는 중인 클립이 있습니다"), `CLIP_NOT_READY`(409 "클립이 아직 준비되지 않았습니다").
@@ -506,7 +507,7 @@ frontend/src/
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
 | OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
-| MediaMTX v1.21.3 재생 서버(`/get?path&start&duration&format=mp4`)가 **녹화 중인** 조각(6시간 fMP4, 1초 part)을 시간 범위로 내주는지 · 받은 mp4가 `<video>`에서 바로 재생되는지 | CLIP-1(구현 전에 로컬 compose로 PoC: 송출 중 `curl "http://localhost:9996/get?path=live/<id>&start=<now−30s>&duration=30s&format=mp4" -o x.mp4`) | 1차 대안: 라이브 클립을 `raw/live/<channelId>/` 최신 fMP4 파일에서 `ffprobe` 길이 − N을 `-ss`로 `-c copy` 자르기. 그것도 안 되면 라이브 클립은 제외하고 다시보기 클립만(로드맵 CLIP-1 범위 축소, 사용자에게 알림) |
+| ~~MediaMTX v1.21.3 재생 서버(`/get?path&start&duration&format=mp4`)가 **녹화 중인** 조각을 시간 범위로 내주는지~~ **해소(2026-11-16, 지휘 세션 PoC)**: 송출 54초 뒤 `list`가 진행 중 조각(duration 52.8초)까지 보여 주고, `get … start=now−30s&duration=30s&format=mp4`가 200 · 876KB · 0.06초, ffprobe h264 + aac 30.03초, Chrome 재생 · 탐색 정상. RTMP(AAC) 송출로 확인했고 **브라우저 WHIP(Opus) 송출의 mp4 재생은 미확인** → CLIP-1 실행 확인 때 스튜디오 송출로 한 번 더. 주의: 인증 콜백이 playback을 무조건 허용하므로 9996은 비공개 다시보기 구간도 내준다 — 운영 `compose.yaml`에서 포트를 공개하지 않는다(내부망만) | CLIP-1 | (해소) 대안은 안 씀 |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
 ## 9. 항목별 구현 지침 (로드맵 ID)
