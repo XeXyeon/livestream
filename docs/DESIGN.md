@@ -86,6 +86,7 @@ hlsAlwaysRemux: yes  # 시청자 없어도 HLS 준비(그리드 전환 지연 �
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+webrtcTrackGatherTimeout: 10s   # FE-2#1: H.264 하드웨어 인코더는 첫 프레임까지 수 초 걸린다. 기본값(2s) 안에 영상 트랙이 안 오면 MediaMTX가 Opus만으로 스트림을 확정해 다시보기 · 클립에 영상이 빠진다. 트랙이 다 오면 그 즉시 확정되므로 늘려도 정상 경로는 느려지지 않는다
 webrtcAdditionalHosts: [${PUBLIC_HOST}]   # 공인 IP 또는 도메인
 authMethod: http
 authHTTPAddress: http://backend:8080/api/internal/mediamtx/auth
