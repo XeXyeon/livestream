@@ -27,7 +27,7 @@
 | 영구 저장 · 재시작 후 조회 | MySQL 볼륨 (OPS-3) |
 | 가입 · 로그인 · 로그아웃 · 인증 상태 | §4.7 (AUTH-1 · FE-1) |
 | 비로그인 조회 · 시청, 등록 · 송출은 로그인 | §4.8 권한 |
-| 수정 · 삭제 · 송출 제어 시 서버 소유자 검증 | §4.8 + `OwnerAuthorizationTest` |
+| 수정 · 삭제 · 송출 제어 시 서버 소유자 검증 | §4.8 + 각 `*ApiTest`의 제3자 403 검사 |
 | 댓글 CRUD · 작성자 검증 (선택) | §4.12 (CMT-1) — 근거는 **다시보기 댓글** |
 | 후원 요청 · 검증 저장 · 중복 승인 방지 · 내역 합계 (선택) | §4.13 (DON-1) + `DonationConfirmIdempotencyTest` |
 | 녹화 저장 · 목록 · 재생 · 영구 저장 (선택) | §4.10 (REC-1 · REC-2) |
@@ -284,7 +284,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | 채널 팔로우 · 해제, 내 팔로우 목록 | 로그인. 자기 채널은 팔로우 불가(400 `VALIDATION_ERROR`) |
 | 클립 만들기 | 로그인. 다시보기 클립은 recording READY이고 PUBLIC(PRIVATE는 채널 주인만), 라이브 클립은 방송 LIVE(DISCONNECTED는 409 `BROADCAST_NOT_LIVE`) |
 | 클립 제목 · 공개 설정 · 삭제, 비공개 클립 조회 · 재생 · video-token | `clip.creator_member_id == me` **또는** `clip.channel.member_id == me`(채널 주인은 남이 만든 자기 채널 클립도) |
-검증 헬퍼: `OwnershipGuard.requireChannelOwner(channel, me)`, `requireAuthor(comment, me)`. 테스트 `OwnerAuthorizationTest`: 다른 회원 토큰으로 수정 · 종료 · 삭제 · 공개 설정 · 게시글 · 댓글 → 403.
+검증 헬퍼: `OwnershipGuard.requireChannelOwner(channel, me)`, `requireAuthor(comment, me)`. 테스트: 별도 `OwnerAuthorizationTest`는 두지 않고 **각 도메인 `*ApiTest`**(`BroadcastApiTest` · `RecordingApiTest` · `PostApiTest` · `CommentApiTest` · `ClipApiTest` …)가 다른 회원 토큰으로 수정 · 종료 · 삭제 · 공개 설정 · 게시글 · 댓글 · 클립 → 403을 검사한다(2026-11-16 정정: 구현이 처음부터 흩어진 방식이었음).
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
 요청(MediaMTX가 보냄): `{ "ip", "user", "password", "path", "protocol", "id", "action", "query" }`.
@@ -388,7 +388,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1). 통합: 검색 매칭 · 제외 조건 · 이스케이프 · 페이징(`SearchApiTest`, §9 SEARCH-1). 통합: 클립 생성 조건 · 권한 · 공개 설정 이동 · 삭제(`ClipApiTest`, 처리기는 가짜 `FfmpegRunner` · `MediaMtxClient`), 단위: `ClipProcessingService` 경로 선택 · 실패 처리(§9 CLIP-1).
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(각 `*ApiTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1). 통합: 검색 매칭 · 제외 조건 · 이스케이프 · 페이징(`SearchApiTest`, §9 SEARCH-1). 통합: 클립 생성 조건 · 권한 · 공개 설정 이동 · 삭제(`ClipApiTest`, 처리기는 가짜 `FfmpegRunner` · `MediaMtxClient`), 단위: `ClipProcessingService` 경로 선택 · 실패 처리(§9 CLIP-1).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ### 4.18 클립 (`clip`, CLIP-1)
@@ -618,7 +618,7 @@ frontend/src/
 - 읽을 절: §4.18 전체, §4.16 클립 행 8개, §4.3 `clip`, §4.8 클립 두 행, §4.1 `app.clip.*` · `playback-url`, §2.3 `playback`, §2.4, §4.10(파일 규칙 · 토큰 분리 · 잠금 순서 — 같은 방식으로), §8 재생 서버 위험.
 - **먼저 PoC**(§8): 로컬 compose에서 `infra/mediamtx.yml`에 `playback: yes` · `playbackAddress: :9996`, `compose.dev.yaml`에 `127.0.0.1:9996:9996`(운영 `compose.yaml`은 포트 공개 없이 내부 네트워크만)을 넣고 송출 중 curl로 받은 mp4가 재생되는지 본다. 송출 · 확인은 포트를 쓰므로 지휘 세션에 명령 · 기대 결과를 보내 부탁한다(그동안 다시보기 클립 경로를 먼저 구현). 결과와 안 될 때의 대안 선택을 카드와 §8 행에 적는다.
 - 구조: 새 패키지 `clip/`(§4.2). `ClipFiles`는 `RecordingFiles`를 재사용하거나 같은 규칙(`locateVideo` · `moveVideo` · `deleteVideoQuietly`, 하위 폴더 `clips/`)으로 둔다. `MediaMtxClient.downloadRecording(path, Instant start, Duration duration, Path target)`(RestClient 스트리밍, `app.clip.timeout`). 비동기 실행기 `clipExecutor`(`AsyncConfig`, 단일 스레드)는 병합 실행기와 분리. `ClipVideoTokenService`는 `VideoTokenService`와 같은 구조에 aud · 파생 문자열만 다르게. 컨트롤러: `ClipController`(`/clips/**`, `/recordings/{id}/clips`, `/broadcasts/{id}/clips`, `/channels/{id}/clips`, `/members/me/clips`). `SecurityConfig` GET 공개 목록에 `/api/clips/*`, `/api/clips/*/video`, `/api/channels/*/clips`, `/api/recordings/*/clips`. `BroadcastService.delete`에 `clipService.deleteAllOfBroadcast(id)` 호출. springdoc `@Tag` · `@Schema`.
-- 완료: 통합 `ClipApiTest`(`@MockitoBean FfmpegRunner` · `MediaMtxClient`는 가짜 파일을 써 주는 stub) — ① 다시보기 클립 202 → 처리 뒤 READY · `videoUrl` `/vod/clips/…` · 파일 존재 · 썸네일 경로 ② PRIVATE 요청은 `private/clips/`에 있고 `videoUrl` null, video-token으로 200 · 다른 회원 403 ③ 비공개 다시보기는 주인만(403), READY 아님 409, 구간 초과 400, 길이 4 · 61 → 400, 동시 처리 409 ④ 라이브 클립: LIVE 202 · `startSeconds` 계산, DISCONNECTED · ENDED 409, 시작 직후 400 ⑤ PATCH 공개 설정 → 파일 이동 · `videoUrl` 변화, 제목 수정, creator가 아닌 채널 주인도 가능, 제3자 403 ⑥ DELETE → 404 · 파일 삭제 ⑦ 목록 세 개(공개만 / 주인은 비공개 포함 / 내 클립은 상태 포함) ⑧ 방송 삭제 시 클립 삭제 ⑨ 처리 실패(stub 실패) → FAILED · `failureReason`은 creator에게만. `OwnerAuthorizationTest`에 클립 행 추가. 흐름 문서 `~/.work-dash/flows/livestream.md`에 "클립" 절(BE 단계, FE는 `진행 중 차이`)을 FLOWS-FORMAT대로 추가. 실행 확인(실제 송출 중 라이브 클립 · 다시보기 클립 재생)은 지휘 세션.
+- 완료: 통합 `ClipApiTest`(`@MockitoBean FfmpegRunner` · `MediaMtxClient`는 가짜 파일을 써 주는 stub) — ① 다시보기 클립 202 → 처리 뒤 READY · `videoUrl` `/vod/clips/…` · 파일 존재 · 썸네일 경로 ② PRIVATE 요청은 `private/clips/`에 있고 `videoUrl` null, video-token으로 200 · 다른 회원 403 ③ 비공개 다시보기는 주인만(403), READY 아님 409, 구간 초과 400, 길이 4 · 61 → 400, 동시 처리 409 ④ 라이브 클립: LIVE 202 · `startSeconds` 계산, DISCONNECTED · ENDED 409, 시작 직후 400 ⑤ PATCH 공개 설정 → 파일 이동 · `videoUrl` 변화, 제목 수정, creator가 아닌 채널 주인도 가능, 제3자 403 ⑥ DELETE → 404 · 파일 삭제 ⑦ 목록 세 개(공개만 / 주인은 비공개 포함 / 내 클립은 상태 포함) ⑧ 방송 삭제 시 클립 삭제 ⑨ 처리 실패(stub 실패) → FAILED · `failureReason`은 creator에게만. 제3자 403(PATCH · DELETE · video-token · 비공개 GET)은 `ClipApiTest` ⑤ 안에서 검사한다(별도 `OwnerAuthorizationTest`는 없음, §4.8). 흐름 문서 `~/.work-dash/flows/livestream.md`에 "클립" 절(BE 단계, FE는 `진행 중 차이`)을 FLOWS-FORMAT대로 추가. 실행 확인(실제 송출 중 라이브 클립 · 다시보기 클립 재생)은 지휘 세션.
 
 ### CLIP-2 클립 UI
 - 읽을 절: §6.3 `/clips/:clipId`, §6.7 클립 · S13, §4.16 클립 행, §6.2. 파일: `api/clips.ts`, `api/types.ts`(`ClipSummary` · `ClipDetail` · 요청 타입), `components/clip/*`, `pages/Clip.tsx`, `App.tsx` 라우트, S2(`Live.tsx`) · S6(`Video.tsx`) · S9(`Channel.tsx`) · S8(`Me.tsx`) 수정.
