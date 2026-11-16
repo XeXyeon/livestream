@@ -5,7 +5,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { Drawer, DrawerHeader } from '@astryxdesign/core/Drawer'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { LinkProvider } from '@astryxdesign/core/Link'
-import { Menu, X } from 'lucide-react'
+import { Menu, UserRound, X } from 'lucide-react'
 import { useAuth } from '../../store/auth'
 import Spinner from '../common/Spinner'
 import { useAuthDialog } from '../../store/authDialog'
@@ -81,9 +81,10 @@ export default function Header() {
                   onClick={() => (wide ? changeCollapsed(!collapsed) : setDrawerOpen(true))}
                 />
               )}
-              <Link to="/" className="flex shrink-0 items-center gap-2 text-lg font-bold text-primary sm:text-xl">
+              {/* 휴대폰 폭(sm 미만)에서는 오른쪽 버튼과 겹치므로 글자를 숨기고 아이콘만 둔다. 이름은 aria-label로 남긴다 */}
+              <Link to="/" aria-label="그리드라이브 홈" className="flex shrink-0 items-center gap-2 text-lg font-bold text-primary sm:text-xl">
                 <img src="/favicon.svg" alt="" aria-hidden className="h-7 w-7" />
-                그리드라이브
+                <span className="hidden sm:inline">그리드라이브</span>
               </Link>
             </div>
             {/* 가운데 통합 검색창(SEARCH-2): sm 이상은 입력창, 미만은 오른쪽 가까이 돋보기 버튼 */}
@@ -96,7 +97,12 @@ export default function Header() {
                   {member ? (
                     <>
                       <Button href="/studio" label="방송하기" variant="primary" size="sm" />
-                      <Button href="/me" label={`${member.nickname}님`} variant="ghost" size="sm" />
+                      {/* 휴대폰 폭에서는 긴 닉네임이 로고를 밀어내므로 아이콘 버튼으로 줄인다 */}
+                      {wide ? (
+                        <Button href="/me" label={`${member.nickname}님`} variant="ghost" size="sm" />
+                      ) : (
+                        <IconButton href="/me" label={`${member.nickname}님`} icon={<UserRound aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" />
+                      )}
                       <Button label="로그아웃" variant="ghost" size="sm" onClick={() => void handleLogout()} />
                     </>
                   ) : (
