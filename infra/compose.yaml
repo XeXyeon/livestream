@@ -50,6 +50,8 @@ services:
 
   mediamtx:
     build: ./mediamtx
+    # backend 이미지의 app 사용자(uid 100 · gid 101)와 맞춘다. root로 쓰면 녹화 원본을 backend가 병합 뒤 지우지 못한다
+    user: "100:101"
     ports:
       - "1935:1935"
       - "8189:8189/udp"
