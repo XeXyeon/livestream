@@ -37,7 +37,7 @@ import org.springframework.web.client.RestClientException;
  * 클립 처리기 (DESIGN §4.18). {@code clipExecutor}(단일 스레드)에서 하나씩 돈다.
  * <ul>
  *   <li>시작할 때 클립을 다시 읽어 PROCESSING 이 아니거나 삭제됐으면 아무것도 하지 않는다.</li>
- *   <li>RECORDING: 병합된 다시보기 파일을 {@code ffmpeg -ss -i -t} 로 자른다. 원본에 영상이 있으면 영상은 libx264 로 다시 인코딩하고
+ *   <li>RECORDING: 병합된 다시보기 파일을 {@link #seekArgs} 로 자른다. 원본에 영상이 있으면 영상은 libx264 로 다시 인코딩하고
  *       오디오는 복사한다({@link VideoTranscode}, FE-3#1 — 라이브 녹화의 기본값 avcC · 중간 해상도 변경을 한 SPS 로 정리).</li>
  *   <li>LIVE: 라이브 클립 초안(CLIP-3) 파일을 RECORDING 과 같은 방식으로 자른다(시작은 초안 기준). 초안 파일이 없으면 FAILED(SOURCE_FILE_MISSING).</li>
  *   <li>초안 받기({@link #enqueueDraft}): MediaMTX 재생 서버에서 창 {@code [started_at + window_start_seconds, +window_seconds)} mp4 를
@@ -427,15 +427,15 @@ public class ClipProcessingService {
 		return cut(src, job, out);
 	}
 
-	/** {@code ffmpeg -ss -i -t}. 원본에 영상이 있으면 영상은 다시 인코딩(오디오 복사), 없으면 {@code -c copy}. */
+	/** {@link #seekArgs} 로 자른다. 원본에 영상이 있으면 영상은 다시 인코딩(오디오 복사), 없으면 {@code -c copy}. */
 	private Cut cut(Path src, Job job, Path out) {
 		VideoTranscode.VideoInfo info = VideoTranscode.probe(ffmpeg, src, PROBE_TIMEOUT);
 		if (info == null) {
 			log.warn("클립 원본 영상 확인 실패: {}", src);
 			return Cut.failed(PROBE_FAILED);
 		}
-		List<String> args = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-				"-ss", String.valueOf(job.startSeconds()), "-i", src.toString(), "-t", String.valueOf(job.durationSeconds())));
+		List<String> args = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y"));
+		args.addAll(seekArgs(src, job.startSeconds(), job.durationSeconds()));
 		args.addAll(transcodeOrCopy(src, info, VideoTranscode.PRESET_FINAL));
 		args.addAll(List.of("-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out.toString()));
 		FfmpegRunner.Result result = ffmpeg.ffmpeg(args, props.clip().timeout());
@@ -444,6 +444,26 @@ public class ClipProcessingService {
 		}
 		log.warn("클립 자르기 실패: {} {}", src, result.describe());
 		return new Cut(CUT_FAILED, info.hasVideo());
+	}
+
+	/** 입력 앞에서 미리 찾아갈 여유(초). 이 위치 앞의 키프레임으로 빠르게 건너뛴 뒤 나머지는 출력 쪽에서 정확히 자른다. */
+	static final int SEEK_PREROLL_SECONDS = 10;
+
+	/**
+	 * 자르기 위치 인자({@code [-ss 대략] -i src -ss 나머지 -t 길이}). 입력 앞 {@code -ss} 만 쓰면 다시 인코딩하는 영상은 정확히
+	 * 잘리지만 복사하는 오디오는 그 앞 키프레임부터 들어와, 클립이 요청보다 몇 초 길어지고 앞부분은 소리만 나온다(CLIP-1#4).
+	 * 출력 쪽 {@code -ss} 는 복사 스트림도 시각으로 자른다. 시작이 여유보다 앞이면 입력 쪽 {@code -ss} 를 두지 않는다
+	 * ({@code -ss 0} 을 붙이면 결과가 짧아지는 것을 봤다).
+	 */
+	static List<String> seekArgs(Path src, int startSeconds, int durationSeconds) {
+		int coarse = Math.max(0, startSeconds - SEEK_PREROLL_SECONDS);
+		List<String> args = new ArrayList<>();
+		if (coarse > 0) {
+			args.addAll(List.of("-ss", String.valueOf(coarse)));
+		}
+		args.addAll(List.of("-i", src.toString(), "-ss", String.valueOf(startSeconds - coarse),
+				"-t", String.valueOf(durationSeconds)));
+		return args;
 	}
 
 	/** 영상이 있으면 재인코딩 옵션, 없으면 {@code -c copy}. */
