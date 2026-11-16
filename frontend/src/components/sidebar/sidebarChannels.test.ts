@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BroadcastSummary, FollowedChannel, RecordingSummary } from '../../api/types'
-import { buildSidebarChannels, followsToSidebar, hasSidebar, readCollapsed, writeCollapsed } from './sidebarChannels'
+import { buildSidebarChannels, followsToSidebar, hasSidebar, keepOrder, readCollapsed, writeCollapsed } from './sidebarChannels'
 
 const category = { code: 'GAME', label: '게임' } as const
 const live = (id: number, channelId: number, viewerCount: number): BroadcastSummary => ({
@@ -64,5 +64,24 @@ describe('접힘 상태 저장', () => {
     })
     const result = followsToSidebar([follow(3, true, 7), follow(14, false, 0)])
     expect(result.map((item) => [item.channelId, item.viewerCount, item.href])).toEqual([[3, 7, '/live/3'], [14, null, '/live/14']])
+  })
+})
+
+describe('keepOrder', () => {
+  const row = (channelId: number, viewerCount: number | null) =>
+    ({ channelId, name: `ch${channelId}`, category, viewerCount, lastBroadcastAt: null, href: '' })
+  const ids = (rows: { channelId: number }[]) => rows.map((r) => r.channelId)
+
+  it('처음에는 서버 순서 그대로', () => {
+    expect(ids(keepOrder([], [row(1, 5), row(2, 3), row(3, null)]))).toEqual([1, 2, 3])
+  })
+  it('시청자 수가 바뀌어 서버 순서가 달라져도 이전 자리를 지킨다', () => {
+    expect(ids(keepOrder([1, 2, 3], [row(3, 9), row(1, 5), row(2, 3)]))).toEqual([1, 2, 3])
+  })
+  it('새 채널은 같은 쪽 끝에 붙고, 빠진 채널은 사라진다', () => {
+    expect(ids(keepOrder([1, 2, 3], [row(4, 9), row(3, 1), row(1, 2)]))).toEqual([1, 3, 4])
+  })
+  it('라이브가 된 채널은 라이브 아닌 채널보다 위로, 끝난 채널은 아래로', () => {
+    expect(ids(keepOrder([1, 2, 3], [row(1, null), row(2, 1), row(3, 4)]))).toEqual([2, 3, 1])
   })
 })
