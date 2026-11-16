@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Play } from 'lucide-react'
+import { Play, X } from 'lucide-react'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import { Switch } from '@astryxdesign/core/Switch'
 import { ApiError } from '../../api/client'
 import { createClipFromDraft, createRecordingClip } from '../../api/clips'
@@ -75,6 +76,16 @@ export default function ClipDialog(props: RecordingProps | LiveProps) {
 
 type Done = { onClose: () => void; onCreated: (clipId: number) => void }
 
+/** 제목 줄 오른쪽에 닫기(X). DialogHeader 기본 닫기 버튼은 이름이 영어(Close)라 직접 둔다 */
+function ClipDialogHeader({ onClose }: { onClose: () => void }) {
+  return (
+    <DialogHeader
+      title="클립 만들기"
+      endContent={<IconButton label="닫기" icon={<X aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" onClick={onClose} />}
+    />
+  )
+}
+
 function LiveDraftClip({ draftId, defaultTitle, onClose, onCreated }: { draftId: number; defaultTitle: string } & Done) {
   const { data, isError } = useClipDraft(draftId)
   return <LiveDraftStage draft={data ?? null} isError={isError} defaultTitle={defaultTitle} onClose={onClose} onCreated={onCreated} />
@@ -92,7 +103,7 @@ export function LiveDraftStage({ draft, isError, defaultTitle, onClose, onCreate
   if (isError || draft?.status === 'FAILED' || (draft?.status === 'READY' && !draft.videoUrl)) {
     return (
       <>
-        <DialogHeader title="클립 만들기" />
+        <ClipDialogHeader onClose={onClose} />
         <div className="space-y-5 px-2 pb-2">
           <p role="alert" className="text-sm text-error">클립을 만들 수 없습니다. 잠시 뒤 다시 시도해 주세요.</p>
           <div className="flex justify-end"><Button label="닫기" variant="secondary" onClick={onClose} /></div>
@@ -103,7 +114,7 @@ export function LiveDraftStage({ draft, isError, defaultTitle, onClose, onCreate
   if (draft === null || draft.status === 'PENDING') {
     return (
       <>
-        <DialogHeader title="클립 만들기" />
+        <ClipDialogHeader onClose={onClose} />
         <div className="space-y-5 px-2 pb-2">
           <div className="flex aspect-video w-full items-center justify-center rounded-md bg-surface">
             <Spinner label="최근 2분을 준비하는 중…" />
@@ -299,7 +310,7 @@ function ClipForm({ totalSeconds, initialStart, followStart = null, onStartCommi
 
   return (
     <>
-      <DialogHeader title="클립 만들기" />
+      <ClipDialogHeader onClose={onClose} />
       <form onSubmit={onSubmit} className="space-y-5 px-2 pb-2" noValidate>
         {preview}
         {hint && <p className="text-sm text-secondary">{hint}</p>}

@@ -61,3 +61,11 @@ describe('ClipDialog 구간 막대(CLIP-4)', () => {
     expect(html).toContain('type="range"')
   })
 })
+
+describe('ClipDialog 닫기 버튼', () => {
+  it('준비 중 · 실패 · 구간 선택 화면 모두 제목 줄에 "닫기" 버튼이 있다', () => {
+    for (const html of [render(base), render(base, true), render({ ...base, status: 'READY', videoUrl: '/v' })]) {
+      expect(html).toContain('aria-label="닫기"')
+    }
+  })
+})
