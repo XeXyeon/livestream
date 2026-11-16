@@ -45,8 +45,16 @@ export default function Header() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openAuth = useAuthDialog((state) => state.open)
   const wide = useSyncExternalStore(subscribeWide, isWide)
+  // 기억한 접힘 상태는 lg 이상에만 쓴다. sm~lg(640~1023px)는 펼치면 본문이 260px 줄어 늘 접힌 채로 시작하고,
+  // 거기서 펼친 것은 기억하지 않는다(lg 이상의 설정을 덮지 않게)
   const [collapsed, setCollapsed] = useState(() => readCollapsed())
+  const [midExpanded, setMidExpanded] = useState(false)
+  const effectiveCollapsed = lgWide ? collapsed : !midExpanded
   const changeCollapsed = (next: boolean) => {
+    if (!lgWide) {
+      setMidExpanded(!next)
+      return
+    }
     setCollapsed(next)
     writeCollapsed(next)
   }
@@ -74,11 +82,11 @@ export default function Header() {
             <div className="flex min-w-0 items-center gap-2">
               {sidebar && (
                 <IconButton
-                  label={wide ? (collapsed ? '사이드바 펼치기' : '사이드바 접기') : '채널 목록 열기'}
+                  label={wide ? (effectiveCollapsed ? '사이드바 펼치기' : '사이드바 접기') : '채널 목록 열기'}
                   icon={<Menu aria-hidden className="h-5 w-5" />}
                   variant="ghost"
                   size="sm"
-                  onClick={() => (wide ? changeCollapsed(!collapsed) : setDrawerOpen(true))}
+                  onClick={() => (wide ? changeCollapsed(!effectiveCollapsed) : setDrawerOpen(true))}
                 />
               )}
               {/* 휴대폰 폭(sm 미만)에서는 오른쪽 버튼과 겹치므로 글자를 숨기고 아이콘만 둔다. 이름은 aria-label로 남긴다 */}
@@ -115,7 +123,7 @@ export default function Header() {
           </div>
         </header>
         <div className="flex">
-          {sidebar && <ChannelSidebar wide={wide} collapsed={collapsed} onCollapsedChange={changeCollapsed} onExpand={() => setDrawerOpen(true)} />}
+          {sidebar && <ChannelSidebar wide={wide} collapsed={effectiveCollapsed} onCollapsedChange={changeCollapsed} onExpand={() => setDrawerOpen(true)} />}
           <main className={fullBleed ? 'min-w-0 flex-1' : 'mx-auto min-w-0 max-w-6xl flex-1 px-4 py-8 sm:px-5 sm:py-10'}>
             {error && <div className="mb-6"><Banner role="alert" status="error" title={error} /></div>}
             <Suspense fallback={<Spinner />}><Outlet /></Suspense>
