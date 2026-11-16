@@ -5,12 +5,14 @@ import { bootstrapAuth, shouldRetryQuery } from './api/client'
 import Header from './components/layout/Header'
 import Protected from './components/layout/Protected'
 import Home from './pages/Home'
+import Search from './pages/Search'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Placeholder from './pages/Placeholder'
 
 // 무거운 화면(플레이어 · 송출 · 위젯)은 따로 받는다. 대기 표시는 Header의 Suspense가 맡는다.
 const Live = lazy(() => import('./pages/Live'))
+const LiveChatPopout = lazy(() => import('./pages/LiveChatPopout'))
 const StudioEntry = lazy(() => import('./pages/StudioEntry'))
 const StudioPc = lazy(() => import('./pages/StudioPc'))
 const StudioMobile = lazy(() => import('./pages/StudioMobile'))
@@ -28,8 +30,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/widget/:widgetKey" element={<Suspense fallback={null}><Widget /></Suspense>} />
+      {/* 시청 화면 채팅 새 창: 헤더 셸 밖 */}
+      <Route path="/live/:channelId/chat" element={<Suspense fallback={null}><LiveChatPopout /></Suspense>} />
       <Route element={<Header />}>
         <Route path="/" element={<Home />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/live/:channelId" element={<Live />} />
         <Route path="/videos/:recordingId" element={<Video />} />
         <Route path="/channel/:channelId" element={<Channel />} />

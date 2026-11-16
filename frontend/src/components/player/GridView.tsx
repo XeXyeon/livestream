@@ -2,21 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import type { GridPlayer } from '../../media/gridPlayer'
 import type { GridStats } from '../../media/gridStats'
 import UnmuteButton from './UnmuteButton'
+import VideoControls from './VideoControls'
+import type { PlayerChrome } from './VideoControls'
 import { useVideoSurface } from './useVideoSurface'
 
 type Props = {
   hlsUrl: string
   onStats: (stats: GridStats | null) => void
   onP2pUnavailable?: () => void
+  chrome?: PlayerChrome
 }
 
 // §6.5 그리드 모드 화면. hls.js + p2p-media-loader는 크기가 커서(수백 KB) 그리드 모드에 들어올 때만 불러온다.
-export default function GridView({ hlsUrl, onStats, onP2pUnavailable }: Props) {
+export default function GridView({ hlsUrl, onStats, onP2pUnavailable, chrome }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const callbacks = useRef({ onStats, onP2pUnavailable })
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState('')
-  const surface = useVideoSurface(videoRef)
+  const surface = useVideoSurface(videoRef, chrome?.fill)
 
   useEffect(() => { callbacks.current = { onStats, onP2pUnavailable } }, [onStats, onP2pUnavailable])
 
@@ -57,6 +60,7 @@ export default function GridView({ hlsUrl, onStats, onP2pUnavailable }: Props) {
       )}
       {error && <div role="alert" className="absolute inset-0 flex items-center justify-center bg-black/80 px-6 text-center text-sm text-rose-200">{error}</div>}
       {surface.muted && playing && <UnmuteButton onClick={surface.unmute} />}
+      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} />
     </div>
   )
 }

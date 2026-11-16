@@ -58,6 +58,8 @@ public class SecurityConfig {
 								// 비공개 다시보기 재생: <video> 는 Authorization 헤더를 못 붙여 재생 토큰(쿼리)으로 검사한다(§4.10).
 								"/api/recordings/*/video",
 								"/api/posts/*", "/api/posts/*/comments",
+								// 통합 검색(SEARCH-1): 요약과 종류별 목록
+								"/api/search", "/api/search/*",
 								"/api/public/widget/*/events").permitAll()
 						.requestMatchers("/api/**").authenticated()
 						.anyRequest().permitAll())
