@@ -23,6 +23,7 @@ import DonationBanner from '../components/donation/DonationBanner'
 import { useDonationBanner } from '../components/donation/useDonationBanner'
 import { useDonationReturn } from '../components/donation/useDonationReturn'
 import type { DonationReturnState } from '../components/donation/useDonationReturn'
+import { LiveClipButton, LiveClipNotice } from '../components/clip/LiveClipButton'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
 import { useAuthDialog } from '../store/authDialog'
@@ -166,8 +167,10 @@ function writeChatCollapsed(collapsed: boolean) {
 }
 
 function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
+  // 클립(CLIP-2): 정보 줄 끝의 "클립" 버튼 → 아래 한 줄 알림(만드는 중 → 클립 보기)
+  const [clipId, setClipId] = useState<number | null>(null)
   return (
-    <div>
+    <div className="space-y-3">
       {/* 방송 중에는 제목이 플레이어 모드 줄 왼쪽에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
       {broadcast.status === 'ENDED' && <div className="mb-2"><Heading level={1}>{broadcast.title}</Heading></div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
@@ -178,7 +181,9 @@ function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
         )}
         <Badge variant="neutral" label={broadcast.category.label} />
         <span>{formatRelative(broadcast.startedAt)} 시작</span>
+        <span className="ml-auto"><LiveClipButton broadcast={broadcast} onCreated={setClipId} /></span>
       </div>
+      <LiveClipNotice clipId={clipId} onDismiss={() => setClipId(null)} />
     </div>
   )
 }

@@ -275,3 +275,45 @@ export type SearchResponse = {
   lives: SearchGroup<BroadcastSummary>
   recordings: SearchGroup<RecordingSummary>
 }
+
+// §4.16 · §4.18 클립(CLIP-1)
+export type ClipStatus = 'PROCESSING' | 'READY' | 'FAILED'
+export type ClipSource = 'RECORDING' | 'LIVE'
+
+/** 클립 목록 카드(GET /channels/{id}/clips · /recordings/{id}/clips · /members/me/clips) */
+export type ClipSummary = {
+  id: number
+  title: string
+  /** READY면 실제 길이, 아니면 요청 길이 */
+  durationSeconds: number
+  thumbnailUrl: string | null
+  status: ClipStatus
+  visibility: Visibility
+  createdAt: string
+  creator: { nickname: string }
+  channel: ChannelRef
+  broadcastId: number
+  recordingId: number | null
+}
+
+/** GET /clips/{id}. PROCESSING이면 2초마다 다시 부른다 */
+export type ClipDetail = ClipSummary & {
+  source: ClipSource
+  /** 방송 시작(= 다시보기 0초) 기준 시작 위치(초) */
+  startSeconds: number
+  /** 원본 다시보기로 갈 수 있는지(원본이 READY · PUBLIC이거나 내가 채널 주인) */
+  recordingAvailable: boolean
+  /** READY · PUBLIC일 때만. 비공개는 video-token */
+  videoUrl: string | null
+  /** FAILED일 때 만든 회원 · 채널 주인에게만 */
+  failureReason: string | null
+  isOwner: boolean
+  isCreator: boolean
+}
+
+/** POST /recordings/{id}/clips */
+export type RecordingClipRequest = { title?: string; startSeconds: number; durationSeconds: number; visibility?: Visibility }
+/** POST /broadcasts/{id}/clips — 요청 시각 기준 최근 N초 */
+export type LiveClipRequest = { title?: string; durationSeconds: number; visibility?: Visibility }
+/** PATCH /clips/{id} */
+export type ClipUpdateRequest = { title?: string; visibility?: Visibility }
