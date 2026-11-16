@@ -77,9 +77,11 @@ public class ClipDraft extends BaseEntity {
 	}
 
 	/** 받기 성공. 호출 전에 잠금 읽기로 {@link #isPending()} 을 확인한다. */
-	void markReady(String filePath, int windowSeconds) {
+	/** 받은 파일 기준으로 창을 확정한다(조각에 맞춰 옮긴 시작 · 실제 길이, DESIGN §4.18 ①). */
+	void markReady(String filePath, int windowStartSeconds, int windowSeconds) {
 		this.status = ClipDraftStatus.READY;
 		this.filePath = filePath;
+		this.windowStartSeconds = windowStartSeconds;
 		this.windowSeconds = windowSeconds;
 		this.failureReason = null;
 	}

@@ -7,9 +7,14 @@ import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,7 +71,7 @@ public class MediaMtxClient {
 	 *         (본문 처리 중 IOException 은 RestClient 가 ResourceAccessException 으로 감싼다)
 	 */
 	public boolean downloadRecording(String path, Instant start, Duration duration, Path target) {
-		String startText = DateTimeFormatter.ISO_INSTANT.format(start.truncatedTo(ChronoUnit.MILLIS));
+		String startText = rfc3339(start);
 		Boolean written = playbackClient.get()
 				.uri(b -> b.path("/get").queryParam("path", path).queryParam("start", startText)
 						.queryParam("duration", duration.toSeconds() + "s").queryParam("format", "mp4").build())
@@ -88,6 +93,63 @@ public class MediaMtxClient {
 					return true;
 				});
 		return Boolean.TRUE.equals(written);
+	}
+
+	/**
+	 * 녹화 조각 목록(라이브 클립 초안의 창 맞추기, DESIGN §4.18 ①):
+	 * {@code GET {playback-url}/list?path=&start=<RFC3339>&end=<RFC3339>} → {@code [{start, duration(초)}]}, 시작 순.
+	 * MediaMTX 는 브라우저 송출 직후 녹화 조각을 새로 시작할 때가 있어(드리프트 리셋) {@code /get} 이 창 시작이 든 짧은 첫 조각만
+	 * 내주므로, 처리기가 받기 전에 이 목록으로 창 시작을 옮긴다.
+	 *
+	 * @return 그 구간과 겹치는 조각. 404(녹화 없음)는 빈 목록, 시각 · 길이를 읽을 수 없는 항목은 건너뛴다
+	 * @throws RestClientException 연결 실패 · 타임아웃 · 그 밖의 HTTP 오류
+	 */
+	public List<RecordingSegment> listSegments(String path, Instant start, Instant end) {
+		ListItem[] items = playbackClient.get()
+				.uri(b -> b.path("/list").queryParam("path", path).queryParam("start", rfc3339(start))
+						.queryParam("end", rfc3339(end)).build())
+				.exchange((request, response) -> {
+					int status = response.getStatusCode().value();
+					if (status == 404) {
+						return null;
+					}
+					if (!response.getStatusCode().is2xxSuccessful()) {
+						throw new RestClientException("재생 서버 응답 " + status);
+					}
+					return response.bodyTo(ListItem[].class);
+				});
+		if (items == null) {
+			return List.of();
+		}
+		List<RecordingSegment> segments = new ArrayList<>();
+		for (ListItem item : items) {
+			if (item == null || item.start() == null || item.duration() == null || item.duration() < 0) {
+				continue;
+			}
+			try {
+				segments.add(new RecordingSegment(OffsetDateTime.parse(item.start()).toInstant(), item.duration()));
+			} catch (DateTimeParseException e) {
+				log.warn("재생 서버 /list 의 시각을 읽지 못함: {}", item.start());
+			}
+		}
+		segments.sort(Comparator.comparing(RecordingSegment::start));
+		return segments;
+	}
+
+	/** 녹화 조각 하나: 시작 시각과 길이(초). */
+	public record RecordingSegment(Instant start, double durationSeconds) {
+
+		public Instant end() {
+			return start.plusNanos(Math.round(durationSeconds * 1_000_000_000d));
+		}
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	record ListItem(String start, Double duration) {
+	}
+
+	private static String rfc3339(Instant t) {
+		return DateTimeFormatter.ISO_INSTANT.format(t.truncatedTo(ChronoUnit.MILLIS));
 	}
 
 	/**

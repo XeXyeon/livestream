@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -231,8 +232,48 @@ public class ClipProcessingService {
 	record Job(ClipSource source, String recordingFile, String draftFile, int startSeconds, int durationSeconds) {
 	}
 
-	/** 초안 받기가 시작할 때 읽는 값: 창의 시작 시각(방송 시작 + window_start_seconds)과 길이. */
-	record DraftJob(Long channelId, Instant windowStart, int windowSeconds) {
+	/** 초안 받기가 시작할 때 읽는 값: 방송 시작 시각과 창(방송 기준 시작 초 · 길이). */
+	record DraftJob(Long channelId, Instant startedAt, DraftWindow window) {
+	}
+
+	/** 초안 창: 방송 시작 기준 시작 초와 길이(초). */
+	record DraftWindow(int startSeconds, int seconds) {
+	}
+
+	/** 조각이 이어진다고 볼 끝 · 시작 차이. MediaMTX {@code /get} 이 합쳐 주는 기준보다 작게 잡는다(크면 못 받는 창을 남긴다). */
+	static final Duration SEGMENT_CONTIGUITY_TOLERANCE = Duration.ofMillis(500);
+
+	/**
+	 * 창을 녹화 조각에 맞춘다(DESIGN §4.18 ①, CLIP-3#1). 창과 겹치는 조각 가운데 창 끝을 덮는(없으면 겹치는 마지막) 조각에서
+	 * 거꾸로, 틈 · 겹침 없이 이어지는 조각만 묶는다. 그 첫 조각의 시작이 창 시작보다 늦으면 창 시작을 거기(초 올림)로 옮기고 끝은 그대로
+	 * 둔다. 앞 조각은 버린다. 조각이 없으면 그대로.
+	 */
+	static DraftWindow alignToSegments(Instant startedAt, DraftWindow window, List<MediaMtxClient.RecordingSegment> segments) {
+		Instant windowStart = startedAt.plusSeconds(window.startSeconds());
+		Instant windowEnd = windowStart.plusSeconds(window.seconds());
+		List<MediaMtxClient.RecordingSegment> overlapping = segments.stream()
+				.filter(s -> s.start().isBefore(windowEnd) && s.end().isAfter(windowStart))
+				.sorted(Comparator.comparing(MediaMtxClient.RecordingSegment::start))
+				.toList();
+		if (overlapping.isEmpty()) {
+			return window;
+		}
+		int first = overlapping.size() - 1;
+		while (first > 0) {
+			Duration diff = Duration.between(overlapping.get(first - 1).end(), overlapping.get(first).start()).abs();
+			if (diff.compareTo(SEGMENT_CONTIGUITY_TOLERANCE) > 0) {
+				break;
+			}
+			first--;
+		}
+		Instant groupStart = overlapping.get(first).start();
+		if (!groupStart.isAfter(windowStart)) {
+			return window;
+		}
+		long millis = Duration.between(startedAt, groupStart).toMillis();
+		int newStart = (int) Math.ceilDiv(millis, 1000L);
+		int end = window.startSeconds() + window.seconds();
+		return new DraftWindow(newStart, Math.max(0, end - newStart));
 	}
 
 	private enum SaveResult {
@@ -390,8 +431,8 @@ public class ClipProcessingService {
 					log.info("클립 초안 버림(원본 방송이 삭제됨): draft={}", draftId);
 					return false;
 				})
-				.map(d -> new DraftJob(d.getChannel().getId(),
-						d.getBroadcast().getStartedAt().plusSeconds(d.getWindowStartSeconds()), d.getWindowSeconds()))
+				.map(d -> new DraftJob(d.getChannel().getId(), d.getBroadcast().getStartedAt(),
+						new DraftWindow(d.getWindowStartSeconds(), d.getWindowSeconds())))
 				.orElse(null));
 		if (job == null) {
 			log.info("클립 초안 받기 건너뜀(없음 · PENDING 아님): draft={}", draftId);
@@ -406,10 +447,16 @@ public class ClipProcessingService {
 				return;
 			}
 			Files.createDirectories(out.getParent());
+			String livePath = "live/" + job.channelId();
+			DraftWindow window = alignedWindow(draftId, livePath, job);
+			if (window.seconds() < props.clip().minSeconds()) {
+				failDraft(draftId, NO_MEDIA);
+				return;
+			}
 			String failure;
 			try {
-				boolean got = mediaMtxClient.downloadRecording("live/" + job.channelId(), job.windowStart(),
-						Duration.ofSeconds(job.windowSeconds()), out);
+				boolean got = mediaMtxClient.downloadRecording(livePath, job.startedAt().plusSeconds(window.startSeconds()),
+						Duration.ofSeconds(window.seconds()), out);
 				failure = got ? null : NO_MEDIA;
 			} catch (RestClientException e) {
 				log.warn("클립 초안 받기 실패: draft={} channel={} ({})", draftId, job.channelId(), e.getMessage());
@@ -425,7 +472,7 @@ public class ClipProcessingService {
 			// 끝의 part 가 아직 안 내려와 창보다 짧을 수 있다. 내림해 프론트의 범위 검증(start + duration ≤ windowSeconds)이
 			// 실제 파일 안에 들게 한다. ffprobe 가 실패하면 요청한 창 길이를 그대로 둔다.
 			Double probed = failure == null ? probeDurationSeconds(out) : null;
-			int windowSeconds = probed == null ? job.windowSeconds() : (int) Math.min(job.windowSeconds(), Math.floor(probed));
+			int windowSeconds = probed == null ? window.seconds() : (int) Math.min(window.seconds(), Math.floor(probed));
 			// 쓸 수 있는 클립(최소 길이)이 하나도 나오지 않는 초안은 READY 로 두지 않는다.
 			if (failure == null && windowSeconds < props.clip().minSeconds()) {
 				failure = NO_MEDIA;
@@ -437,12 +484,13 @@ public class ClipProcessingService {
 			Boolean saved = tx.execute(s -> draftRepository.findByIdForUpdate(draftId)
 					.filter(ClipDraft::isPending)
 					.map(d -> {
-						d.markReady(outRelative, windowSeconds);
+						d.markReady(outRelative, window.startSeconds(), windowSeconds);
 						return true;
 					}).orElse(false));
 			if (Boolean.TRUE.equals(saved)) {
 				keep = true;
-				log.info("클립 초안 받기 완료: draft={} file={} window={}s", draftId, outRelative, windowSeconds);
+				log.info("클립 초안 받기 완료: draft={} file={} windowStart={}s window={}s", draftId, outRelative,
+						window.startSeconds(), windowSeconds);
 			} else {
 				log.info("클립 초안 결과 버림(그 사이 지워짐): draft={}", draftId);
 			}
@@ -453,6 +501,24 @@ public class ClipProcessingService {
 			if (!keep) {
 				deleteQuietly(out);
 			}
+		}
+	}
+
+	/** 받기 전에 {@code /list} 로 창을 조각에 맞춘다. 실패하거나 비어 있으면 그대로(지금 동작). */
+	private DraftWindow alignedWindow(Long draftId, String livePath, DraftJob job) {
+		DraftWindow window = job.window();
+		Instant start = job.startedAt().plusSeconds(window.startSeconds());
+		try {
+			DraftWindow aligned = alignToSegments(job.startedAt(), window,
+					mediaMtxClient.listSegments(livePath, start, start.plusSeconds(window.seconds())));
+			if (!aligned.equals(window)) {
+				log.info("클립 초안 창을 녹화 조각에 맞춤: draft={} {}s+{}s → {}s+{}s", draftId, window.startSeconds(),
+						window.seconds(), aligned.startSeconds(), aligned.seconds());
+			}
+			return aligned;
+		} catch (RestClientException e) {
+			log.warn("재생 서버 /list 실패, 창을 그대로 받음: draft={} ({})", draftId, e.getMessage());
+			return window;
 		}
 	}
 
