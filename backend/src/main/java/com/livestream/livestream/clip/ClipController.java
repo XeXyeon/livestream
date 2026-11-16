@@ -4,7 +4,6 @@ import com.livestream.livestream.clip.dto.ClipCreateRequest;
 import com.livestream.livestream.clip.dto.ClipDetail;
 import com.livestream.livestream.clip.dto.ClipSummary;
 import com.livestream.livestream.clip.dto.ClipUpdateRequest;
-import com.livestream.livestream.clip.dto.LiveClipCreateRequest;
 import com.livestream.livestream.common.dto.PageResponse;
 import com.livestream.livestream.common.security.CurrentMember;
 import com.livestream.livestream.common.security.MemberPrincipal;
@@ -29,7 +28,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "Clip", description = "클립(다시보기 구간 · 라이브 최근 N초)")
+@Tag(name = "Clip", description = "클립(다시보기 구간 · 라이브 클립 초안의 구간). 라이브 초안은 Clip Draft")
 @RestController
 @RequiredArgsConstructor
 public class ClipController {
@@ -46,15 +45,6 @@ public class ClipController {
 	public ClipDetail createFromRecording(@CurrentMember MemberPrincipal me, @PathVariable Long id,
 			@Valid @RequestBody ClipCreateRequest request) {
 		return clipService.createFromRecording(id, me, request);
-	}
-
-	@Operation(summary = "라이브 최근 N초 클립 만들기",
-			description = "로그인. 방송 LIVE(아니면 409 BROADCAST_NOT_LIVE), 시작 뒤 N초 이상 지났을 것(아니면 400). 202 + PROCESSING")
-	@PostMapping("/api/broadcasts/{id}/clips")
-	@ResponseStatus(HttpStatus.ACCEPTED)
-	public ClipDetail createFromLive(@CurrentMember MemberPrincipal me, @PathVariable Long id,
-			@Valid @RequestBody LiveClipCreateRequest request) {
-		return clipService.createFromLive(id, me, request);
 	}
 
 	@Operation(summary = "클립 상세", description = "누구나(비공개는 만든 회원 · 채널 주인만, 남은 403). 삭제 · 없음은 404 CLIP_NOT_FOUND")

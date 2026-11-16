@@ -19,9 +19,11 @@ import java.time.Instant;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 /**
- * 클립 (DESIGN §4.3 clip · §4.18). 다시보기 구간이나 라이브 "최근 N초"를 잘라 만든 독립 파일.
+ * 클립 (DESIGN §4.3 clip · §4.18). 다시보기 구간이나 라이브 클립 초안(CLIP-3)의 구간을 잘라 만든 독립 파일.
  * PROCESSING 으로 만들고 처리기({@link ClipProcessingService})가 READY · FAILED 로 바꾼다. soft delete.
  */
 @Getter
@@ -93,6 +95,12 @@ public class Clip extends BaseEntity {
 	@Column(name = "deleted_at", columnDefinition = "DATETIME(6)")
 	private Instant deletedAt;
 
+	/** 라이브 클립이 잘린 초안(CLIP-3). 초안이 보관 정리로 지워지면 DB 가 null 로 바꾼다(FK ON DELETE SET NULL). */
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "draft_id")
+	@OnDelete(action = OnDeleteAction.SET_NULL)
+	private ClipDraft draft;
+
 	/** 처리 대기(PROCESSING)로 만든다. 제목 · 길이 검증은 호출 쪽(ClipService)이 한다. */
 	public static Clip create(Recording recording, Broadcast broadcast, Member creator, String title, ClipSource source,
 			int startSeconds, int durationSeconds, Visibility visibility) {
@@ -107,6 +115,18 @@ public class Clip extends BaseEntity {
 		c.durationSeconds = durationSeconds;
 		c.status = ClipStatus.PROCESSING;
 		c.visibility = visibility;
+		return c;
+	}
+
+	/**
+	 * 라이브 클립 초안에서 처리 대기(PROCESSING)로 만든다(source LIVE). {@code startSeconds} 는 방송 시작 기준
+	 * ({@code window_start_seconds + 초안 기준 시작}), 처리기는 초안 기준으로 되돌려 자른다.
+	 */
+	public static Clip fromDraft(ClipDraft draft, Recording recording, Member creator, String title, int startSeconds,
+			int durationSeconds, Visibility visibility) {
+		Clip c = create(recording, draft.getBroadcast(), creator, title, ClipSource.LIVE, startSeconds, durationSeconds,
+				visibility);
+		c.draft = draft;
 		return c;
 	}
 

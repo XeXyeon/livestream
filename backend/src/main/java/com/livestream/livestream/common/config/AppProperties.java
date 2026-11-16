@@ -31,7 +31,7 @@ public record AppProperties(
 			auth = new Auth(10, 10, 300);
 		}
 		if (clip == null) {
-			clip = new Clip(5, 60, Duration.ofMinutes(2));
+			clip = new Clip(5, 60, Duration.ofMinutes(2), 120, Duration.ofMinutes(10));
 		}
 	}
 
@@ -47,12 +47,16 @@ public record AppProperties(
 	 * @param minSeconds 클립 최소 길이(초)
 	 * @param maxSeconds 클립 최대 길이(초)
 	 * @param timeout    처리(내려받기 · ffmpeg) 타임아웃
+	 * @param liveWindowSeconds 라이브 클립 초안이 받아 두는 최근 구간 길이(초, CLIP-3)
+	 * @param draftTtl   라이브 클립 초안 보관 시간(CLIP-3)
 	 */
-	public record Clip(int minSeconds, int maxSeconds, Duration timeout) {
+	public record Clip(int minSeconds, int maxSeconds, Duration timeout, int liveWindowSeconds, Duration draftTtl) {
 
 		public Clip {
-			if (minSeconds <= 0 || maxSeconds < minSeconds || timeout == null || timeout.isNegative() || timeout.isZero()) {
-				throw new IllegalArgumentException("app.clip.* 값이 올바르지 않습니다(0 < min-seconds <= max-seconds, timeout > 0)");
+			if (minSeconds <= 0 || maxSeconds < minSeconds || timeout == null || timeout.isNegative() || timeout.isZero()
+					|| liveWindowSeconds < minSeconds || draftTtl == null || draftTtl.isNegative() || draftTtl.isZero()) {
+				throw new IllegalArgumentException("app.clip.* 값이 올바르지 않습니다(0 < min-seconds <= max-seconds, timeout > 0, "
+						+ "live-window-seconds >= min-seconds, draft-ttl > 0)");
 			}
 		}
 	}

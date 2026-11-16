@@ -60,6 +60,8 @@ public class SecurityConfig {
 								"/api/posts/*", "/api/posts/*/comments",
 								// 클립(CLIP-1): 상세 · 목록, 비공개 클립 재생은 재생 토큰(쿼리)으로 검사한다(§4.16).
 								"/api/clips/*", "/api/clips/*/video", "/api/channels/*/clips", "/api/recordings/*/clips",
+								// 라이브 클립 초안 영상(CLIP-3): <video> 가 헤더를 못 붙여 재생 토큰(쿼리)으로 검사한다. 나머지 초안 API 는 로그인.
+								"/api/clip-drafts/*/video",
 								// 통합 검색(SEARCH-1): 요약과 종류별 목록
 								"/api/search", "/api/search/*",
 								"/api/public/widget/*/events").permitAll()

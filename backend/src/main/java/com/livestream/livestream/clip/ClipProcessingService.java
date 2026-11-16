@@ -35,13 +35,15 @@ import org.springframework.web.client.RestClientException;
  * <ul>
  *   <li>시작할 때 클립을 다시 읽어 PROCESSING 이 아니거나 삭제됐으면 아무것도 하지 않는다.</li>
  *   <li>RECORDING: 병합된 다시보기 파일을 {@code ffmpeg -ss -i -t -c copy} 로 자른다(재인코딩 없음, 시작은 직전 키프레임으로 당겨질 수 있다).</li>
- *   <li>LIVE: MediaMTX 재생 서버에서 {@code [started_at + start_seconds, +duration)} 구간 mp4 를 받는다. 404 · 빈 응답이면 FAILED(NO_MEDIA).</li>
+ *   <li>LIVE: 라이브 클립 초안(CLIP-3) 파일을 RECORDING 과 같은 방식으로 자른다(시작은 초안 기준). 초안 파일이 없으면 FAILED(SOURCE_FILE_MISSING).</li>
+ *   <li>초안 받기({@link #enqueueDraft}): MediaMTX 재생 서버에서 창 {@code [started_at + window_start_seconds, +window_seconds)} mp4 를
+ *       {@code private/clip-drafts/} 에 받고 ffprobe 실제 길이로 창 길이를 맞춰 READY. 404 · 빈 응답 · 받은 길이가 최소 클립 길이보다 짧으면 FAILED(NO_MEDIA).</li>
  *   <li>결과는 항상 {@code private/clips/} 에 먼저 쓴다. ffprobe 길이가 0 이면 FAILED(EMPTY). 썸네일은 실패해도 READY(썸네일만 null).</li>
  *   <li>새 트랜잭션에서 클립을 잠그고 PROCESSING · 삭제 안 됨일 때만 READY. 그때의 visibility 가 PUBLIC 이면 {@code vod/clips/} 로
  *       옮긴 뒤 경로를 적는다. 그 사이 클립이나 원본 방송이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + 사유 코드.</li>
- *   <li>서버가 재시작되면 PROCESSING 클립을 다시 줄 세운다(LIVE 도 저장된 구간으로 같은 범위를 받는다).</li>
- *   <li>줄 서 있거나 처리 중인 클립은 {@link #inFlight} 에 있다. 1분마다 집합에 없는 오래된 PROCESSING 을 FAILED(TIMEOUT)로
- *       정리한다(갇힌 클립 정리, CLIP-1#1). 단일 인스턴스 전제(단일 스레드 실행기와 같은 전제).</li>
+ *   <li>서버가 재시작되면 PROCESSING 클립과 PENDING 초안을 다시 줄 세운다(초안은 저장된 창으로 같은 범위를 받는다).</li>
+ *   <li>줄 서 있거나 처리 중인 클립 · 초안은 {@link #inFlight} · {@link #draftsInFlight} 에 있다. 1분마다 집합에 없는 오래된
+ *       PROCESSING 클립 · PENDING 초안을 FAILED(TIMEOUT)로 정리한다(갇힌 클립 정리, CLIP-1#1). 단일 인스턴스 전제.</li>
  * </ul>
  */
 @Slf4j
@@ -61,6 +63,7 @@ public class ClipProcessingService {
 	static final String TIMEOUT = "TIMEOUT";
 
 	private final ClipRepository clipRepository;
+	private final ClipDraftRepository draftRepository;
 	private final ClipFiles files;
 	private final RecordingFiles recordingFiles;
 	private final FfmpegRunner ffmpeg;
@@ -70,6 +73,8 @@ public class ClipProcessingService {
 	private final TaskExecutor executor;
 	/** 줄 서 있거나 처리 중인 clipId. 여기 없는 오래된 PROCESSING 은 갇힌 것으로 본다({@link #failStale(Instant)}). */
 	private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+	/** 줄 서 있거나 받는 중인 초안 id. 클립 id 와 번호가 겹치므로 집합을 나눈다. */
+	private final Set<Long> draftsInFlight = ConcurrentHashMap.newKeySet();
 	/**
 	 * 재시작 복구({@link #resumePending})가 끝났는가. 스케줄러는 ApplicationReadyEvent 전에 첫 실행을 하므로,
 	 * 그 전에 정리하면 집합이 비어 되살릴 클립까지 TIMEOUT 이 된다.
@@ -78,10 +83,11 @@ public class ClipProcessingService {
 	/** 종료 중이면 중단된 작업이 집합에서 빠져도 정리하지 않는다(재시작 때 다시 줄 세운다). */
 	private volatile boolean shuttingDown;
 
-	public ClipProcessingService(ClipRepository clipRepository, ClipFiles files, RecordingFiles recordingFiles,
-			FfmpegRunner ffmpeg, MediaMtxClient mediaMtxClient, TransactionTemplate tx, AppProperties props,
-			@Qualifier(AsyncConfig.CLIP_EXECUTOR) TaskExecutor executor) {
+	public ClipProcessingService(ClipRepository clipRepository, ClipDraftRepository draftRepository, ClipFiles files,
+			RecordingFiles recordingFiles, FfmpegRunner ffmpeg, MediaMtxClient mediaMtxClient, TransactionTemplate tx,
+			AppProperties props, @Qualifier(AsyncConfig.CLIP_EXECUTOR) TaskExecutor executor) {
 		this.clipRepository = clipRepository;
+		this.draftRepository = draftRepository;
 		this.files = files;
 		this.recordingFiles = recordingFiles;
 		this.ffmpeg = ffmpeg;
@@ -91,10 +97,15 @@ public class ClipProcessingService {
 		this.executor = executor;
 	}
 
-	/** 재시작 전에 줄 서 있던 클립을 되살린다. */
+	/** 재시작 전에 줄 서 있던 초안 · 클립을 되살린다. */
 	@EventListener(ApplicationReadyEvent.class)
 	public void resumePending() {
 		try {
+			List<Long> drafts = draftRepository.findPendingIds();
+			if (!drafts.isEmpty()) {
+				log.info("재시작 뒤 받기 대기 클립 초안 {}건 다시 줄 세움", drafts.size());
+				drafts.forEach(this::enqueueDraft);
+			}
 			List<Long> pending = clipRepository.findProcessingIds();
 			if (!pending.isEmpty()) {
 				log.info("재시작 뒤 처리 대기 클립 {}건 다시 줄 세움", pending.size());
@@ -134,6 +145,29 @@ public class ClipProcessingService {
 		}
 	}
 
+	/** 초안 받기를 줄 세운다(커밋 뒤에 부른다). 클립과 같은 실행기 · 같은 갇힘 정리 규칙. */
+	public void enqueueDraft(Long draftId) {
+		draftsInFlight.add(draftId);
+		try {
+			executor.execute(() -> {
+				try {
+					processDraft(draftId);
+				} catch (RuntimeException e) {
+					if (Thread.currentThread().isInterrupted()) {
+						return; // 종료 중: PENDING 으로 두고 재시작 때 다시
+					}
+					log.error("클립 초안 받기 중 예외: draft={}", draftId, e);
+					failDraft(draftId, ERROR);
+				} finally {
+					draftsInFlight.remove(draftId);
+				}
+			});
+		} catch (RejectedExecutionException e) {
+			draftsInFlight.remove(draftId);
+			log.warn("클립 초안 줄 세우기 거절됨(재시작 때 다시): draft={}", draftId);
+		}
+	}
+
 	@Scheduled(fixedDelay = 60_000)
 	public void failStale() {
 		int failed = failStale(Instant.now());
@@ -146,7 +180,8 @@ public class ClipProcessingService {
 	 * {@code PROCESSING AND created_at < now − app.clip.timeout} 가운데 {@link #inFlight} 에 없는 것을 FAILED(TIMEOUT)로.
 	 * 집합에 있는 것은 큐에서 오래 기다리는 정상 클립이라 건드리지 않는다. 유예는 커밋과 enqueue 사이의 틈을 덮는다.
 	 * @param now 기준 시각(테스트에서 주입)
-	 * @return 정리한 건수(방송 삭제로 버린 것 포함)
+	 * PENDING 초안도 같은 규칙으로 FAILED(TIMEOUT)로 바꾼다(CLIP-3).
+	 * @return 정리한 건수(클립 · 초안, 방송 삭제로 버린 것 포함)
 	 */
 	public int failStale(Instant now) {
 		if (!resumed || shuttingDown) {
@@ -171,12 +206,33 @@ public class ClipProcessingService {
 				failed++;
 			}
 		}
+		for (Long id : draftRepository.findPendingCreatedBefore(before)) {
+			if (draftsInFlight.contains(id)) {
+				continue;
+			}
+			Boolean done = tx.execute(s -> draftRepository.findByIdForUpdate(id)
+					.filter(d -> d.isPending() && d.getCreatedAt().isBefore(before) && !draftsInFlight.contains(id))
+					.map(d -> {
+						d.markFailed(TIMEOUT);
+						log.warn("갇힌 클립 초안 정리: draft={} createdAt={}", id, d.getCreatedAt());
+						return true;
+					}).orElse(false));
+			if (Boolean.TRUE.equals(done)) {
+				failed++;
+			}
+		}
 		return failed;
 	}
 
-	/** 처리기가 시작할 때 읽는 값. LIVE 의 구간 시작은 방송 시작 + start_seconds 로 복원한다. */
-	record Job(ClipSource source, String recordingFile, Long channelId, Instant liveStart, int startSeconds,
-			int durationSeconds) {
+	/**
+	 * 처리기가 시작할 때 읽는 값. {@code startSeconds} 는 자를 원본 기준: RECORDING 은 다시보기 기준, LIVE 는 초안 기준
+	 * ({@code clip.start_seconds − draft.window_start_seconds}). LIVE 의 초안이 지워졌으면 {@code draftFile} 이 null.
+	 */
+	record Job(ClipSource source, String recordingFile, String draftFile, int startSeconds, int durationSeconds) {
+	}
+
+	/** 초안 받기가 시작할 때 읽는 값: 창의 시작 시각(방송 시작 + window_start_seconds)과 길이. */
+	record DraftJob(Long channelId, Instant windowStart, int windowSeconds) {
 	}
 
 	private enum SaveResult {
@@ -189,9 +245,7 @@ public class ClipProcessingService {
 		Job job = tx.execute(s -> clipRepository.findForProcessing(clipId)
 				.filter(Clip::isProcessable)
 				.filter(c -> !discardIfBroadcastDeleted(c))
-				.map(c -> new Job(c.getSource(), c.getRecording().getFilePath(), c.getChannel().getId(),
-						c.getBroadcast().getStartedAt().plusSeconds(c.getStartSeconds()), c.getStartSeconds(),
-						c.getDurationSeconds()))
+				.map(ClipProcessingService::jobOf)
 				.orElse(null));
 		if (job == null) {
 			log.info("클립 처리 건너뜀(없음 · 삭제 · PROCESSING 아님): clip={}", clipId);
@@ -213,7 +267,7 @@ public class ClipProcessingService {
 			Files.createDirectories(out.getParent());
 			String failure = switch (job.source()) {
 				case RECORDING -> cutRecording(job, out);
-				case LIVE -> downloadLive(job, out);
+				case LIVE -> cutDraft(job, out);
 			};
 			if (Thread.currentThread().isInterrupted()) {
 				log.info("클립 처리 중단(종료 중), 재시작 뒤 다시 시도: clip={}", clipId);
@@ -224,7 +278,7 @@ public class ClipProcessingService {
 				return;
 			}
 			if (!Files.isRegularFile(out) || Files.size(out) == 0) {
-				fail(clipId, job.source() == ClipSource.LIVE ? NO_MEDIA : EMPTY);
+				fail(clipId, EMPTY);
 				return;
 			}
 			Double probed = probeDurationSeconds(out);
@@ -277,6 +331,17 @@ public class ClipProcessingService {
 		}
 	}
 
+	private static Job jobOf(Clip c) {
+		ClipDraft draft = c.getDraft();
+		if (c.getSource() == ClipSource.LIVE) {
+			// 초안이 보관 정리로 지워졌으면(draft_id null) 자를 원본이 없다 → SOURCE_FILE_MISSING
+			return new Job(ClipSource.LIVE, null, draft == null ? null : draft.getFilePath(),
+					draft == null ? c.getStartSeconds() : c.getStartSeconds() - draft.getWindowStartSeconds(),
+					c.getDurationSeconds());
+		}
+		return new Job(c.getSource(), c.getRecording().getFilePath(), null, c.getStartSeconds(), c.getDurationSeconds());
+	}
+
 	/** @return 실패 사유, 성공이면 null */
 	private String cutRecording(Job job, Path out) {
 		String located = recordingFiles.locateVideo(job.recordingFile());
@@ -284,6 +349,20 @@ public class ClipProcessingService {
 		if (src == null) {
 			return SOURCE_FILE_MISSING;
 		}
+		return cut(src, job, out);
+	}
+
+	/** LIVE: 초안 파일에서 초안 기준 구간을 자른다. @return 실패 사유, 성공이면 null */
+	private String cutDraft(Job job, Path out) {
+		Path src = job.draftFile() == null ? null : recordingFiles.resolve(job.draftFile());
+		if (src == null || !Files.isRegularFile(src) || job.startSeconds() < 0) {
+			return SOURCE_FILE_MISSING;
+		}
+		return cut(src, job, out);
+	}
+
+	/** {@code ffmpeg -ss -i -t -c copy}(재인코딩 없음). @return 실패 사유, 성공이면 null */
+	private String cut(Path src, Job job, Path out) {
 		FfmpegRunner.Result result = ffmpeg.ffmpeg(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 				"-ss", String.valueOf(job.startSeconds()), "-i", src.toString(), "-t", String.valueOf(job.durationSeconds()),
 				"-c", "copy", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out.toString()),
@@ -295,16 +374,95 @@ public class ClipProcessingService {
 		return CUT_FAILED;
 	}
 
-	/** @return 실패 사유, 성공이면 null */
-	private String downloadLive(Job job, Path out) {
-		try {
-			boolean got = mediaMtxClient.downloadRecording("live/" + job.channelId(), job.liveStart(),
-					Duration.ofSeconds(job.durationSeconds()), out);
-			return got ? null : NO_MEDIA;
-		} catch (RestClientException e) {
-			log.warn("라이브 클립 받기 실패: channel={} ({})", job.channelId(), e.getMessage());
-			return DOWNLOAD_FAILED;
+	/**
+	 * 초안 받기 한 건(동기, CLIP-3). 재생 서버에서 창을 {@code private/clip-drafts/<uuid>.mp4} 로 받고 ffprobe 로 확인한 뒤,
+	 * 새 트랜잭션에서 잠가 PENDING 일 때만 READY + 실제 길이. 그 사이 초안이 지워졌으면(새 초안 · 방송 삭제 · 보관 정리) 파일을 버린다.
+	 */
+	public void processDraft(Long draftId) {
+		DraftJob job = tx.execute(s -> draftRepository.findForProcessing(draftId)
+				.filter(ClipDraft::isPending)
+				.filter(d -> {
+					if (!d.getBroadcast().isDeleted()) {
+						return true;
+					}
+					// 생성과 방송 삭제가 겹쳐 지워진 방송에 남은 초안: 행을 지운다(파일은 아직 없다)
+					draftRepository.delete(d);
+					log.info("클립 초안 버림(원본 방송이 삭제됨): draft={}", draftId);
+					return false;
+				})
+				.map(d -> new DraftJob(d.getChannel().getId(),
+						d.getBroadcast().getStartedAt().plusSeconds(d.getWindowStartSeconds()), d.getWindowSeconds()))
+				.orElse(null));
+		if (job == null) {
+			log.info("클립 초안 받기 건너뜀(없음 · PENDING 아님): draft={}", draftId);
+			return;
 		}
+		String outRelative = ClipFiles.DRAFT_DIR + UUID.randomUUID() + ".mp4";
+		Path out = files.resolve(outRelative);
+		boolean keep = false;
+		try {
+			if (out == null) {
+				failDraft(draftId, IO_ERROR);
+				return;
+			}
+			Files.createDirectories(out.getParent());
+			String failure;
+			try {
+				boolean got = mediaMtxClient.downloadRecording("live/" + job.channelId(), job.windowStart(),
+						Duration.ofSeconds(job.windowSeconds()), out);
+				failure = got ? null : NO_MEDIA;
+			} catch (RestClientException e) {
+				log.warn("클립 초안 받기 실패: draft={} channel={} ({})", draftId, job.channelId(), e.getMessage());
+				failure = DOWNLOAD_FAILED;
+			}
+			if (Thread.currentThread().isInterrupted()) {
+				log.info("클립 초안 받기 중단(종료 중), 재시작 뒤 다시 시도: draft={}", draftId);
+				return;
+			}
+			if (failure == null && (!Files.isRegularFile(out) || Files.size(out) == 0)) {
+				failure = NO_MEDIA;
+			}
+			// 끝의 part 가 아직 안 내려와 창보다 짧을 수 있다. 내림해 프론트의 범위 검증(start + duration ≤ windowSeconds)이
+			// 실제 파일 안에 들게 한다. ffprobe 가 실패하면 요청한 창 길이를 그대로 둔다.
+			Double probed = failure == null ? probeDurationSeconds(out) : null;
+			int windowSeconds = probed == null ? job.windowSeconds() : (int) Math.min(job.windowSeconds(), Math.floor(probed));
+			// 쓸 수 있는 클립(최소 길이)이 하나도 나오지 않는 초안은 READY 로 두지 않는다.
+			if (failure == null && windowSeconds < props.clip().minSeconds()) {
+				failure = NO_MEDIA;
+			}
+			if (failure != null) {
+				failDraft(draftId, failure);
+				return;
+			}
+			Boolean saved = tx.execute(s -> draftRepository.findByIdForUpdate(draftId)
+					.filter(ClipDraft::isPending)
+					.map(d -> {
+						d.markReady(outRelative, windowSeconds);
+						return true;
+					}).orElse(false));
+			if (Boolean.TRUE.equals(saved)) {
+				keep = true;
+				log.info("클립 초안 받기 완료: draft={} file={} window={}s", draftId, outRelative, windowSeconds);
+			} else {
+				log.info("클립 초안 결과 버림(그 사이 지워짐): draft={}", draftId);
+			}
+		} catch (IOException e) {
+			log.warn("클립 초안 파일 오류: draft={}", draftId, e);
+			failDraft(draftId, IO_ERROR);
+		} finally {
+			if (!keep) {
+				deleteQuietly(out);
+			}
+		}
+	}
+
+	private void failDraft(Long draftId, String reason) {
+		tx.executeWithoutResult(s -> draftRepository.findByIdForUpdate(draftId).ifPresent(d -> {
+			if (d.isPending()) {
+				d.markFailed(reason);
+				log.warn("클립 초안 받기 실패: draft={} reason={}", draftId, reason);
+			}
+		}));
 	}
 
 	/** ffprobe 로 길이(초). 실패하면 null(요청 길이를 그대로 둔다). */

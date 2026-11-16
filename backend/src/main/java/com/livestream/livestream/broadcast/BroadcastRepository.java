@@ -52,6 +52,14 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 	@Query("select b from Broadcast b where b.id = :id and b.deletedAt is null")
 	Optional<Broadcast> findActive(Long id);
 
+	/**
+	 * 공유 잠금(FOR SHARE) 읽기: 클립 초안 만들기가 맨 먼저 잡는다. 같은 방송의 초안 요청끼리는 막지 않고, 방송 삭제(X 잠금 뒤 클립 →
+	 * 초안)와는 직렬화해 초안 INSERT 의 FK 공유 잠금이 순서 밖에서 걸리지 않게 한다.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_READ)
+	@Query("select b from Broadcast b where b.id = :id and b.deletedAt is null")
+	Optional<Broadcast> findActiveForShare(Long id);
+
 	/** 상태 전이용 잠금 읽기. 반드시 채널 행을 먼저 잠근 뒤 부른다(잠금 순서 channel → broadcast). */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select b from Broadcast b where b.id = :id and b.deletedAt is null")

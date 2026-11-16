@@ -30,7 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 클립 통합 테스트 도우미(ClipApiTest). 처리기의 바깥(ffmpeg · ffprobe · MediaMTX 재생 서버)을
+ * 클립 통합 테스트 도우미(ClipApiTest · ClipDraftApiTest). 처리기의 바깥(ffmpeg · ffprobe · MediaMTX 재생 서버)을
  * 가짜로 바꾸고, READY 다시보기를 직접 만들고, 처리가 끝날 때까지 기다린다.
  */
 public final class ClipFixtures {
@@ -47,6 +47,8 @@ public final class ClipFixtures {
 		public volatile boolean liveHasMedia = true;
 		/** 있으면 자르기가 이 래치가 풀릴 때까지 기다린다(처리 중 상태를 붙잡아 두기). */
 		public volatile CountDownLatch holdCut;
+		/** 있으면 재생 서버 받기(초안)가 이 래치가 풀릴 때까지 기다린다(PENDING 상태를 붙잡아 두기). */
+		public volatile CountDownLatch holdDownload;
 	}
 
 	private ClipFixtures() {
@@ -71,6 +73,10 @@ public final class ClipFixtures {
 		});
 		when(ffmpeg.ffprobe(any(), any())).thenReturn(new FfmpegRunner.Result(0, PROBED_DURATION + "\n", false));
 		when(mediaMtx.downloadRecording(any(), any(), any(), any())).thenAnswer(inv -> {
+			CountDownLatch hold = knobs.holdDownload;
+			if (hold != null && !hold.await(20, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("holdDownload 이 풀리지 않음");
+			}
 			if (!knobs.liveHasMedia) {
 				return false;
 			}
@@ -103,6 +109,47 @@ public final class ClipFixtures {
 	/** POST /recordings/{id}/clips → 202. @return clip id */
 	public static long createRecordingClip(MockMvc mvc, Account a, long recordingId, String json) throws Exception {
 		String body = mvc.perform(post("/api/recordings/" + recordingId + "/clips").header(HttpHeaders.AUTHORIZATION, a.bearer())
+				.contentType(MediaType.APPLICATION_JSON).content(json))
+				.andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+		return ((Number) JsonPath.read(body, "$.id")).longValue();
+	}
+
+	/** POST /broadcasts/{id}/clip-drafts → 202. @return draft id */
+	public static long createDraft(MockMvc mvc, Account a, long broadcastId) throws Exception {
+		String body = mvc.perform(post("/api/broadcasts/" + broadcastId + "/clip-drafts").header(HttpHeaders.AUTHORIZATION, a.bearer()))
+				.andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+		return ((Number) JsonPath.read(body, "$.id")).longValue();
+	}
+
+	/** 초안 받기가 끝날 때까지(PENDING 이 아닐 때까지) 초안 상세를 다시 부른다. @return 마지막 상세 JSON */
+	public static String awaitDraft(MockMvc mvc, Account a, long draftId) throws Exception {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+		while (true) {
+			String body = mvc.perform(get("/api/clip-drafts/" + draftId).header(HttpHeaders.AUTHORIZATION, a.bearer()))
+					.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+			if (!"PENDING".equals(JsonPath.read(body, "$.status"))) {
+				return body;
+			}
+			if (System.nanoTime() > deadline) {
+				throw new AssertionError("클립 초안 받기가 끝나지 않음: " + body);
+			}
+			Thread.sleep(50);
+		}
+	}
+
+	/** 초안을 만들고 READY 까지 기다린다. @return draft id */
+	public static long readyDraft(MockMvc mvc, Account a, long broadcastId) throws Exception {
+		long id = createDraft(mvc, a, broadcastId);
+		String done = awaitDraft(mvc, a, id);
+		if (!"READY".equals(JsonPath.read(done, "$.status"))) {
+			throw new AssertionError("클립 초안이 READY 가 아님: " + done);
+		}
+		return id;
+	}
+
+	/** POST /clip-drafts/{id}/clips → 202. @return clip id */
+	public static long createDraftClip(MockMvc mvc, Account a, long draftId, String json) throws Exception {
+		String body = mvc.perform(post("/api/clip-drafts/" + draftId + "/clips").header(HttpHeaders.AUTHORIZATION, a.bearer())
 				.contentType(MediaType.APPLICATION_JSON).content(json))
 				.andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
 		return ((Number) JsonPath.read(body, "$.id")).longValue();

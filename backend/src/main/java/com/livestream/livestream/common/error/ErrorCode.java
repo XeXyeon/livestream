@@ -25,6 +25,7 @@ public enum ErrorCode {
 	COMMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "댓글을 찾을 수 없습니다"),
 	DONATION_NOT_FOUND(HttpStatus.NOT_FOUND, "후원 내역을 찾을 수 없습니다"),
 	CLIP_NOT_FOUND(HttpStatus.NOT_FOUND, "클립을 찾을 수 없습니다"),
+	CLIP_DRAFT_NOT_FOUND(HttpStatus.NOT_FOUND, "클립 초안을 찾을 수 없습니다"),
 
 	EMAIL_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다"),
 	NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다"),
@@ -36,6 +37,7 @@ public enum ErrorCode {
 	RECORDING_COMMENT_NOT_OPEN(HttpStatus.CONFLICT, "댓글을 작성할 수 없는 다시보기입니다"),
 	CLIP_IN_PROGRESS(HttpStatus.CONFLICT, "이미 만드는 중인 클립이 있습니다"),
 	CLIP_NOT_READY(HttpStatus.CONFLICT, "클립이 아직 준비되지 않았습니다"),
+	CLIP_DRAFT_NOT_READY(HttpStatus.CONFLICT, "클립 초안이 아직 준비되지 않았습니다"),
 
 	DONATION_AMOUNT_MISMATCH(HttpStatus.BAD_REQUEST, "후원 금액이 일치하지 않습니다"),
 	DONATION_ALREADY_PROCESSED(HttpStatus.CONFLICT, "이미 처리된 후원입니다"),

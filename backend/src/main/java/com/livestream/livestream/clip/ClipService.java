@@ -1,8 +1,6 @@
 package com.livestream.livestream.clip;
 
 import com.livestream.livestream.broadcast.Broadcast;
-import com.livestream.livestream.broadcast.BroadcastRepository;
-import com.livestream.livestream.broadcast.BroadcastStatus;
 import com.livestream.livestream.broadcast.dto.BroadcastSummary;
 import com.livestream.livestream.channel.Channel;
 import com.livestream.livestream.channel.ChannelRepository;
@@ -10,7 +8,6 @@ import com.livestream.livestream.clip.dto.ClipCreateRequest;
 import com.livestream.livestream.clip.dto.ClipDetail;
 import com.livestream.livestream.clip.dto.ClipSummary;
 import com.livestream.livestream.clip.dto.ClipUpdateRequest;
-import com.livestream.livestream.clip.dto.LiveClipCreateRequest;
 import com.livestream.livestream.common.config.AppProperties;
 import com.livestream.livestream.common.dto.PageResponse;
 import com.livestream.livestream.common.error.ApiException;
@@ -25,11 +22,11 @@ import com.livestream.livestream.recording.dto.VideoTokenResponse;
 import com.livestream.livestream.recording.Visibility;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +37,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 클립 생성 · 조회 · 수정 · 삭제 · 권한 (DESIGN §4.18 · §4.16 클립 행 · §4.8).
  * <ul>
- *   <li>만들기는 로그인한 누구나. 다시보기 클립은 recording READY 이고 PUBLIC(PRIVATE 는 채널 주인만), 라이브 클립은 방송 LIVE.</li>
+ *   <li>만들기는 로그인한 누구나. 다시보기 클립은 recording READY 이고 PUBLIC(PRIVATE 는 채널 주인만), 라이브 클립은 내 READY
+ *       초안(CLIP-3, {@link ClipDraftService})에서 — 방송이 그 사이 끝나도 된다.</li>
  *   <li>PROCESSING 으로 저장하고 커밋 뒤에 처리기({@link ClipProcessingService})에 줄 세운다. 회원당 동시 처리 1개.</li>
  *   <li>제목 · 공개 설정 · 삭제 · 비공개 조회 · 재생은 만든 회원 또는 채널 주인.</li>
  *   <li>공개 설정 변경 · 재생 · 파일 맞추기는 다시보기(RecordingQueryService, §4.10)와 같은 폴더 이동 규칙이다.</li>
@@ -52,11 +50,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ClipService {
 
 	static final String OUT_OF_RANGE = "클립 구간이 영상 범위를 벗어났습니다";
-	static final String TOO_EARLY = "방송 시작 직후에는 만들 수 없습니다";
 
 	private final ClipRepository clipRepository;
+	private final ClipDraftRepository draftRepository;
+	private final ClipDraftService draftService;
 	private final RecordingRepository recordingRepository;
-	private final BroadcastRepository broadcastRepository;
 	private final ChannelRepository channelRepository;
 	private final MemberRepository memberRepository;
 	private final ClipFiles files;
@@ -94,28 +92,38 @@ public class ClipService {
 		return saveAndEnqueue(clip, me);
 	}
 
-	/** POST /broadcasts/{id}/clips — 라이브 "최근 N초". 구간은 요청 시각 기준 [now − N, now). */
+	/**
+	 * POST /clip-drafts/{id}/clips — 내 READY 초안에서 클립(source LIVE). {@code startSeconds} 는 초안 기준이고 저장은 방송 시작 기준
+	 * ({@code window_start_seconds + startSeconds}). 방송이 그 사이 끝나도 된다(초안 파일에서 자른다).
+	 */
 	@Transactional
-	public ClipDetail createFromLive(Long broadcastId, MemberPrincipal me, LiveClipCreateRequest req) {
+	public ClipDetail createFromDraft(Long draftId, MemberPrincipal me, ClipCreateRequest req) {
 		requireLogin(me);
-		Broadcast b = broadcastRepository.findActive(broadcastId)
-				.orElseThrow(() -> new ApiException(ErrorCode.BROADCAST_NOT_FOUND));
-		if (b.getStatus() != BroadcastStatus.LIVE) {
-			throw new ApiException(ErrorCode.BROADCAST_NOT_LIVE);
+		ClipDraft d = draftRepository.findByIdAndMemberId(draftId, me.id())
+				.orElseThrow(() -> new ApiException(ErrorCode.CLIP_DRAFT_NOT_FOUND));
+		Broadcast b = d.getBroadcast();
+		if (b.isDeleted()) {
+			throw new ApiException(ErrorCode.CLIP_DRAFT_NOT_FOUND);
+		}
+		if (!d.isReady()) {
+			throw new ApiException(ErrorCode.CLIP_DRAFT_NOT_READY);
 		}
 		int duration = requireDuration(req.durationSeconds());
-		Instant from = Instant.now().minusSeconds(duration);
-		if (from.isBefore(b.getStartedAt())) {
-			throw new ApiException(ErrorCode.VALIDATION_ERROR, TOO_EARLY);
+		int start = req.startSeconds();
+		if (start < 0 || (long) start + duration > d.getWindowSeconds()) {
+			throw new ApiException(ErrorCode.VALIDATION_ERROR, OUT_OF_RANGE);
 		}
 		requireNoneInProgress(me);
 		Recording r = recordingRepository.findByBroadcastId(b.getId())
 				.orElseThrow(() -> new ApiException(ErrorCode.RECORDING_NOT_FOUND));
-		// 초 단위로 내림해 저장한다. 처리기 · 재시작 복구 모두 started_at + start_seconds 로 같은 구간을 다시 만든다.
-		int start = (int) Duration.between(b.getStartedAt(), from).toSeconds();
-		Clip clip = Clip.create(r, b, memberRepository.getReferenceById(me.id()), titleOrDefault(req.title(), b),
-				ClipSource.LIVE, start, duration, visibilityOrDefault(req.visibility()));
-		return saveAndEnqueue(clip, me);
+		Clip clip = Clip.fromDraft(d, r, memberRepository.getReferenceById(me.id()), titleOrDefault(req.title(), b),
+				d.getWindowStartSeconds() + start, duration, visibilityOrDefault(req.visibility()));
+		try {
+			return saveAndEnqueue(clip, me);
+		} catch (DataIntegrityViolationException e) {
+			// 읽은 뒤 초안이 보관 정리 · 새 초안으로 지워졌다(클립 INSERT 의 draft_id FK 위반)
+			throw new ApiException(ErrorCode.CLIP_DRAFT_NOT_FOUND);
+		}
 	}
 
 	private ClipDetail saveAndEnqueue(Clip clip, MemberPrincipal me) {
@@ -215,17 +223,18 @@ public class ClipService {
 
 	/**
 	 * 방송 삭제(BroadcastService.delete)와 같은 트랜잭션에서 그 방송의 클립을 모두 soft delete 하고 커밋 뒤 파일을 지운다.
-	 * 호출 쪽이 channel → broadcast → recording 을 잠근 뒤 부르므로 클립 잠금이 그 다음 자리다.
+	 * 호출 쪽이 channel → broadcast → recording 을 잠근 뒤 부르므로 클립 → 초안 잠금이 그 다음 자리다.
 	 */
 	@Transactional
 	public void deleteAllOfBroadcast(Long broadcastId) {
 		List<Clip> clips = clipRepository.findActiveByBroadcastIdForUpdate(broadcastId);
-		if (clips.isEmpty()) {
-			return;
+		if (!clips.isEmpty()) {
+			Instant now = Instant.now();
+			clips.forEach(c -> c.markDeleted(now));
+			deleteFilesAfterCommit(clips.stream().map(c -> new FileRefs(c.getId(), c.getFilePath(), c.getThumbnailPath())).toList());
 		}
-		Instant now = Instant.now();
-		clips.forEach(c -> c.markDeleted(now));
-		deleteFilesAfterCommit(clips.stream().map(c -> new FileRefs(c.getId(), c.getFilePath(), c.getThumbnailPath())).toList());
+		// 라이브 클립 초안(CLIP-3)도 지운다. 잠금은 클립 다음 자리.
+		draftService.deleteAllOfBroadcast(broadcastId);
 	}
 
 	private record FileRefs(Long clipId, String filePath, String thumbnailPath) {
