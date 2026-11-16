@@ -248,7 +248,7 @@ function PreviewClipForm({ totalSeconds, initialStart, zoom, defaultTitle, rende
       followStart={seekTo}
       onStartCommitted={(seconds) => { if (videoRef.current) videoRef.current.currentTime = seconds }}
       defaultTitle={defaultTitle}
-      hint="막대의 손잡이를 끌거나 영상을 멈춰 구간을 고르세요. 시작 위치 · 길이를 직접 적어도 됩니다."
+      hint="막대 손잡이나 시작 위치 · 길이 슬라이더를 끌거나 영상을 멈춰 구간을 고르세요. 시작 위치는 직접 적어도 됩니다."
       preview={renderVideo(videoRef, { onPause: followVideo, onSeeked: followVideo, onTimeUpdate: stopAtRangeEnd })}
       bar={{
         zoom,
@@ -351,6 +351,8 @@ function ClipForm({ totalSeconds, initialStart, followStart = null, onStartCommi
   }
 
   const end = range.ok ? formatDuration(range.startSeconds + duration) : null
+  // 시작 슬라이더 끝: 시작 + 길이가 영상 끝을 넘지 않게. 길이를 모르면 슬라이더를 두지 않는다
+  const startMax = total === null ? null : Math.max(0, total - duration)
 
   return (
     <>
@@ -369,22 +371,38 @@ function ClipForm({ totalSeconds, initialStart, followStart = null, onStartCommi
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm font-medium text-primary">
-              시작 위치
-              <input
-                value={start}
-                onChange={(event) => changeStartText(event.target.value)}
-                onBlur={() => {
-                  const seconds = parseClipTime(start)
-                  if (seconds !== null) onStartCommitted?.(seconds)
-                }}
-                inputMode="numeric"
-                placeholder="0:00"
-                aria-invalid={rangeError !== ''}
-                aria-describedby="clip-range-hint"
-                className={`mt-2 ${inputClassName}`}
-              />
-            </label>
+            {/* 시작 위치는 끌어서도(슬라이더, 영상 전체 범위) 적어서도 고른다. 끌면 막대 손잡이처럼 미리보기 영상이 따라간다 */}
+            <div className="text-sm font-medium text-primary">
+              <label className="block">
+                시작 위치
+                <input
+                  value={start}
+                  onChange={(event) => changeStartText(event.target.value)}
+                  onBlur={() => {
+                    const seconds = parseClipTime(start)
+                    if (seconds !== null) onStartCommitted?.(seconds)
+                  }}
+                  inputMode="numeric"
+                  placeholder="0:00"
+                  aria-invalid={rangeError !== ''}
+                  aria-describedby="clip-range-hint"
+                  className={`mt-2 ${inputClassName}`}
+                />
+              </label>
+              {startMax !== null && startMax > 0 && (
+                <input
+                  type="range"
+                  min={0}
+                  max={startMax}
+                  step={1}
+                  value={Math.min(barStart, startMax)}
+                  onChange={(event) => changeFromBar({ start: Number(event.target.value), duration }, 'start')}
+                  aria-label="시작 위치 끌기"
+                  aria-valuetext={formatDuration(Math.min(barStart, startMax))}
+                  className="mt-3 block w-full accent-[var(--color-accent)]"
+                />
+              )}
+            </div>
             <label className="block text-sm font-medium text-primary">
               길이 <span className="font-normal text-secondary">{duration}초</span>
               <input
