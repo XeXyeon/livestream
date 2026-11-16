@@ -45,13 +45,16 @@ export default function Header() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openAuth = useAuthDialog((state) => state.open)
   const wide = useSyncExternalStore(subscribeWide, isWide)
-  // 기억한 접힘 상태는 lg 이상에만 쓴다. sm~lg(640~1023px)는 펼치면 본문이 260px 줄어 늘 접힌 채로 시작하고,
-  // 거기서 펼친 것은 기억하지 않는다(lg 이상의 설정을 덮지 않게)
+  const xlWide = useMediaQuery('(min-width: 80rem)')
+  // 기억한 접힘 상태는 본문 폭이 넉넉할 때만 쓴다. 펼치면 본문이 260px 줄어드는 폭에서는 늘 접힌 채로 시작한다:
+  // sm~lg(640~1023px) 전체, 그리고 시청 화면의 lg~xl(1024~1279px, 펼치면 채팅 옆 영상이 376px까지 좁아진다).
+  // 거기서 펼친 것은 기억하지 않고(넓은 폭의 설정을 덮지 않게) 주소가 바뀌면 다시 접는다
   const [collapsed, setCollapsed] = useState(() => readCollapsed())
   const [midExpanded, setMidExpanded] = useState(false)
-  const effectiveCollapsed = lgWide ? collapsed : !midExpanded
+  const remembered = lgWide && !(fullBleed && !xlWide)
+  const effectiveCollapsed = remembered ? collapsed : !midExpanded
   const changeCollapsed = (next: boolean) => {
-    if (!lgWide) {
+    if (!remembered) {
       setMidExpanded(!next)
       return
     }
@@ -64,6 +67,7 @@ export default function Header() {
   if (drawerPath !== pathname) {
     setDrawerPath(pathname)
     setDrawerOpen(false)
+    setMidExpanded(false)
   }
 
   // 서랍을 연 채 창을 sm 이상으로 넓히면 고정 사이드바가 보이므로 서랍을 닫는다
