@@ -105,7 +105,7 @@ export function LiveDraftStage({ draft, isError, defaultTitle, onClose, onCreate
       <>
         <DialogHeader title="클립 만들기" />
         <div className="space-y-5 px-2 pb-2">
-          <div className="flex aspect-video w-full items-center justify-center rounded-md bg-elevated">
+          <div className="flex aspect-video w-full items-center justify-center rounded-md bg-surface">
             <Spinner label="최근 2분을 준비하는 중…" />
           </div>
           <div className="flex justify-end"><Button label="취소" variant="ghost" onClick={onClose} /></div>

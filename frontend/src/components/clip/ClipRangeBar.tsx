@@ -120,7 +120,7 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
               {showTip(handle) && (
                 <span
                   aria-hidden
-                  className={`pointer-events-none absolute -top-7 whitespace-nowrap rounded-md bg-elevated px-1.5 py-0.5 text-xs font-medium tabular-nums text-primary shadow-sm ${
+                  className={`pointer-events-none absolute -top-7 whitespace-nowrap rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium tabular-nums text-primary shadow-sm ${
                     handle === 'start' ? 'right-0 translate-x-1/2' : 'left-0 -translate-x-1/2'
                   }`}
                 >
