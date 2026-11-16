@@ -24,13 +24,21 @@ type Props = {
   autoPlayMuted?: boolean
   /** 바깥에서 재생 위치를 읽을 때(클립 만들기의 시작 위치) */
   videoRef?: RefObject<HTMLVideoElement | null>
+  /** 영상 이벤트를 바깥에서도 받을 때(클립 만들기: 구간 막대 · 영상 연동) */
+  mediaEvents?: MediaEvents
+}
+
+export type MediaEvents = {
+  onPause?: () => void
+  onSeeked?: () => void
+  onTimeUpdate?: () => void
 }
 
 /**
  * 파일 영상(다시보기 · 클립). 공개는 videoUrl, 비공개는 5분짜리 video-token 주소로 재생한다.
  * 토큰이 만료된 뒤 탐색 · 이어받기가 403으로 실패하면 새 토큰을 받아 같은 위치부터 이어 간다(§4.10).
  */
-export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetchToken, overlayText, startAt, autoPlayMuted, videoRef }: Props) {
+export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetchToken, overlayText, startAt, autoPlayMuted, videoRef, mediaEvents }: Props) {
   const [tokenUrl, setTokenUrl] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [muted, setMuted] = useState(Boolean(autoPlayMuted))
@@ -108,7 +116,9 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
           onError={handleError}
           onLoadedMetadata={handleLoadedMetadata}
           onPlaying={() => { retries.current = 0; setPlaying(true) }}
-          onPause={() => setPlaying(false)}
+          onPause={() => { setPlaying(false); mediaEvents?.onPause?.() }}
+          onSeeked={mediaEvents?.onSeeked}
+          onTimeUpdate={mediaEvents?.onTimeUpdate}
           onVolumeChange={(event) => setMuted(event.currentTarget.muted)}
           className="h-full w-full"
         />

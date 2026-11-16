@@ -1,7 +1,7 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { ClipDraftDetail } from '../../api/types'
-import { LiveDraftStage } from './ClipDialog'
+import type { ClipDraftDetail, RecordingDetail } from '../../api/types'
+import { LiveDraftStage, RecordingClipForm } from './ClipDialog'
 
 // 테스트 환경이 node(DOM 없음)라 서버 렌더 결과로 라이브 모드의 상태별 화면을 확인한다.
 const base: ClipDraftDetail = {
@@ -66,6 +66,48 @@ describe('ClipDialog 닫기 버튼', () => {
   it('준비 중 · 실패 · 구간 선택 화면 모두 제목 줄에 "닫기" 버튼이 있다', () => {
     for (const html of [render(base), render(base, true), render({ ...base, status: 'READY', videoUrl: '/v' })]) {
       expect(html).toContain('aria-label="닫기"')
+    }
+  })
+})
+
+const recording: RecordingDetail = {
+  id: 7, broadcastId: 1, title: '지난 방송', category: { code: 'GAME', label: '게임' }, thumbnailUrl: null, durationSeconds: 3600,
+  startedAt: '2026-11-16T02:00:00Z', channel: { id: 1, name: '채널' }, commentCount: 0,
+  status: 'READY', visibility: 'PUBLIC', videoUrl: '/vod/a.mp4', fileDeleted: false, donationTotal: 0, isOwner: false,
+}
+const renderRecording = (initialStart: number) => renderToString(
+  <RecordingClipForm recording={recording} initialStart={initialStart} onClose={() => {}} onCreated={() => {}} />,
+)
+
+describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)', () => {
+  it('미리보기 영상 · 구간 막대 · 구간 재생 · 입력을 라이브 모드와 같이 그린다', () => {
+    const live = render({ ...base, status: 'READY', videoUrl: '/v' })
+    const html = renderRecording(600)
+    expect(html).toContain('src="/vod/a.mp4"')
+    for (const part of ['role="slider"', '구간 재생', 'type="range"', '막대의 손잡이를 끌거나 영상을 멈춰', '클립 공개', 'aria-label="닫기"']) {
+      expect(html).toContain(part)
+      expect(live).toContain(part)
+    }
+    expect(html).toContain('value="10:00"')
+    expect(html).toContain('value="지난 방송"')
+  })
+
+  it('긴 영상은 막대가 확대 창(4분)만 보인다', () => {
+    const html = renderRecording(600)
+    expect(html).toContain('<span>9:00</span><span>13:00</span>')
+    expect(html).toMatch(/aria-label="클립 시작"[^>]*aria-valuenow="600"/)
+  })
+})
+
+describe('ClipDialog 모바일 스크롤(CLIP-4#2)', () => {
+  it('본문은 세로 스크롤 영역이고 취소 · 만들기 줄은 그 밖에 있다', () => {
+    for (const html of [renderRecording(0), render({ ...base, status: 'READY', videoUrl: '/v' })]) {
+      const scroll = html.indexOf('overflow-y-auto')
+      const footer = html.indexOf('shrink-0')
+      expect(scroll).toBeGreaterThan(-1)
+      expect(footer).toBeGreaterThan(scroll)
+      // 스크롤 영역이 닫힌 뒤에 만들기 버튼이 온다
+      expect(html.indexOf('만들기</', footer)).toBeGreaterThan(footer)
     }
   })
 })

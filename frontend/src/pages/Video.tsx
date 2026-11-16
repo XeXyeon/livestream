@@ -102,7 +102,7 @@ function parseStartAt(value: string | null): number | undefined {
   return seconds > 0 ? seconds : undefined
 }
 
-/** "클립 만들기": 비로그인은 로그인 모달, 로그인하면 지금 재생 위치를 시작으로 ClipDialog */
+/** "클립 만들기": 비로그인은 로그인 모달, 로그인하면 지금 재생 위치를 시작으로 ClipDialog(미리보기 영상 + 구간 막대) */
 function ClipCreate({ recording, videoRef, onCreated }: {
   recording: RecordingDetail
   videoRef: RefObject<HTMLVideoElement | null>
@@ -116,6 +116,8 @@ function ClipCreate({ recording, videoRef, onCreated }: {
   function start() {
     if (!loggedIn) { openLogin(); return }
     setInitialStart(defaultClipStart(videoRef.current?.currentTime ?? 0, recording.durationSeconds))
+    // 다이얼로그 안 미리보기와 소리가 겹치지 않게 페이지 영상은 멈춘다
+    videoRef.current?.pause()
     setOpen(true)
   }
 
