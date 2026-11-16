@@ -30,6 +30,7 @@ import { useAuth } from '../store/auth'
 import { useAuthDialog } from '../store/authDialog'
 import { usePlayerUi } from '../store/playerUi'
 import { useIsFullscreen, useMediaQuery } from '../components/common/useMediaQuery'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 // S2 시청. 채널 → liveBroadcastId → 방송 상세. 방송이 끝나 liveBroadcastId가 null이 돼도
 // 마지막으로 본 방송을 그대로 보여 줘 종료 화면이 유지된다. 상태 · 시청자 수는 STOMP status · viewers가
@@ -79,6 +80,9 @@ function LiveMain() {
     },
   })
   const broadcastGone = broadcast.error instanceof ApiError && broadcast.error.status === 404
+  const channelGone = !validId || (channel.error instanceof ApiError && channel.error.status === 404)
+  // 방송 중이면 방송 제목, 아니면 채널 이름
+  usePageMeta({ title: broadcast.data?.title ?? channel.data?.name ?? null, noindex: channelGone })
   // 없는 방송(404)의 토픽에는 붙지 않는다
   const banner = useDonationBanner()
   const chat = useBroadcastChat(broadcastGone ? null : broadcastId, { onDonation: banner.push })

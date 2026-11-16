@@ -3,9 +3,11 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { SignupForm } from '../components/auth/AuthForms'
 import { safeNext } from './authNavigation'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 // 직접 주소(/signup)용 페이지. 화면 안에서는 로그인 모달의 "회원가입" 단계를 쓴다.
 export default function Signup() {
+  usePageMeta({ title: '회원가입', noindex: true })
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const next = safeNext(params.get('next'))

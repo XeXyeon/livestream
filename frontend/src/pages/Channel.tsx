@@ -15,6 +15,7 @@ import ClipList from '../components/clip/ClipList'
 import Spinner from '../components/common/Spinner'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const TABS = [
   { value: 'home', label: '홈' },
@@ -34,6 +35,7 @@ export default function Channel() {
   const tab: TabValue = isTab(requested) ? requested : 'home'
   const member = useAuth((state) => state.member)
   const query = useQuery({ queryKey: ['channel', channelId], queryFn: () => getChannel(channelId), enabled: valid, refetchInterval: 30_000 })
+  usePageMeta({ title: query.data?.name ?? null, noindex: !valid || (query.error instanceof ApiError && query.error.status === 404) })
 
   if (!valid || (query.error instanceof ApiError && query.error.status === 404)) {
     return <EmptyState headingLevel={1} title="채널을 찾을 수 없습니다" description="없는 채널이거나 주소가 잘못되었습니다." />

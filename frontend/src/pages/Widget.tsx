@@ -5,6 +5,7 @@ import type { WidgetDonation } from '../components/widget/alertQueue'
 import { createSpeaker } from '../components/widget/speech'
 import { subscribeWidgetEvents } from '../components/widget/widgetEvents'
 import type { WidgetStatus } from '../components/widget/widgetEvents'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const STATUS_TEXT: Record<WidgetStatus, string> = {
   connecting: '연결 중…',
@@ -29,6 +30,7 @@ const DEMO_DONATION: WidgetDonation = {
  * 쿼리: `tts=0` 음성 끔, `debug=1` 연결 상태 표시, `demo=1` 열자마자 테스트 알림 한 번(서버 없이 TTS 확인용).
  */
 export default function Widget() {
+  usePageMeta({ title: '후원 위젯', noindex: true })
   const { widgetKey = '' } = useParams()
   const [searchParams] = useSearchParams()
   const ttsEnabled = searchParams.get('tts') !== '0'
