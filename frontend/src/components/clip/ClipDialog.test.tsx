@@ -44,3 +44,20 @@ describe('ClipDialog 라이브 모드(LiveDraftStage)', () => {
     }
   })
 })
+
+describe('ClipDialog 구간 막대(CLIP-4)', () => {
+  it('READY 초안이면 막대 손잡이 · 시작 입력 · 길이 슬라이더가 같은 구간(1:30 ~ 2:00)을 보인다', () => {
+    const html = render({ ...base, status: 'READY', videoUrl: '/v' })
+    expect(html).toMatch(/role="slider"[^>]*aria-label="클립 시작"[^>]*aria-valuenow="90"/)
+    expect(html).toMatch(/role="slider"[^>]*aria-label="클립 끝"[^>]*aria-valuenow="120"/)
+    expect(html).toContain('value="1:30"')
+    expect(html).toMatch(/type="range"[^>]*value="30"/)
+    expect(html).toContain('구간 재생')
+  })
+
+  it('5초보다 짧은 초안이면 막대 없이 입력만', () => {
+    const html = render({ ...base, status: 'READY', windowSeconds: 4, videoUrl: '/v' })
+    expect(html).not.toContain('role="slider"')
+    expect(html).toContain('type="range"')
+  })
+})

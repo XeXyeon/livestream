@@ -8,6 +8,7 @@ import static com.livestream.livestream.clip.ClipFixtures.readyDraft;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -22,6 +23,7 @@ import com.livestream.livestream.broadcast.BroadcastLifecycleService;
 import com.livestream.livestream.broadcast.BroadcastRepository;
 import com.livestream.livestream.broadcast.BroadcastSource;
 import com.livestream.livestream.mediamtx.MediaMtxClient;
+import com.livestream.livestream.mediamtx.MediaMtxClient.RecordingSegment;
 import com.livestream.livestream.recording.RecordingMergeService;
 import com.livestream.livestream.support.TestAccounts;
 import com.livestream.livestream.support.TestAccounts.Account;
@@ -58,6 +60,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.web.client.RestClientException;
 
 /**
  * CLIP-3 (DESIGN §4.18 라이브 클립 초안 · §4.16 clip-drafts · §9 CLIP-3 완료(BE) ①~⑥): 초안 생성 조건 · 받기(가짜 재생 서버 ·
@@ -231,6 +234,71 @@ class ClipDraftApiTest {
 		assertThat((String) JsonPath.read(awaitDraft(mvc, viewer, draftId), "$.status")).isEqualTo("FAILED");
 		assertThat(jdbc.queryForObject("select failure_reason from clip_draft where id = ?", String.class, draftId)).isEqualTo("NO_MEDIA");
 		assertThat(jdbc.queryForObject("select file_path from clip_draft where id = ?", String.class, draftId)).isNull();
+	}
+
+	// CLIP-3#1: 송출 직후 드리프트 리셋으로 짧은 첫 조각이 겹치면 창 시작을 본 조각 시작(초 올림)으로 옮기고 READY 때 갱신
+	@Test
+	void 첫_조각이_짧으면_창을_본_조각_시작으로_옮기고_windowStartSeconds를_갱신한다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account viewer = TestAccounts.create(mvc);
+		long broadcastId = liveBroadcast(streamer, 30);
+		Instant startedAt = broadcastRepository.findById(broadcastId).orElseThrow().getStartedAt();
+		when(mediaMtxClient.listSegments(any(), any(), any())).thenAnswer(inv -> {
+			Instant start = inv.getArgument(1);
+			return List.of(new RecordingSegment(start.minusMillis(60), 5), new RecordingSegment(start.plusMillis(1990), 300));
+		});
+
+		String created = draft(viewer, broadcastId).andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.windowStartSeconds").value(0))
+				.andReturn().getResponse().getContentAsString();
+		long draftId = ((Number) JsonPath.read(created, "$.id")).longValue();
+		int requested = JsonPath.read(created, "$.windowSeconds");
+
+		String done = awaitDraft(mvc, viewer, draftId);
+		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("READY");
+		assertThat((Integer) JsonPath.read(done, "$.windowStartSeconds")).isEqualTo(2); // 1.99초 → 2
+		assertThat((Integer) JsonPath.read(done, "$.windowSeconds")).isEqualTo(12); // 가짜 ffprobe 12.4 → 내림
+		verify(mediaMtxClient).listSegments(eq("live/" + streamer.channelId()), eq(startedAt), eq(startedAt.plusSeconds(requested)));
+		verify(mediaMtxClient).downloadRecording(eq("live/" + streamer.channelId()), eq(startedAt.plusSeconds(2)),
+				eq(Duration.ofSeconds(requested - 2)), any());
+
+		// 클립 시작(방송 기준) = 옮긴 windowStart + 초안 기준 시작
+		long clipId = createDraftClip(mvc, viewer, draftId, "{\"startSeconds\":3,\"durationSeconds\":5}");
+		assertThat(jdbc.queryForObject("select start_seconds from clip where id = ?", Integer.class, clipId)).isEqualTo(5);
+		awaitProcessed(mvc, viewer, clipId);
+	}
+
+	// /list 가 실패하면 창을 옮기지 않고 그대로 받는다
+	@Test
+	void 조각_목록_조회가_실패하면_창을_그대로_받는다() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account viewer = TestAccounts.create(mvc);
+		long broadcastId = liveBroadcast(streamer, 30);
+		Instant startedAt = broadcastRepository.findById(broadcastId).orElseThrow().getStartedAt();
+		when(mediaMtxClient.listSegments(any(), any(), any())).thenThrow(new RestClientException("연결 실패"));
+
+		long draftId = createDraft(mvc, viewer, broadcastId);
+		String done = awaitDraft(mvc, viewer, draftId);
+		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("READY");
+		assertThat((Integer) JsonPath.read(done, "$.windowStartSeconds")).isEqualTo(0);
+		verify(mediaMtxClient).downloadRecording(eq("live/" + streamer.channelId()), eq(startedAt), any(), any());
+	}
+
+	// 옮긴 창이 min-seconds(5)보다 짧으면 받지 않고 FAILED(NO_MEDIA)
+	@Test
+	void 옮긴_창이_최소_길이보다_짧으면_받지_않고_NO_MEDIA() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account viewer = TestAccounts.create(mvc);
+		when(mediaMtxClient.listSegments(any(), any(), any())).thenAnswer(inv -> {
+			Instant start = inv.getArgument(1);
+			Instant end = inv.getArgument(2);
+			return List.of(new RecordingSegment(start, 3), new RecordingSegment(end.minusSeconds(3), 100));
+		});
+
+		long draftId = createDraft(mvc, viewer, liveBroadcast(streamer, 30));
+		assertThat((String) JsonPath.read(awaitDraft(mvc, viewer, draftId), "$.status")).isEqualTo("FAILED");
+		assertThat(jdbc.queryForObject("select failure_reason from clip_draft where id = ?", String.class, draftId)).isEqualTo("NO_MEDIA");
+		verify(mediaMtxClient, never()).downloadRecording(any(), any(), any(), any());
 	}
 
 	// 받는 중에 초안이 지워지면(방송 삭제) 처리기는 받은 파일을 버린다(고아 파일 없음)

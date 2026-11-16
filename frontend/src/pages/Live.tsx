@@ -23,6 +23,7 @@ import DonationBanner from '../components/donation/DonationBanner'
 import { useDonationBanner } from '../components/donation/useDonationBanner'
 import { useDonationReturn } from '../components/donation/useDonationReturn'
 import type { DonationReturnState } from '../components/donation/useDonationReturn'
+import ClipStrip from '../components/clip/ClipStrip'
 import { LiveClipButton, LiveClipNotice } from '../components/clip/LiveClipButton'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
@@ -184,6 +185,7 @@ function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
         <span className="ml-auto"><LiveClipButton broadcast={broadcast} onCreated={setClipId} /></span>
       </div>
       <LiveClipNotice clipId={clipId} onDismiss={() => setClipId(null)} />
+      <div className="pt-3"><ClipStrip channelId={broadcast.channel.id} /></div>
     </div>
   )
 }

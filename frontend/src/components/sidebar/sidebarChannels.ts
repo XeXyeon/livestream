@@ -90,3 +90,21 @@ export function writeCollapsed(collapsed: boolean, storage?: Pick<Storage, 'setI
     // 기억하지 못해도 지금 화면은 동작한다
   }
 }
+
+/**
+ * 목록을 다시 받아도 자리가 바뀌지 않게 한다(시청자 수 정렬이라 내가 보는 방송이 맨 위로 튀지 않게).
+ * 라이브가 라이브 아닌 채널보다 위인 것은 지키고, 같은 쪽 안에서는 이전 순서를 따른다. 처음 보는 채널은 그쪽 끝에 서버 순서대로 붙는다.
+ */
+export function keepOrder(previousIds: readonly number[], channels: readonly SidebarChannel[]): SidebarChannel[] {
+  const rank = new Map(previousIds.map((id, index) => [id, index]))
+  return channels
+    .map((channel, index) => ({ channel, index }))
+    .sort((a, b) => {
+      const live = Number(b.channel.viewerCount != null) - Number(a.channel.viewerCount != null)
+      if (live !== 0) return live
+      const ra = rank.get(a.channel.channelId) ?? previousIds.length + a.index
+      const rb = rank.get(b.channel.channelId) ?? previousIds.length + b.index
+      return ra - rb
+    })
+    .map(({ channel }) => channel)
+}
