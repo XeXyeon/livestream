@@ -119,7 +119,7 @@ export default function DonateDialog({ broadcastId, channelId, isOpen, onOpenCha
             <Button type="button" label="취소" variant="secondary" onClick={close} isDisabled={creating} />
             <Button
               type="submit"
-              label={amount !== null && donationAmountError(amount) === null ? `${won(amount)} 결제하기` : '결제하기'}
+              label="결제하기"
               variant="primary"
               isLoading={creating}
             />
@@ -186,7 +186,7 @@ function CheckoutPanel({ checkout, onClose }: { checkout: Checkout; onClose: () 
         <footer className="space-y-3 border-t border-border px-5 py-3">
           {error && <Banner role="alert" status="error" title={error} />}
           <Button
-            label={`${won(checkout.order.amount)} 결제하기`}
+            label="결제하기"
             variant="primary"
             width="100%"
             onClick={pay}
