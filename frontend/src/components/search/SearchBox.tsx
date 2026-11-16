@@ -60,8 +60,7 @@ export default function SearchBox() {
           ? 'absolute inset-x-0 top-0 z-40 flex h-14 items-center gap-2 bg-body px-3'
           : 'hidden'} sm:static sm:z-auto sm:flex sm:h-auto sm:min-w-0 sm:max-w-md sm:flex-1 sm:bg-transparent sm:px-0`}
       >
-        {/* 돋보기(제출)는 입력창 오른쪽 안에 겹쳐 둔다. 입력창 오른쪽 여백(pr-10)이 그 자리를 비운다.
-            위아래 · 오른쪽 틈을 같게(1.5px) 두고, 버튼 모서리는 입력창 모서리(10px)에서 그 틈을 뺀 값으로 맞춘다(동심 모서리) */}
+        {/* 돋보기(제출)는 입력창 오른쪽 안에 겹쳐 둔다. 입력창 오른쪽 여백(pr-10)이 그 자리를 비운다 */}
         <div className="relative min-w-0 flex-1">
           <input
             ref={inputRef}
@@ -76,9 +75,14 @@ export default function SearchBox() {
             enterKeyHint="search"
             className={`${inputClassName} !py-1.5 !pr-10 text-sm`}
           />
-          <div className="absolute inset-y-0 right-[1.5px] flex items-center">
-            <IconButton type="submit" label="검색" icon={<Search aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" style={{ borderRadius: '8.5px' }} />
-          </div>
+          {/* 입력창 안이라 배경 없이 아이콘만 둔다. 상태는 색으로만 보인다(기본 보조색 → 호버 · 포커스 기본색) */}
+          <button
+            type="submit"
+            aria-label="검색"
+            className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-secondary transition-colors duration-150 hover:text-primary focus-visible:text-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+          >
+            <Search aria-hidden className="h-5 w-5" />
+          </button>
         </div>
         {open && (
           <div className="sm:hidden">
