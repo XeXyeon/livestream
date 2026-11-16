@@ -44,7 +44,7 @@ function SearchSummary({ q }: { q: string }) {
   if (channels.total + lives.total + recordings.total === 0) {
     return (
       <div className="rounded-xl bg-surface py-6">
-        <EmptyState headingLevel={1} title={`'${query.data.q}'에 대한 결과가 없습니다`} description="다른 검색어로 찾아 보세요." icon={<SearchX aria-hidden className="h-8 w-8" />} />
+        <EmptyState headingLevel={1} title={`'${query.data.q}'에 맞는 채널 · 라이브 · 다시보기가 없습니다`} description="다른 검색어로 찾아 보세요." icon={<SearchX aria-hidden className="h-8 w-8" />} />
       </div>
     )
   }

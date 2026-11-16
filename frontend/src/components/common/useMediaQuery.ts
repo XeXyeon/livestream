@@ -9,6 +9,8 @@ export function useMediaQuery(query: string): boolean {
       return () => list.removeEventListener('change', onChange)
     },
     () => window.matchMedia(query).matches,
+    // 서버 렌더(테스트의 renderToString)에는 창이 없으므로 "안 맞음"으로 본다
+    () => false,
   )
 }
 

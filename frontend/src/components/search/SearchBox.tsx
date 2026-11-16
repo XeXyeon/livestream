@@ -4,11 +4,12 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { Search, X } from 'lucide-react'
 import { inputClassName } from '../common/TextField'
+import { useMediaQuery } from '../common/useMediaQuery'
 import { readSearchParams, SEARCH_MAX_LENGTH, searchPath } from './searchQuery'
 
 /**
  * 헤더 가운데의 통합 검색창(§6.7). 제출(Enter · 돋보기)하면 /search?q= 로 간다. /search에서는 주소의 q를 입력창에 맞추고,
- * 다른 페이지로 가면 비운다. sm 미만에서는 돋보기 버튼만 두고, 누르면 헤더 한 줄을 덮는 입력창(자동 포커스 + 닫기)이 열린다.
+ * 다른 페이지로 가면 비운다. 제출 돋보기는 입력창 안 오른쪽에 있다. sm 미만에서는 돋보기 버튼만 두고, 누르면 헤더 한 줄을 덮는 입력창(자동 포커스 + 닫기)이 열린다.
  * 헤더(sticky)가 위치 기준이다.
  */
 export default function SearchBox() {
@@ -17,6 +18,8 @@ export default function SearchBox() {
   const [value, setValue] = useState(() => (pathname === '/search' ? readSearchParams(new URLSearchParams(search)).q : ''))
   const [open, setOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  // md 미만에서는 검색창이 100px 안팎까지 줄어 긴 placeholder가 잘리므로 짧게 쓴다(SEARCH-2#1)
+  const wide = useMediaQuery('(min-width: 768px)')
 
   // 주소가 바뀌면(뒤로 가기 포함) 입력창을 주소에 맞추고 휴대폰 입력창은 닫는다
   const location = `${pathname}${search}`
@@ -57,20 +60,26 @@ export default function SearchBox() {
           ? 'absolute inset-x-0 top-0 z-40 flex h-14 items-center gap-2 bg-body px-3'
           : 'hidden'} sm:static sm:z-auto sm:flex sm:h-auto sm:min-w-0 sm:max-w-md sm:flex-1 sm:bg-transparent sm:px-0`}
       >
-        <input
-          ref={inputRef}
-          type="search"
-          value={value}
-          maxLength={SEARCH_MAX_LENGTH}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="채널 · 라이브 · 다시보기 검색"
-          aria-label="검색어"
-          autoComplete="off"
-          enterKeyHint="search"
-          className={`${inputClassName} min-w-0 flex-1 !py-1.5 text-sm`}
-        />
-        <IconButton type="submit" label="검색" icon={<Search aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" />
+        {/* 돋보기(제출)는 입력창 오른쪽 안에 겹쳐 둔다. 입력창 오른쪽 여백(pr-10)이 그 자리를 비운다.
+            위아래 · 오른쪽 틈을 같게(1.5px) 두고, 버튼 모서리는 입력창 모서리(10px)에서 그 틈을 뺀 값으로 맞춘다(동심 모서리) */}
+        <div className="relative min-w-0 flex-1">
+          <input
+            ref={inputRef}
+            type="search"
+            value={value}
+            maxLength={SEARCH_MAX_LENGTH}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={wide ? '채널 · 라이브 · 다시보기 검색' : '검색'}
+            aria-label="검색어"
+            autoComplete="off"
+            enterKeyHint="search"
+            className={`${inputClassName} !py-1.5 !pr-10 text-sm`}
+          />
+          <div className="absolute inset-y-0 right-[1.5px] flex items-center">
+            <IconButton type="submit" label="검색" icon={<Search aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" style={{ borderRadius: '8.5px' }} />
+          </div>
+        </div>
         {open && (
           <div className="sm:hidden">
             <IconButton label="검색 닫기" icon={<X aria-hidden className="h-5 w-5" />} variant="ghost" size="sm" onClick={() => setOpen(false)} />
