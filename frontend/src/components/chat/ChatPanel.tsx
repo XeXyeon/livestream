@@ -97,7 +97,7 @@ export default function ChatPanel({ chat, ended = false, className = '', framed 
       {chat.connection !== 'connected' && (
         <p role="status" className="px-4 pt-2 text-xs text-warning">{CONNECTION_TEXT[chat.connection]}</p>
       )}
-      <ul ref={listRef} onScroll={onScroll} aria-live="polite" className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2 text-sm">
+      <ul ref={listRef} onScroll={onScroll} aria-live="polite" className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-2 text-sm">
         {chat.entries.length === 0 && chat.connection === 'connected' && (
           <li className="px-2 py-4 text-center text-secondary">아직 채팅이 없습니다.</li>
         )}

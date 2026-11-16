@@ -14,6 +14,7 @@ import com.livestream.livestream.channel.dto.CategoryResponse;
 import com.livestream.livestream.channel.dto.MyChannelResponse;
 import com.livestream.livestream.chat.BroadcastEventPublisher;
 import com.livestream.livestream.chat.ViewerCounter;
+import com.livestream.livestream.clip.ClipService;
 import com.livestream.livestream.comment.CommentCounter;
 import com.livestream.livestream.comment.CommentRepository;
 import com.livestream.livestream.common.config.AppProperties;
@@ -75,6 +76,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	private final AppProperties props;
 	private final CommentRepository commentRepository;
 	private final CommentCounter commentCounter;
+	private final ClipService clipService;
 
 	// ---------- 조회 ----------
 
@@ -178,6 +180,7 @@ public class BroadcastService implements LiveBroadcastLookup {
 	/**
 	 * DELETE /broadcasts/{id} (§4.6): 진행 중이면 먼저 종료(kick · 차단 포함) → deleted_at → recording FILE_DELETED →
 	 * 커밋 뒤 파일(vod · 썸네일) 삭제. FILE_DELETED 로 먼저 바꿔야 진행 중인 병합이 결과를 버린다. 후원 내역은 남는다.
+	 * 그 방송의 클립도 soft delete 하고 커밋 뒤 파일을 지운다(CLIP-1).
 	 */
 	@Transactional
 	public void delete(MemberPrincipal me, Long id) {
@@ -194,6 +197,8 @@ public class BroadcastService implements LiveBroadcastLookup {
 		// 다시보기 댓글은 같은 트랜잭션에서 물리 삭제한다(recording 행은 남아 FK cascade 가 돌지 않는다). 녹화 잠금을 쥔 채라
 		// 댓글 작성(녹화 공유 잠금)과 직렬화된다.
 		recording.ifPresent(r -> commentRepository.deleteAllOfRecording(r.getId()));
+		// 이 방송의 클립도 같은 트랜잭션에서 soft delete 하고 커밋 뒤 파일 · 썸네일을 지운다(§4.18). 잠금은 recording 다음 자리.
+		clipService.deleteAllOfBroadcast(b.getId());
 		String vod = recording.map(Recording::getFilePath).orElse(null);
 		String thumbnail = b.getThumbnailPath() != null ? b.getThumbnailPath() : "thumbnails/" + b.getId() + ".jpg";
 		AfterCommit.run("녹화 파일 삭제", () -> recordingService.deleteFiles(vod, thumbnail));

@@ -46,7 +46,7 @@ export default function Player({ broadcast, initialMode, theater = false, onThea
           : <GridView key={gridGeneration} hlsUrl={broadcast.play.hlsUrl} onStats={setStats} onP2pUnavailable={() => setP2p(false)} chrome={chrome} />}
         {broadcast.status === 'DISCONNECTED' && (
           <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-6 text-center text-slate-100">
-            <span aria-hidden className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
+            <span aria-hidden className="h-6 w-6 motion-safe:animate-spin motion-reduce:animate-pulse rounded-full border-2 border-slate-300 border-t-transparent" />
             <p className="font-semibold">방송인 연결이 끊겼습니다. 재연결을 기다리는 중…</p>
           </div>
         )}

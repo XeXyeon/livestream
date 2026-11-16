@@ -15,19 +15,18 @@ type Props = {
   children: ReactNode
 }
 
-/** 통합 검색 요약의 한 절: 제목 + 전체 수, 카드 격자, 더 있으면 "더 보기" */
+/** 통합 검색 요약의 한 절: 제목 + 전체 수, 카드 격자, 더 있으면 "더 보기 (N)". 결과가 없는 절은 그리지 않는다(§6.7 S12) */
 export default function SearchSection({ title, total, shown, moreHref, gridClassName, children }: Props) {
+  if (total === 0) return null
   return (
     <section aria-label={title}>
       <Heading level={2}>
         {title} <span className="text-base font-normal text-secondary">{total.toLocaleString('ko-KR')}</span>
       </Heading>
-      {total === 0
-        ? <p className="mt-3 text-sm text-secondary">{title} 결과가 없습니다.</p>
-        : <div className={`mt-4 grid gap-6 ${gridClassName}`}>{children}</div>}
+      <div className={`mt-4 grid gap-6 ${gridClassName}`}>{children}</div>
       {total > shown && (
         <div className="mt-6 text-center">
-          <Button href={moreHref} label={`${title} 더 보기`} variant="secondary" />
+          <Button href={moreHref} label={`${title} 더 보기 (${total.toLocaleString('ko-KR')})`} variant="secondary" />
         </div>
       )}
     </section>
