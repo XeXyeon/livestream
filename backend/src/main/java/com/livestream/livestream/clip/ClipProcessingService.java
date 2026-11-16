@@ -539,12 +539,11 @@ public class ClipProcessingService {
 			log.warn("클립 ffprobe 실패: {} ({})", file, r.describe());
 			return null;
 		}
-		try {
-			return Double.parseDouble(r.output().strip());
-		} catch (NumberFormatException | NullPointerException e) {
+		Double seconds = r.durationSeconds();
+		if (seconds == null) {
 			log.warn("클립 ffprobe 출력 해석 실패: {}", r.output());
-			return null;
 		}
+		return seconds;
 	}
 
 	/** 1초 지점 한 장을 tmp 로 뽑아 rename. @return 만들었으면 true */

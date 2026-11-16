@@ -242,12 +242,12 @@ public class RecordingMergeService {
 			log.warn("ffprobe 실패: {} ({})", file, r.describe());
 			return null;
 		}
-		try {
-			return (int) Math.round(Double.parseDouble(r.output().strip()));
-		} catch (NumberFormatException e) {
+		Double seconds = r.durationSeconds();
+		if (seconds == null) {
 			log.warn("ffprobe 출력 해석 실패: {}", r.output());
 			return null;
 		}
+		return (int) Math.round(seconds);
 	}
 
 	private void fail(Long recordingId, String reason) {
