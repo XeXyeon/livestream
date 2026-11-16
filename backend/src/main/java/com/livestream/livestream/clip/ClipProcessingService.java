@@ -6,6 +6,7 @@ import com.livestream.livestream.mediamtx.MediaMtxClient;
 import com.livestream.livestream.recording.RecordingFiles;
 import com.livestream.livestream.recording.Visibility;
 import com.livestream.livestream.thumbnail.FfmpegRunner;
+import com.livestream.livestream.thumbnail.VideoTranscode;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -35,11 +37,13 @@ import org.springframework.web.client.RestClientException;
  * 클립 처리기 (DESIGN §4.18). {@code clipExecutor}(단일 스레드)에서 하나씩 돈다.
  * <ul>
  *   <li>시작할 때 클립을 다시 읽어 PROCESSING 이 아니거나 삭제됐으면 아무것도 하지 않는다.</li>
- *   <li>RECORDING: 병합된 다시보기 파일을 {@code ffmpeg -ss -i -t -c copy} 로 자른다(재인코딩 없음, 시작은 직전 키프레임으로 당겨질 수 있다).</li>
+ *   <li>RECORDING: 병합된 다시보기 파일을 {@code ffmpeg -ss -i -t} 로 자른다. 원본에 영상이 있으면 영상은 libx264 로 다시 인코딩하고
+ *       오디오는 복사한다({@link VideoTranscode}, FE-3#1 — 라이브 녹화의 기본값 avcC · 중간 해상도 변경을 한 SPS 로 정리).</li>
  *   <li>LIVE: 라이브 클립 초안(CLIP-3) 파일을 RECORDING 과 같은 방식으로 자른다(시작은 초안 기준). 초안 파일이 없으면 FAILED(SOURCE_FILE_MISSING).</li>
  *   <li>초안 받기({@link #enqueueDraft}): MediaMTX 재생 서버에서 창 {@code [started_at + window_start_seconds, +window_seconds)} mp4 를
- *       {@code private/clip-drafts/} 에 받고 ffprobe 실제 길이로 창 길이를 맞춰 READY. 404 · 빈 응답 · 받은 길이가 최소 클립 길이보다 짧으면 FAILED(NO_MEDIA).</li>
- *   <li>결과는 항상 {@code private/clips/} 에 먼저 쓴다. ffprobe 길이가 0 이면 FAILED(EMPTY). 썸네일은 실패해도 READY(썸네일만 null).</li>
+ *       {@code private/clip-drafts/} 에 받아(영상이 있으면 빠른 프리셋으로 다시 인코딩, FE-3#1) ffprobe 실제 길이로 창 길이를 맞춰 READY. 404 · 빈 응답 · 받은 길이가 최소 클립 길이보다 짧으면 FAILED(NO_MEDIA).</li>
+ *   <li>결과는 항상 {@code private/clips/} 에 먼저 쓴다. ffprobe 길이가 0 이거나 읽히지 않으면 FAILED(EMPTY), 원본에는 영상이
+ *       있는데 자른 구간에 영상이 없으면 FAILED(NO_VIDEO)(CLIP-1#3). 썸네일은 실패해도 READY(썸네일만 null).</li>
  *   <li>새 트랜잭션에서 클립을 잠그고 PROCESSING · 삭제 안 됨일 때만 READY. 그때의 visibility 가 PUBLIC 이면 {@code vod/clips/} 로
  *       옮긴 뒤 경로를 적는다. 그 사이 클립이나 원본 방송이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + 사유 코드.</li>
  *   <li>서버가 재시작되면 PROCESSING 클립과 PENDING 초안을 다시 줄 세운다(초안은 저장된 창으로 같은 범위를 받는다).</li>
@@ -55,9 +59,14 @@ public class ClipProcessingService {
 	static final Duration THUMBNAIL_TIMEOUT = Duration.ofSeconds(30);
 	static final String NO_MEDIA = "NO_MEDIA";
 	static final String EMPTY = "EMPTY";
+	/** 원본에는 영상이 있는데 고른 구간에 영상 프레임이 없다(CLIP-1#3). */
+	static final String NO_VIDEO = "NO_VIDEO";
 	static final String SOURCE_FILE_MISSING = "SOURCE_FILE_MISSING";
 	// 실패 사유는 코드만 저장한다(클립을 만든 아무 회원에게나 응답되므로 경로 · 내부 주소 · 예외는 로그에만)
 	static final String CUT_FAILED = "CUT_FAILED";
+	static final String TRANSCODE_FAILED = "TRANSCODE_FAILED";
+	/** 영상 확인(ffprobe)이 실패했다. 영상 없음으로 보고 {@code -c copy} 하면 예전처럼 깨진 클립이 나온다. */
+	static final String PROBE_FAILED = "PROBE_FAILED";
 	static final String DOWNLOAD_FAILED = "DOWNLOAD_FAILED";
 	static final String IO_ERROR = "IO_ERROR";
 	static final String ERROR = "ERROR";
@@ -306,10 +315,11 @@ public class ClipProcessingService {
 				return;
 			}
 			Files.createDirectories(out.getParent());
-			String failure = switch (job.source()) {
+			Cut cut = switch (job.source()) {
 				case RECORDING -> cutRecording(job, out);
 				case LIVE -> cutDraft(job, out);
 			};
+			String failure = cut.failure();
 			if (Thread.currentThread().isInterrupted()) {
 				log.info("클립 처리 중단(종료 중), 재시작 뒤 다시 시도: clip={}", clipId);
 				return;
@@ -322,12 +332,20 @@ public class ClipProcessingService {
 				fail(clipId, EMPTY);
 				return;
 			}
+			// CLIP-1#3: 영상이 없는 구간을 자르면 스트림 없는 빈 mp4(122바이트)가 나와 ffprobe 길이가 읽히지 않는다
+			if (cut.sourceHasVideo()) {
+				VideoTranscode.VideoInfo result = VideoTranscode.probe(ffmpeg, out, PROBE_TIMEOUT);
+				if (result == null || !result.hasVideo()) {
+					fail(clipId, result == null ? PROBE_FAILED : NO_VIDEO);
+					return;
+				}
+			}
 			Double probed = probeDurationSeconds(out);
-			if (probed != null && Math.round(probed) <= 0) {
+			if (probed == null || Math.round(probed) <= 0) {
 				fail(clipId, EMPTY);
 				return;
 			}
-			Integer duration = probed == null ? null : (int) Math.round(probed);
+			int duration = (int) Math.round(probed);
 			long size = Files.size(out);
 			thumbnailMade = makeThumbnail(out, thumbnailRelative);
 			String thumbnail = thumbnailMade ? thumbnailRelative : null;
@@ -383,36 +401,59 @@ public class ClipProcessingService {
 		return new Job(c.getSource(), c.getRecording().getFilePath(), null, c.getStartSeconds(), c.getDurationSeconds());
 	}
 
-	/** @return 실패 사유, 성공이면 null */
-	private String cutRecording(Job job, Path out) {
+	/** 자르기 결과. {@code failure} 가 null 이면 성공. {@code sourceHasVideo} 는 원본에 영상 프레임이 있었는지. */
+	record Cut(String failure, boolean sourceHasVideo) {
+
+		static Cut failed(String failure) {
+			return new Cut(failure, false);
+		}
+	}
+
+	private Cut cutRecording(Job job, Path out) {
 		String located = recordingFiles.locateVideo(job.recordingFile());
 		Path src = located == null ? null : recordingFiles.resolve(located);
 		if (src == null) {
-			return SOURCE_FILE_MISSING;
+			return Cut.failed(SOURCE_FILE_MISSING);
 		}
 		return cut(src, job, out);
 	}
 
-	/** LIVE: 초안 파일에서 초안 기준 구간을 자른다. @return 실패 사유, 성공이면 null */
-	private String cutDraft(Job job, Path out) {
+	/** LIVE: 초안 파일에서 초안 기준 구간을 자른다. */
+	private Cut cutDraft(Job job, Path out) {
 		Path src = job.draftFile() == null ? null : recordingFiles.resolve(job.draftFile());
 		if (src == null || !Files.isRegularFile(src) || job.startSeconds() < 0) {
-			return SOURCE_FILE_MISSING;
+			return Cut.failed(SOURCE_FILE_MISSING);
 		}
 		return cut(src, job, out);
 	}
 
-	/** {@code ffmpeg -ss -i -t -c copy}(재인코딩 없음). @return 실패 사유, 성공이면 null */
-	private String cut(Path src, Job job, Path out) {
-		FfmpegRunner.Result result = ffmpeg.ffmpeg(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-				"-ss", String.valueOf(job.startSeconds()), "-i", src.toString(), "-t", String.valueOf(job.durationSeconds()),
-				"-c", "copy", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out.toString()),
-				props.clip().timeout());
+	/** {@code ffmpeg -ss -i -t}. 원본에 영상이 있으면 영상은 다시 인코딩(오디오 복사), 없으면 {@code -c copy}. */
+	private Cut cut(Path src, Job job, Path out) {
+		VideoTranscode.VideoInfo info = VideoTranscode.probe(ffmpeg, src, PROBE_TIMEOUT);
+		if (info == null) {
+			log.warn("클립 원본 영상 확인 실패: {}", src);
+			return Cut.failed(PROBE_FAILED);
+		}
+		List<String> args = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+				"-ss", String.valueOf(job.startSeconds()), "-i", src.toString(), "-t", String.valueOf(job.durationSeconds())));
+		args.addAll(transcodeOrCopy(src, info, VideoTranscode.PRESET_FINAL));
+		args.addAll(List.of("-avoid_negative_ts", "make_zero", "-movflags", "+faststart", out.toString()));
+		FfmpegRunner.Result result = ffmpeg.ffmpeg(args, props.clip().timeout());
 		if (result.success()) {
-			return null;
+			return new Cut(null, info.hasVideo());
 		}
 		log.warn("클립 자르기 실패: {} {}", src, result.describe());
-		return CUT_FAILED;
+		return new Cut(CUT_FAILED, info.hasVideo());
+	}
+
+	/** 영상이 있으면 재인코딩 옵션, 없으면 {@code -c copy}. */
+	private List<String> transcodeOrCopy(Path src, VideoTranscode.VideoInfo info, String preset) {
+		if (!info.hasVideo()) {
+			return List.of("-c", "copy");
+		}
+		int[] source = VideoTranscode.sourceSize(ffmpeg, src, info, PROBE_TIMEOUT);
+		int[] size = VideoTranscode.targetSize(source[0], source[1]);
+		return VideoTranscode.encodeArgs(size[0], size[1], preset);
 	}
 
 	/**
@@ -469,6 +510,13 @@ public class ClipProcessingService {
 			if (failure == null && (!Files.isRegularFile(out) || Files.size(out) == 0)) {
 				failure = NO_MEDIA;
 			}
+			if (failure == null) {
+				failure = transcodeDraft(out); // FE-3#1: 받은 원본은 avcC 가 기본값이거나 중간에 해상도가 바뀌어 브라우저가 못 읽는다
+			}
+			if (Thread.currentThread().isInterrupted()) {
+				log.info("클립 초안 다시 인코딩 중단(종료 중), 재시작 뒤 다시 시도: draft={}", draftId);
+				return;
+			}
 			// 끝의 part 가 아직 안 내려와 창보다 짧을 수 있다. 내림해 프론트의 범위 검증(start + duration ≤ windowSeconds)이
 			// 실제 파일 안에 들게 한다. ffprobe 가 실패하면 요청한 창 길이를 그대로 둔다.
 			Double probed = failure == null ? probeDurationSeconds(out) : null;
@@ -519,6 +567,37 @@ public class ClipProcessingService {
 		} catch (RestClientException e) {
 			log.warn("재생 서버 /list 실패, 창을 그대로 받음: draft={} ({})", draftId, e.getMessage());
 			return window;
+		}
+	}
+
+	/**
+	 * 받은 초안에 영상이 있으면 같은 자리에 빠른 프리셋으로 다시 인코딩한다(원본은 옆 임시 파일로 옮겼다가 지운다).
+	 * @return 실패 사유, 성공 · 영상 없음이면 null
+	 */
+	private String transcodeDraft(Path out) throws IOException {
+		VideoTranscode.VideoInfo info = VideoTranscode.probe(ffmpeg, out, PROBE_TIMEOUT);
+		if (info == null) {
+			log.warn("클립 초안 영상 확인 실패: {}", out);
+			return PROBE_FAILED;
+		}
+		if (!info.hasVideo()) {
+			return null;
+		}
+		Path src = out.resolveSibling(out.getFileName().toString().replace(".mp4", ".src.mp4"));
+		try {
+			Files.move(out, src, StandardCopyOption.REPLACE_EXISTING);
+			List<String> args = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+					"-i", src.toString()));
+			args.addAll(transcodeOrCopy(src, info, VideoTranscode.PRESET_PREVIEW));
+			args.addAll(List.of("-movflags", "+faststart", out.toString()));
+			FfmpegRunner.Result result = ffmpeg.ffmpeg(args, props.clip().timeout());
+			if (!result.success() || !Files.isRegularFile(out) || Files.size(out) == 0) {
+				log.warn("클립 초안 다시 인코딩 실패: {} {}", src, result.describe());
+				return TRANSCODE_FAILED;
+			}
+			return null;
+		} finally {
+			deleteQuietly(src);
 		}
 	}
 
