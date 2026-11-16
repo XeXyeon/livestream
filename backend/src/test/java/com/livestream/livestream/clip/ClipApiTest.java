@@ -134,7 +134,7 @@ class ClipApiTest {
 		ArgumentCaptor<List<String>> args = ArgumentCaptor.forClass(List.class);
 		verify(ffmpeg, timeout(1000).atLeastOnce()).ffmpeg(args.capture(), any());
 		List<String> cut = args.getAllValues().stream().filter(a -> a.contains("-avoid_negative_ts")).findFirst().orElseThrow();
-		assertThat(String.join(" ", cut)).contains("-ss 10 -i ").contains(" -t 20 -c copy -avoid_negative_ts make_zero -movflags +faststart ");
+		assertThat(String.join(" ", cut)).contains(" -ss 10 -t 20 -c copy -avoid_negative_ts make_zero -movflags +faststart ");
 
 		// 비로그인도 공개 클립 상세를 본다
 		mvc.perform(get("/api/clips/" + clipId)).andExpect(status().isOk())
@@ -255,7 +255,7 @@ class ClipApiTest {
 		ArgumentCaptor<List<String>> args = ArgumentCaptor.forClass(List.class);
 		verify(ffmpeg, timeout(1000).atLeastOnce()).ffmpeg(args.capture(), any());
 		List<String> cut = args.getAllValues().stream().filter(a -> a.contains("-avoid_negative_ts")).findFirst().orElseThrow();
-		assertThat(String.join(" ", cut)).contains("-ss 3 -i ").contains(draftFile + " -t 5 -c copy"); // 초안 기준 시작
+		assertThat(String.join(" ", cut)).contains(draftFile + " -ss 3 -t 5 -c copy"); // 초안 기준 시작
 		// 재생 서버는 초안 받기에서 한 번만 부른다(창 전체)
 		verify(mediaMtxClient, times(1)).downloadRecording(eq("live/" + streamer.channelId()), any(), eq(Duration.ofSeconds(120)), any());
 
@@ -480,7 +480,7 @@ class ClipApiTest {
 		ArgumentCaptor<List<String>> args = ArgumentCaptor.forClass(List.class);
 		verify(ffmpeg, timeout(1000).atLeastOnce()).ffmpeg(args.capture(), any());
 		List<String> cut = args.getAllValues().stream().filter(a -> a.contains("-avoid_negative_ts")).findFirst().orElseThrow();
-		assertThat(String.join(" ", cut)).contains("-ss 20 -i ", " -t 30 ", "-c:v libx264 -preset veryfast",
+		assertThat(String.join(" ", cut)).contains("-ss 10 -i ", " -ss 10 -t 30 ", "-c:v libx264 -preset veryfast",
 				"scale=w=720:h=1280:", "-c:a copy").doesNotContain("-c copy");
 
 		// 자른 결과에 영상이 있으면 READY
