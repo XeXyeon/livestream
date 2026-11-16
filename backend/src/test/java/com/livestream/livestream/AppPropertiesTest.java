@@ -29,7 +29,7 @@ class AppPropertiesTest {
 		assertThat(props.mediamtx().playbackUrl()).isEqualTo("http://mediamtx:9996");
 		assertThat(props.clip().minSeconds()).isEqualTo(5);
 		assertThat(props.clip().maxSeconds()).isEqualTo(60);
-		assertThat(props.clip().timeout()).isEqualTo(java.time.Duration.ofMinutes(2));
+		assertThat(props.clip().timeout()).isEqualTo(java.time.Duration.ofMinutes(5));
 		assertThat(props.jwt().accessMinutes()).isEqualTo(15);
 		assertThat(props.jwt().refreshDays()).isEqualTo(14);
 		assertThat(props.jwt().refreshRotationGraceSeconds()).isEqualTo(10);
