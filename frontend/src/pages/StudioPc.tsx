@@ -22,6 +22,7 @@ import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import DonationBanner from '../components/donation/DonationBanner'
 import { useDonationBanner } from '../components/donation/useDonationBanner'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
   NO_SYSTEM_AUDIO: '탭/시스템 소리가 포함되지 않았습니다. 탭을 공유할 때 "탭 오디오도 공유"를 켜 주세요.',
@@ -56,6 +57,7 @@ function LevelMeter({ value, label }: { value: number; label: string }) {
 
 // S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 후원 알림(FE-6)과 채팅(FE-5).
 export default function StudioPc() {
+  usePageMeta({ title: 'PC 송출 · 스튜디오', noindex: true })
   const [media, setMedia] = useState<PcStream | null>(null)
   const mediaRef = useRef<PcStream | null>(null)
   const previewRef = useRef<HTMLVideoElement>(null)

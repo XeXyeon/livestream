@@ -6,6 +6,7 @@ import AuthDialog from '../components/auth/AuthDialog'
 import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 /**
  * 시청 화면 채팅의 새 창(`/live/:channelId/chat`). 헤더 셸 밖이라 창 전체를 채팅이 채운다.
@@ -18,6 +19,7 @@ export default function LiveChatPopout() {
   const broadcastId = channel.data?.liveBroadcastId ?? null
   const broadcast = useQuery({ queryKey: ['broadcast', broadcastId], queryFn: () => getBroadcast(broadcastId!), enabled: broadcastId !== null, refetchInterval: 30_000 })
   const chat = useBroadcastChat(broadcastId)
+  usePageMeta({ title: channel.data ? `${channel.data.name} 채팅` : '채팅', noindex: true })
 
   let body
   if (!validId || channel.isError) body = <p className="p-6 text-center text-sm text-secondary">채널을 찾을 수 없습니다.</p>

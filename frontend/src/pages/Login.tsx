@@ -3,9 +3,11 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { LoginForm, SignedUpNotice } from '../components/auth/AuthForms'
 import { safeNext } from './authNavigation'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 // 직접 주소(/login)와 보호 경로 리다이렉트용 페이지. 화면 안의 로그인 버튼은 모달(AuthDialog)을 쓴다.
 export default function Login() {
+  usePageMeta({ title: '로그인', noindex: true })
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()

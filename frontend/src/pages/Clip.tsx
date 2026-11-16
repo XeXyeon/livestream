@@ -20,6 +20,7 @@ import { inputClassName } from '../components/common/TextField'
 import TokenVideo from '../components/recording/TokenVideo'
 import type { RecordingPlayback } from '../components/recording/recordingState'
 import { useAuth } from '../store/auth'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const errorMessage = (cause: unknown, fallback: string) => (cause instanceof ApiError ? cause.message : fallback)
 
@@ -33,6 +34,7 @@ export default function Clip() {
   // 새로고침 직후에는 로그인 복구가 끝난 뒤 부른다(비공개 클립이 403으로 보이지 않게)
   const authReady = useAuth((state) => state.ready)
   const query = useClipStatus(valid ? clipId : null, authReady)
+  usePageMeta({ title: query.data?.title ?? null, noindex: !valid || query.error instanceof ApiError })
 
   if (!valid || (query.error instanceof ApiError && query.error.status === 404)) {
     return <NotAvailable title="클립을 찾을 수 없습니다" description="삭제되었거나 없는 주소입니다." />

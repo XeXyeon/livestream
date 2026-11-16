@@ -14,6 +14,7 @@ import BroadcastInfoForm from '../components/studio/BroadcastInfoForm'
 import SessionStatus from '../components/studio/SessionStatus'
 import { useBroadcastSession } from '../components/studio/useBroadcastSession'
 import type { BroadcastInfo } from '../components/studio/useBroadcastSession'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 type WakeLockSentinelLike = { release: () => Promise<void> }
 
@@ -43,6 +44,7 @@ function useWakeLock(enabled: boolean) {
 
 // S4 모바일 송출: 전체 화면 카메라 미리보기 · 방송 정보 · 전/후면 · 마이크 음소거 · 큰 시작/종료 · 시청자 수
 export default function StudioMobile() {
+  usePageMeta({ title: '모바일 송출 · 스튜디오', noindex: true })
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaRef = useRef<MobileStream | null>(null)
   const mountedRef = useRef(false)

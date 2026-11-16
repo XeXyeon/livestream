@@ -13,6 +13,7 @@ import Spinner from '../components/common/Spinner'
 import ChannelCard from '../components/search/ChannelCard'
 import SearchSection from '../components/search/SearchSection'
 import { readSearchParams, searchPath } from '../components/search/searchQuery'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const STALE_TIME = 30_000
 const CARD_GRID = 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
@@ -24,6 +25,7 @@ const TYPE_TITLES: Record<SearchType, string> = { channels: '채널', lives: '�
 export default function Search() {
   const [params] = useSearchParams()
   const { q, type, page } = readSearchParams(params)
+  usePageMeta({ title: q === '' ? '검색' : `'${q}' 검색 결과` })
 
   if (q === '') {
     return (

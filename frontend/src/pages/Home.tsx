@@ -12,6 +12,7 @@ import { liveBroadcastsQuery, recentRecordingsQuery } from '../components/broadc
 import LiveCard from '../components/broadcast/LiveCard'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import Spinner from '../components/common/Spinner'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const isCategory = (value: string | null): value is CategoryCode => CATEGORIES.some((category) => category.code === value)
 
@@ -35,6 +36,7 @@ function firstRowsClass(index: number): string {
 
 // S1 홈: 카테고리 칩 · 라이브 목록(시청자 수 순, 30초 갱신) · 다시보기 목록(처음엔 두 줄, 더 보기로 펼침)
 export default function Home() {
+  usePageMeta()
   const [params, setParams] = useSearchParams()
   const raw = params.get('category')
   const category = isCategory(raw) ? raw : undefined

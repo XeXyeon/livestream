@@ -23,6 +23,7 @@ import { useAuth } from '../store/auth'
 import { useAuthDialog } from '../store/authDialog'
 import type { RecordingDetail } from '../api/types'
 import { canChangeVisibility } from '../components/recording/recordingState'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 
 /**
@@ -45,6 +46,7 @@ export default function Video() {
     // 병합 중이면 끝날 때까지 10초마다 다시 본다
     refetchInterval: (q) => (q.state.data?.status === 'RECORDING' || q.state.data?.status === 'PROCESSING' ? 10_000 : false),
   })
+  usePageMeta({ title: query.data?.title ?? null, noindex: !valid || query.error instanceof ApiError })
 
   if (!valid || (query.error instanceof ApiError && query.error.status === 404)) {
     return <NotAvailable title="다시보기를 찾을 수 없습니다" description="삭제되었거나 없는 주소입니다." />
