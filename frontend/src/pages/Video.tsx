@@ -120,7 +120,7 @@ function ClipCreate({ recording, videoRef, onCreated }: {
   return (
     <>
       <Button label="클립 만들기" icon={<Scissors aria-hidden className="h-4 w-4" />} variant="secondary" onClick={start} />
-      <ClipDialog recording={recording} initialStart={initialStart} isOpen={open} onOpenChange={setOpen} onCreated={onCreated} />
+      <ClipDialog mode="recording" recording={recording} initialStart={initialStart} isOpen={open} onOpenChange={setOpen} onCreated={onCreated} />
     </>
   )
 }

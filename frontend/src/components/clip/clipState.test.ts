@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipPlayback, defaultClipStart, parseClipTime, validateClipRange } from './clipState'
+import { clipPlayback, defaultClipDuration, defaultClipStart, defaultLiveClipStart, parseClipTime, validateClipRange } from './clipState'
 
 describe('parseClipTime', () => {
   it('m:ss · h:mm:ss · 초 숫자를 읽는다', () => {
@@ -37,6 +37,31 @@ describe('validateClipRange', () => {
   })
   it('영상 길이를 모르면 끝 검사는 서버에 맡긴다', () => {
     expect(validateClipRange('99:00', 30, null)).toEqual({ ok: true, startSeconds: 5940 })
+  })
+})
+
+describe('validateClipRange — 라이브 초안(windowSeconds 기준)', () => {
+  it('초안 길이 안에서만 고를 수 있다', () => {
+    expect(validateClipRange('0:07', 5, 12)).toEqual({ ok: true, startSeconds: 7 })
+    expect(validateClipRange('0:08', 5, 12)).toEqual({ ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' })
+    expect(validateClipRange('0:00', 13, 12).ok).toBe(false)
+  })
+})
+
+describe('defaultClipDuration', () => {
+  it('기본 30초, 짧은 영상 · 초안은 그 길이(최소 5초)', () => {
+    expect(defaultClipDuration(null)).toBe(30)
+    expect(defaultClipDuration(120)).toBe(30)
+    expect(defaultClipDuration(12.9)).toBe(12)
+    expect(defaultClipDuration(3)).toBe(5)
+  })
+})
+
+describe('defaultLiveClipStart', () => {
+  it('초안의 끝(지금 직전) 구간을 기본으로 고른다', () => {
+    expect(defaultLiveClipStart(120)).toBe(90)
+    expect(defaultLiveClipStart(12)).toBe(0)
+    expect(defaultLiveClipStart(120, 10)).toBe(110)
   })
 })
 

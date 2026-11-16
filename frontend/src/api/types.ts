@@ -311,9 +311,24 @@ export type ClipDetail = ClipSummary & {
   isCreator: boolean
 }
 
-/** POST /recordings/{id}/clips */
-export type RecordingClipRequest = { title?: string; startSeconds: number; durationSeconds: number; visibility?: Visibility }
-/** POST /broadcasts/{id}/clips — 요청 시각 기준 최근 N초 */
-export type LiveClipRequest = { title?: string; durationSeconds: number; visibility?: Visibility }
+/** POST /recordings/{id}/clips · POST /clip-drafts/{id}/clips(startSeconds는 초안 기준) */
+export type ClipRequest = { title?: string; startSeconds: number; durationSeconds: number; visibility?: Visibility }
+
+// §4.16 · §4.18 라이브 클립 초안(CLIP-3)
+export type ClipDraftStatus = 'PENDING' | 'READY' | 'FAILED'
+
+/** POST /broadcasts/{id}/clip-drafts · GET /clip-drafts/{id}. PENDING이면 2초마다 다시 부른다 */
+export type ClipDraftDetail = {
+  id: number
+  broadcastId: number
+  status: ClipDraftStatus
+  /** 방송 시작 기준 창의 시작 위치(초) */
+  windowStartSeconds: number
+  /** 창 길이(초). READY면 받은 파일의 실제 길이. 클립은 start + duration ≤ 이 값 */
+  windowSeconds: number
+  /** READY일 때 "/api/clip-drafts/{id}/video?token=…"(토큰 10분), 아니면 null */
+  videoUrl: string | null
+  createdAt: string
+}
 /** PATCH /clips/{id} */
 export type ClipUpdateRequest = { title?: string; visibility?: Visibility }

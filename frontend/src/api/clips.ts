@@ -1,13 +1,23 @@
 import { apiFetch, toQueryString } from './client'
-import type { ClipDetail, ClipSummary, ClipUpdateRequest, LiveClipRequest, Page, RecordingClipRequest, VideoToken } from './types'
+import type { ClipDetail, ClipDraftDetail, ClipRequest, ClipSummary, ClipUpdateRequest, Page, VideoToken } from './types'
 
 // §4.16 클립 행(CLIP-1). 만들기는 202 + ClipDetail(PROCESSING), 이후 GET /clips/{id}로 상태를 본다
 
-export const createRecordingClip = (recordingId: number, body: RecordingClipRequest) =>
+export const createRecordingClip = (recordingId: number, body: ClipRequest) =>
   apiFetch<ClipDetail>(`/recordings/${recordingId}/clips`, { method: 'POST', body: JSON.stringify(body) })
 
-export const createLiveClip = (broadcastId: number, body: LiveClipRequest) =>
-  apiFetch<ClipDetail>(`/broadcasts/${broadcastId}/clips`, { method: 'POST', body: JSON.stringify(body) })
+// 라이브 클립 초안(CLIP-3, §4.18 라이브 클립 초안): 최근 2분을 받아 둔 뒤 그 안에서 구간을 골라 만든다
+
+/** 초안 만들기(본문 없음) → 202 + PENDING. 이전 내 초안은 서버가 지운다 */
+export const createLiveDraft = (broadcastId: number) =>
+  apiFetch<ClipDraftDetail>(`/broadcasts/${broadcastId}/clip-drafts`, { method: 'POST' })
+
+/** 만든 회원만. READY면 videoUrl에 재생 토큰(10분) */
+export const getDraft = (id: number) => apiFetch<ClipDraftDetail>(`/clip-drafts/${id}`)
+
+/** 초안에서 클립. startSeconds는 초안 기준(서버가 방송 기준으로 바꿔 저장) */
+export const createClipFromDraft = (id: number, body: ClipRequest) =>
+  apiFetch<ClipDetail>(`/clip-drafts/${id}/clips`, { method: 'POST', body: JSON.stringify(body) })
 
 export const getClip = (id: number) => apiFetch<ClipDetail>(`/clips/${id}`)
 

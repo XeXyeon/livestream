@@ -5,7 +5,6 @@ import type { RecordingPlayback } from '../recording/recordingState'
 export const CLIP_MIN_SECONDS = 5
 export const CLIP_MAX_SECONDS = 60
 export const CLIP_DEFAULT_SECONDS = 30
-export const LIVE_CLIP_LENGTHS = [15, 30, 60] as const
 export const CLIP_TITLE_MAX = 100
 
 /** "m:ss" · "h:mm:ss" · 초 숫자 → 초. 형식이 틀리면 null */
@@ -22,8 +21,8 @@ export function parseClipTime(text: string): number | null {
 export type ClipRangeResult = { ok: true; startSeconds: number } | { ok: false; message: string }
 
 /**
- * 다시보기 클립 구간 검사(서버 POST /recordings/{id}/clips 와 같은 규칙).
- * totalSeconds가 null이면(길이를 모르는 다시보기) 끝 검사는 서버에 맡긴다.
+ * 클립 구간 검사(서버 POST /recordings/{id}/clips · POST /clip-drafts/{id}/clips 와 같은 규칙). totalSeconds는 다시보기 길이
+ * 또는 라이브 초안의 windowSeconds(초안 기준 시작). null이면(길이를 모르는 다시보기) 끝 검사는 서버에 맡긴다.
  */
 export function validateClipRange(startText: string, durationSeconds: number, totalSeconds: number | null): ClipRangeResult {
   const startSeconds = parseClipTime(startText)
@@ -42,6 +41,17 @@ export function defaultClipStart(currentSeconds: number, totalSeconds: number | 
   const now = Math.max(0, Math.floor(currentSeconds))
   if (totalSeconds === null) return now
   return Math.max(0, Math.min(now, Math.floor(totalSeconds) - durationSeconds))
+}
+
+/** 기본 길이: 30초, 영상(초안)이 그보다 짧으면 그 길이(최소 5초 — 그보다 짧으면 검사가 막는다) */
+export function defaultClipDuration(totalSeconds: number | null): number {
+  if (totalSeconds === null) return CLIP_DEFAULT_SECONDS
+  return Math.max(CLIP_MIN_SECONDS, Math.min(CLIP_DEFAULT_SECONDS, Math.floor(totalSeconds)))
+}
+
+/** 라이브 초안의 기본 시작: 끝(= 클립 버튼을 누른 순간)에서 기본 길이만큼 앞, `max(0, windowSeconds − 길이)` */
+export function defaultLiveClipStart(windowSeconds: number, durationSeconds = defaultClipDuration(windowSeconds)): number {
+  return Math.max(0, Math.floor(windowSeconds) - durationSeconds)
 }
 
 /** 클립 화면에서 무엇을 보여 줄지(다시보기와 같은 TokenVideo 규칙) */
