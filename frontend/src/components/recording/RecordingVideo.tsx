@@ -5,13 +5,16 @@ import type { RecordingDetail } from '../../api/types'
 import { recordingPlayback } from './recordingState'
 import type { RecordingPlayback } from './recordingState'
 import TokenVideo from './TokenVideo'
+import type { MediaEvents } from './TokenVideo'
 
 /** S6 영상. 공개는 videoUrl, 비공개(주인)는 5분짜리 video-token 주소로 재생한다(TokenVideo) */
-export default function RecordingVideo({ recording, startAt, videoRef }: {
+export default function RecordingVideo({ recording, startAt, videoRef, mediaEvents }: {
   recording: RecordingDetail
   /** `?t=`(클립 → 원본 링크): 이 위치부터 */
   startAt?: number
   videoRef?: RefObject<HTMLVideoElement | null>
+  /** 클립 만들기 다이얼로그의 미리보기가 영상 이벤트를 받을 때 */
+  mediaEvents?: MediaEvents
 }) {
   const fetchToken = useCallback(() => createVideoToken(recording.id), [recording.id])
   return (
@@ -24,6 +27,7 @@ export default function RecordingVideo({ recording, startAt, videoRef }: {
       overlayText={OVERLAY_TEXT}
       startAt={startAt}
       videoRef={videoRef}
+      mediaEvents={mediaEvents}
     />
   )
 }
