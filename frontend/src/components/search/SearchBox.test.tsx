@@ -10,7 +10,8 @@ describe('SearchBox', () => {
   it('검색 폼(role=search)과 안내 문구를 그린다', () => {
     const html = render('/')
     expect(html).toContain('role="search"')
-    expect(html).toContain('placeholder="채널 · 라이브 · 다시보기 검색"')
+    // 서버 렌더에는 창이 없어 useMediaQuery가 "좁음"으로 보고 짧은 placeholder를 쓴다(md 이상은 "채널 · 라이브 · 다시보기 검색")
+    expect(html).toContain('placeholder="검색"')
     expect(html).toContain('maxLength="50"')
   })
 

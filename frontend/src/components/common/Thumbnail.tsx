@@ -8,7 +8,7 @@ export default function Thumbnail({ src, alt, children }: { src: string | null; 
   return (
     <div className="relative aspect-video overflow-hidden rounded-lg bg-gradient-to-br from-surface to-accent-muted">
       {src && !failed
-        ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+        ? <img src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover outline outline-1 -outline-offset-1 outline-[light-dark(oklch(0_0_0/0.1),oklch(1_0_0/0.1))]" />
         : <div className="flex h-full w-full items-center justify-center text-secondary"><Radio aria-hidden className="h-10 w-10" /></div>}
       {children}
     </div>

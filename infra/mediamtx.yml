@@ -2,6 +2,8 @@
 # webrtcAdditionalHosts 는 이 파일이 아니라 compose 의 환경변수 MTX_WEBRTCADDITIONALHOSTS(=PUBLIC_HOST)로 넣는다.
 api: yes
 apiAddress: :9997
+playback: yes        # 클립(CLIP-1): 녹화 조각을 시간 범위로 내주는 재생 서버(내부 전용, 외부 노출 금지, DESIGN §4.18)
+playbackAddress: :9996
 rtsp: yes            # 썸네일 캡처용(내부)
 rtmp: yes
 hls: yes

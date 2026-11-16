@@ -177,7 +177,7 @@ function CheckoutPanel({ checkout, onClose }: { checkout: Checkout; onClose: () 
           <Button label="닫기" variant="ghost" size="sm" onClick={onClose} isDisabled={paying} />
         </header>
         {/* Toss 위젯은 흰 배경 iframe이라 밝은 칸 안에 그린다 */}
-        <div className="min-h-0 flex-1 overflow-y-auto bg-white">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white">
           <div id={METHODS_ID} />
           <div id={AGREEMENT_ID} />
           {!ready && !error && <p className="py-10 text-center text-sm text-neutral-500">결제 수단을 불러오는 중…</p>}
