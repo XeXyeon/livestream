@@ -41,7 +41,7 @@ public final class ClipFixtures {
 
 	/** 테스트가 바꾸는 가짜 동작. */
 	public static final class Knobs {
-		/** 참이면 다시보기 자르기(ffmpeg -c copy)가 실패한다. */
+		/** 참이면 다시보기 자르기(ffmpeg -ss … -t …)가 실패한다. */
 		public volatile boolean failCut;
 		/** 거짓이면 재생 서버가 404(그 구간 녹화 없음)인 것처럼 false 를 돌려준다. */
 		public volatile boolean liveHasMedia = true;
@@ -49,16 +49,23 @@ public final class ClipFixtures {
 		public volatile CountDownLatch holdCut;
 		/** 있으면 재생 서버 받기(초안)가 이 래치가 풀릴 때까지 기다린다(PENDING 상태를 붙잡아 두기). */
 		public volatile CountDownLatch holdDownload;
+		/**
+		 * 있으면 영상 확인 ffprobe({@code -count_packets})가 파일마다 이 출력을 돌려준다(FE-3#1 · CLIP-1#3).
+		 * 없으면 길이 숫자만 돌려줘 "영상 없음"으로 읽혀 {@code -c copy} 로 자른다.
+		 */
+		public volatile java.util.function.Function<Path, String> videoProbe;
+		/** 길이 ffprobe({@code format=duration})가 돌려줄 출력. */
+		public volatile String probedDuration = PROBED_DURATION;
 	}
 
 	private ClipFixtures() {
 	}
 
-	/** ffmpeg 는 마지막 인자(출력 파일)에 바이트를 쓰고 성공, ffprobe 는 {@link #PROBED_DURATION}, 재생 서버는 바이트를 쓴다. */
+	/** ffmpeg 는 마지막 인자(출력 파일)에 바이트를 쓰고 성공, ffprobe 는 {@link Knobs#probedDuration}, 재생 서버는 바이트를 쓴다. */
 	public static void stub(FfmpegRunner ffmpeg, MediaMtxClient mediaMtx, Knobs knobs) {
 		when(ffmpeg.ffmpeg(any(), any())).thenAnswer(inv -> {
 			List<String> args = inv.getArgument(0);
-			boolean cut = args.contains("-c") && args.contains("-ss") && args.contains("-t");
+			boolean cut = args.contains("-ss") && args.contains("-t");
 			if (cut) {
 				CountDownLatch hold = knobs.holdCut;
 				if (hold != null && !hold.await(20, TimeUnit.SECONDS)) {
@@ -71,7 +78,14 @@ public final class ClipFixtures {
 			writeBytes(Path.of(args.getLast()));
 			return new FfmpegRunner.Result(0, "", false);
 		});
-		when(ffmpeg.ffprobe(any(), any())).thenReturn(new FfmpegRunner.Result(0, PROBED_DURATION + "\n", false));
+		when(ffmpeg.ffprobe(any(), any())).thenAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			var video = knobs.videoProbe;
+			if (video != null && args.contains("-count_packets")) {
+				return new FfmpegRunner.Result(0, video.apply(Path.of(args.getLast())), false);
+			}
+			return new FfmpegRunner.Result(0, knobs.probedDuration + "\n", false);
+		});
 		when(mediaMtx.downloadRecording(any(), any(), any(), any())).thenAnswer(inv -> {
 			CountDownLatch hold = knobs.holdDownload;
 			if (hold != null && !hold.await(20, TimeUnit.SECONDS)) {

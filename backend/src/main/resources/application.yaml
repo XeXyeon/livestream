@@ -46,7 +46,7 @@ app:
   clip:
     min-seconds: 5
     max-seconds: 60
-    timeout: 2m # 처리(내려받기 · ffmpeg) 타임아웃
+    timeout: 5m # 처리(내려받기 · ffmpeg) 타임아웃. 영상을 다시 인코딩하므로(FE-3#1) 2 vCPU 에서 1080p 120초 초안 · 60초 클립이 들어가게
     live-window-seconds: 120 # 라이브 클립 초안이 받아 두는 최근 구간(CLIP-3)
     draft-ttl: 10m # 초안 보관 시간
   toss:

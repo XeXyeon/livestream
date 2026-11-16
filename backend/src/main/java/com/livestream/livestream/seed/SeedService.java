@@ -144,12 +144,12 @@ public class SeedService {
 			log.warn("시드: ffprobe 실패 {} ({})", file, r.describe());
 			return null;
 		}
-		try {
-			return (int) Math.round(Double.parseDouble(r.output().strip()));
-		} catch (NumberFormatException e) {
+		Double seconds = r.durationSeconds();
+		if (seconds == null) {
 			log.warn("시드: ffprobe 출력 해석 실패: {}", r.output());
 			return null;
 		}
+		return (int) Math.round(seconds);
 	}
 
 	private static long sizeOf(Path file) {

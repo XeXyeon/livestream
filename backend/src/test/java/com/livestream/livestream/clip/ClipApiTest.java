@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -459,6 +460,59 @@ class ClipApiTest {
 		knobs.failCut = false;
 		long next = createRecordingClip(mvc, creator, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
 		awaitProcessed(mvc, creator, next);
+	}
+
+	// ⑨-2 CLIP-1#3: 원본에 영상이 있는데 자른 구간에 영상이 없으면(빈 mp4) READY 가 아니라 FAILED(NO_VIDEO)
+	@Test
+	void 원본에_영상이_있으면_다시_인코딩하고_자른_결과에_영상이_없으면_NO_VIDEO() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long recordingId = readyRecording(owner, Visibility.PUBLIC);
+		knobs.videoProbe = file -> file.toString().contains("/clips/")
+				? "duration=30.000000\n"
+				: "width=720\nheight=1280\nnb_read_packets=3000\nduration=120.0\n";
+		long clipId = createRecordingClip(mvc, owner, recordingId, "{\"startSeconds\":20,\"durationSeconds\":30}");
+		String done = awaitProcessed(mvc, owner, clipId);
+		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("FAILED");
+		assertThat((String) JsonPath.read(done, "$.failureReason")).isEqualTo("NO_VIDEO");
+		assertThat((String) JsonPath.read(done, "$.videoUrl")).isNull();
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<String>> args = ArgumentCaptor.forClass(List.class);
+		verify(ffmpeg, timeout(1000).atLeastOnce()).ffmpeg(args.capture(), any());
+		List<String> cut = args.getAllValues().stream().filter(a -> a.contains("-avoid_negative_ts")).findFirst().orElseThrow();
+		assertThat(String.join(" ", cut)).contains("-ss 20 -i ", " -t 30 ", "-c:v libx264 -preset veryfast",
+				"scale=w=720:h=1280:", "-c:a copy").doesNotContain("-c copy");
+
+		// 자른 결과에 영상이 있으면 READY
+		knobs.videoProbe = file -> "width=720\nheight=1280\nnb_read_packets=900\nduration=30.0\n";
+		long ok = createRecordingClip(mvc, owner, recordingId, "{\"startSeconds\":20,\"durationSeconds\":30}");
+		assertThat((String) JsonPath.read(awaitProcessed(mvc, owner, ok), "$.status")).isEqualTo("READY");
+	}
+
+	// ⑨-2b 원본 영상 확인이 실패하면 -c copy 로 넘어가지 않고 FAILED(PROBE_FAILED)
+	@Test
+	void 원본_영상_확인이_실패하면_PROBE_FAILED() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long recordingId = readyRecording(owner, Visibility.PUBLIC);
+		when(ffmpeg.ffprobe(any(), any())).thenAnswer(inv -> ((List<String>) inv.getArgument(0)).contains("-count_packets")
+				? new FfmpegRunner.Result(-1, "", true)
+				: new FfmpegRunner.Result(0, "12.4\n", false));
+		long clipId = createRecordingClip(mvc, owner, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
+		String done = awaitProcessed(mvc, owner, clipId);
+		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("FAILED");
+		assertThat((String) JsonPath.read(done, "$.failureReason")).isEqualTo("PROBE_FAILED");
+	}
+
+	// ⑨-3 CLIP-1#3: ffprobe 길이가 읽히지 않으면(스트림 없는 mp4) READY 가 아니라 FAILED(EMPTY)
+	@Test
+	void 길이가_읽히지_않으면_EMPTY() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		long recordingId = readyRecording(owner, Visibility.PUBLIC);
+		knobs.probedDuration = "N/A";
+		long clipId = createRecordingClip(mvc, owner, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
+		String done = awaitProcessed(mvc, owner, clipId);
+		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("FAILED");
+		assertThat((String) JsonPath.read(done, "$.failureReason")).isEqualTo("EMPTY");
 	}
 
 	// ⑩ 갇힌 클립 정리

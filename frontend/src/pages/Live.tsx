@@ -127,7 +127,8 @@ function LiveMain() {
               initialMode={broadcast.data.recommendedMode}
               theater={theaterOn}
               onTheaterChange={setTheater}
-              title={<Heading level={1}>{broadcast.data.title}</Heading>}
+              // 길면 한 줄에서 말줄임(…), 잘리면 툴팁으로 전체 제목
+              title={<Heading level={1} maxLines={1}>{broadcast.data.title}</Heading>}
             />
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center">
               <div className="w-full max-w-md"><DonationBanner donation={banner.current} overlay /></div>
@@ -176,8 +177,8 @@ function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
   const [clipId, setClipId] = useState<number | null>(null)
   return (
     <div className="space-y-3">
-      {/* 방송 중에는 제목이 플레이어 모드 줄 왼쪽에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
-      {broadcast.status === 'ENDED' && <div className="mb-2"><Heading level={1}>{broadcast.title}</Heading></div>}
+      {/* 방송 중에는 제목이 플레이어 바로 아래 줄에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
+      {broadcast.status === 'ENDED' && <div className="mb-2 min-w-0"><Heading level={1} maxLines={1}>{broadcast.title}</Heading></div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
         <Link to={`/channel/${broadcast.channel.id}`} className="font-semibold text-primary hover:text-accent">{broadcast.channel.name}</Link>
         <FollowButton channelId={broadcast.channel.id} isFollowing={broadcast.isFollowing} followerCount={broadcast.followerCount} isOwner={broadcast.isOwner} />

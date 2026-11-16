@@ -133,6 +133,40 @@ class ClipDraftApiTest {
 		assertThat(start.getValue()).isEqualTo(startedAt.plusSeconds(windowStart));
 	}
 
+	// ①-2 FE-3#1: 받은 초안에 영상이 있으면 ultrafast 로 다시 인코딩한다(원본 avcC 가 기본값이거나 해상도가 바뀐 경우),
+	// 실패하면 FAILED(TRANSCODE_FAILED). 임시 원본(.src.mp4)은 남기지 않는다.
+	@Test
+	void 받은_초안에_영상이_있으면_다시_인코딩하고_실패하면_TRANSCODE_FAILED() throws Exception {
+		Account streamer = TestAccounts.create(mvc);
+		Account viewer = TestAccounts.create(mvc);
+		long broadcastId = liveBroadcast(streamer, 300);
+		knobs.videoProbe = file -> "width=1280\nheight=720\nnb_read_packets=3600\nduration=120.0\n";
+
+		long draftId = createDraft(mvc, viewer, broadcastId);
+		assertThat((String) JsonPath.read(awaitDraft(mvc, viewer, draftId), "$.status")).isEqualTo("READY");
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<java.util.List<String>> args = ArgumentCaptor.forClass(java.util.List.class);
+		verify(ffmpeg, org.mockito.Mockito.atLeastOnce()).ffmpeg(args.capture(), any());
+		java.util.List<String> transcode = args.getAllValues().stream()
+				.filter(a -> a.contains("ultrafast")).findFirst().orElseThrow();
+		assertThat(transcode.get(transcode.indexOf("-i") + 1)).endsWith(".src.mp4");
+		assertThat(String.join(" ", transcode)).contains("-c:v libx264", "scale=w=1280:h=720:", "-c:a copy");
+		Path file = recordingsDir.resolve(draftRepository.findById(draftId).orElseThrow().getFilePath());
+		assertThat(file).isRegularFile();
+		try (var listing = java.nio.file.Files.list(file.getParent())) {
+			assertThat(listing.map(p -> p.getFileName().toString())).noneMatch(n -> n.endsWith(".src.mp4"));
+		}
+
+		// 다시 인코딩이 실패하면 FAILED(TRANSCODE_FAILED)
+		Account other = TestAccounts.create(mvc);
+		org.mockito.Mockito.doReturn(new FfmpegRunner.Result(1, "encoder error", false)).when(ffmpeg)
+				.ffmpeg(org.mockito.ArgumentMatchers.argThat(a -> a != null && a.contains("ultrafast")), any());
+		long failed = createDraft(mvc, other, broadcastId);
+		assertThat((String) JsonPath.read(awaitDraft(mvc, other, failed), "$.status")).isEqualTo("FAILED");
+		assertThat(jdbc.queryForObject("select failure_reason from clip_draft where id = ?", String.class, failed))
+				.isEqualTo("TRANSCODE_FAILED");
+	}
+
 	// ② 생성 조건: 시작 직후 400, DISCONNECTED · ENDED 409, PENDING 중복 409, 처리 중 클립 409, 새 초안이 이전 행 · 파일을 지움
 	@Test
 	void 초안_생성_조건과_회원당_하나() throws Exception {

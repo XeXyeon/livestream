@@ -28,6 +28,28 @@ public interface FfmpegRunner {
 			return !timedOut && exitCode == 0;
 		}
 
+		/**
+		 * {@code -show_entries format=duration} 결과의 길이(초). 출력에는 stderr 도 섞여 있어(예: 브라우저 H.264 녹화의
+		 * {@code sps_id out of range} 경고) 숫자로 읽히는 마지막 줄을 쓴다. 없으면 null.
+		 */
+		public Double durationSeconds() {
+			if (output == null) {
+				return null;
+			}
+			String[] lines = output.strip().split("\\R");
+			for (int i = lines.length - 1; i >= 0; i--) {
+				try {
+					double v = Double.parseDouble(lines[i].strip());
+					if (Double.isFinite(v) && v >= 0) {
+						return v;
+					}
+				} catch (NumberFormatException ignored) {
+					// 경고 줄은 건너뛴다
+				}
+			}
+			return null;
+		}
+
 		/** 실패 사유 한 줄(로그 · failure_reason 용). */
 		public String describe() {
 			if (timedOut) {

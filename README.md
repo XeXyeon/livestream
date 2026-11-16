@@ -27,10 +27,11 @@ https://gridlive.duckdns.org 에는 아래 시연용 계정이 미리 들어 있
 
 | 역할 | 이메일 | 비밀번호 | 미리 들어 있는 것 |
 |---|---|---|---|
-| 방송인 | `demo-streamer@example.com` | `gridlive-demo-2026` | 채널 "데모 방송인", 어제 방송의 공개 다시보기 1개, 게시글 "첫 공지" |
-| 시청자 | `demo-viewer@example.com` | `gridlive-demo-2026` | 다시보기 댓글 1개 |
+| 방송인 | `demo-streamer@example.com` | `gridlive-demo-2026` | 채널 "데모 방송인", 게시글 "첫 공지" |
+| 시청자 | `demo-viewer@example.com` | `gridlive-demo-2026` | 로그인 · 채팅 · 후원 확인용 시청자 |
 
 - 다른 기기에서 시청을 확인할 때는 방송인 계정으로 송출하고, 시청자 계정 또는 비로그인 상태로 채널 페이지를 엽니다.
+- 홈 · 검색에 보이는 다시보기는 실제 송출로 남긴 방송입니다(채널 "유저1" · "유저2").
 - 직접 가입한 새 계정으로도 모든 기능을 쓸 수 있습니다.
 
 ## 기능 확인

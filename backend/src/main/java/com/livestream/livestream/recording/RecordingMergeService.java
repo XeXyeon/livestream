@@ -2,6 +2,7 @@ package com.livestream.livestream.recording;
 
 import com.livestream.livestream.broadcast.BroadcastEndedEvent;
 import com.livestream.livestream.thumbnail.FfmpegRunner;
+import com.livestream.livestream.thumbnail.VideoTranscode;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -27,7 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <ul>
  *   <li>단일 스레드에서 하나씩 돈다. 종료 직후 kick 으로 닫힌 마지막 조각의 훅이 늦게 올 수 있어 {@link #MERGE_DELAY} 뒤에 시작한다.</li>
  *   <li>시작할 때 status 가 PROCESSING 이 아니면 아무것도 하지 않는다(FILE_DELETED 면 남은 raw 조각만 지운다).</li>
- *   <li>ffmpeg concat(-c copy, faststart) 결과는 항상 {@code private/} 에 쓴다(READY 전에는 어떤 주소로도 노출되지 않게).
+ *   <li>ffmpeg concat 결과는 항상 {@code private/} 에 쓴다(READY 전에는 어떤 주소로도 노출되지 않게). 영상이 있으면 영상 패킷이
+ *       있는 조각만 이어 붙이고 영상을 libx264 로 다시 인코딩한다(오디오는 복사, {@link VideoTranscode}, FE-3#1).
+ *       소리만 있는 녹화는 {@code -c copy}.
  *       성공하면 잠금 읽기로 다시 확인해 PROCESSING 일 때만 READY + raw 조각 삭제. 그때 visibility 가 PUBLIC 이면
  *       파일을 {@code vod/} 로 옮긴다(ATOMIC_MOVE). 그 사이 FILE_DELETED 가 됐으면 만든 파일을 지운다.
  *       실패하면 FAILED + 사유(raw 조각은 남긴다).</li>
@@ -43,6 +46,8 @@ public class RecordingMergeService {
 	static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
 	static final String NO_SEGMENTS = "NO_SEGMENTS";
 	static final String SEGMENT_FILES_MISSING = "SEGMENT_FILES_MISSING";
+	/** 조각 영상 확인(ffprobe)이 실패했다. 조각을 빼지 않고(정상 조각일 수 있다) raw 를 남긴 채 FAILED. */
+	static final String PROBE_FAILED = "PROBE_FAILED";
 
 	private final RecordingRepository recordingRepository;
 	private final RecordingSegmentRepository segmentRepository;
@@ -140,6 +145,43 @@ public class RecordingMergeService {
 			fail(recordingId, SEGMENT_FILES_MISSING);
 			return;
 		}
+		// FE-3#1: 영상이 있는 녹화는 영상 패킷이 있는 조각만 이어 붙이고 영상을 다시 인코딩한다.
+		// MediaMTX 드리프트 리셋으로 송출 직후 생기는 첫 조각(약 2초)은 영상 트랙만 있고 패킷이 없으며 avcC 가 기본값이라,
+		// concat 맨 앞에 두면 출력 전체가 그 avcC 를 따라 브라우저에서 재생되지 않는다(재인코딩해도 concat 이 실패한다).
+		List<VideoTranscode.VideoInfo> infos = new ArrayList<>();
+		for (Path p : inputs) {
+			VideoTranscode.VideoInfo info = VideoTranscode.probe(ffmpeg, p, PROBE_TIMEOUT);
+			if (Thread.currentThread().isInterrupted()) {
+				log.info("병합 중단(종료 중), 재시작 뒤 다시 시도: recording={}", recordingId);
+				return;
+			}
+			if (info == null) {
+				log.warn("병합: 조각 영상 확인 실패: recording={} segment={}", recordingId, p);
+				fail(recordingId, PROBE_FAILED);
+				return;
+			}
+			infos.add(info);
+		}
+		List<Path> videoInputs = new ArrayList<>();
+		double totalSeconds = 0;
+		int[] sourceSize = null; // 조각들 가운데 가장 큰 크기(송출 중 해상도가 올라가도 작은 첫 크기로 줄이지 않게)
+		for (int i = 0; i < inputs.size(); i++) {
+			if (infos.get(i).hasVideo()) {
+				videoInputs.add(inputs.get(i));
+				int[] s = VideoTranscode.sourceSize(ffmpeg, inputs.get(i), infos.get(i), PROBE_TIMEOUT);
+				if (sourceSize == null || (long) s[0] * s[1] > (long) sourceSize[0] * sourceSize[1]) {
+					sourceSize = s;
+				}
+				totalSeconds += infos.get(i).duration() == null ? 0 : infos.get(i).duration();
+			}
+		}
+		VideoTranscode.VideoInfo firstVideo = infos.stream().filter(VideoTranscode.VideoInfo::hasVideo).findFirst().orElse(null);
+		if (firstVideo != null && videoInputs.size() < inputs.size()) {
+			log.info("병합: 영상 없는 조각 {}개 제외: recording={}", inputs.size() - videoInputs.size(), recordingId);
+		}
+		if (firstVideo != null) {
+			inputs = videoInputs;
+		}
 
 		String outRelative = RecordingFiles.PRIVATE_DIR + UUID.randomUUID() + ".mp4";
 		Path out = files.resolve(outRelative);
@@ -151,9 +193,18 @@ public class RecordingMergeService {
 			Files.createDirectories(out.getParent());
 			list = Files.createTempFile(out.getParent(), ".concat-", ".txt");
 			Files.writeString(list, concatList(inputs), StandardCharsets.UTF_8);
-			FfmpegRunner.Result result = ffmpeg.ffmpeg(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-					"-f", "concat", "-safe", "0", "-i", list.toString(),
-					"-c", "copy", "-movflags", "+faststart", out.toString()), MERGE_TIMEOUT);
+			List<String> args = new ArrayList<>(List.of("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+					"-f", "concat", "-safe", "0", "-i", list.toString()));
+			Duration timeout = MERGE_TIMEOUT;
+			if (firstVideo != null) {
+				int[] size = VideoTranscode.targetSize(sourceSize[0], sourceSize[1]);
+				args.addAll(VideoTranscode.encodeArgs(size[0], size[1], VideoTranscode.PRESET_FINAL));
+				timeout = VideoTranscode.timeoutFor(totalSeconds, MERGE_TIMEOUT);
+			} else {
+				args.addAll(List.of("-c", "copy")); // 소리만 있는 녹화(영상 트랙 없음): 다시 인코딩할 영상이 없다
+			}
+			args.addAll(List.of("-movflags", "+faststart", out.toString()));
+			FfmpegRunner.Result result = ffmpeg.ffmpeg(args, timeout);
 			if (Thread.currentThread().isInterrupted()) {
 				// 서버 종료(shutdownNow)로 끊겼다. FAILED 로 바꾸지 않고 PROCESSING 으로 두어 재시작 때 다시 병합한다.
 				log.info("병합 중단(종료 중), 재시작 뒤 다시 시도: recording={}", recordingId);
@@ -242,12 +293,12 @@ public class RecordingMergeService {
 			log.warn("ffprobe 실패: {} ({})", file, r.describe());
 			return null;
 		}
-		try {
-			return (int) Math.round(Double.parseDouble(r.output().strip()));
-		} catch (NumberFormatException e) {
+		Double seconds = r.durationSeconds();
+		if (seconds == null) {
 			log.warn("ffprobe 출력 해석 실패: {}", r.output());
 			return null;
 		}
+		return (int) Math.round(seconds);
 	}
 
 	private void fail(Long recordingId, String reason) {
