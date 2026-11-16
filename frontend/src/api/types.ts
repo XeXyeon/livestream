@@ -248,3 +248,87 @@ export type Post = {
   isOwner: boolean
 }
 export type PostWriteInput = { title: string; content: string }
+
+// ---------- 통합 검색 (§4.16 /search) ----------
+
+export type SearchType = 'channels' | 'lives' | 'recordings'
+
+/** 검색 결과의 채널 카드. isLive · viewerCount는 /members/me/follows와 같은 규칙 */
+export type ChannelSummary = {
+  id: number
+  name: string
+  description: string | null
+  category: Category
+  isLive: boolean
+  liveBroadcastId: number | null
+  viewerCount: number
+  followerCount: number
+}
+
+/** 요약의 한 종류: 앞쪽 최대 5개 + 조건에 맞는 전체 수 */
+export type SearchGroup<T> = { items: T[]; total: number }
+
+/** GET /search?q= — q는 서버가 정규화한 값 */
+export type SearchResponse = {
+  q: string
+  channels: SearchGroup<ChannelSummary>
+  lives: SearchGroup<BroadcastSummary>
+  recordings: SearchGroup<RecordingSummary>
+}
+
+// §4.16 · §4.18 클립(CLIP-1)
+export type ClipStatus = 'PROCESSING' | 'READY' | 'FAILED'
+export type ClipSource = 'RECORDING' | 'LIVE'
+
+/** 클립 목록 카드(GET /channels/{id}/clips · /recordings/{id}/clips · /members/me/clips) */
+export type ClipSummary = {
+  id: number
+  title: string
+  /** READY면 실제 길이, 아니면 요청 길이 */
+  durationSeconds: number
+  thumbnailUrl: string | null
+  status: ClipStatus
+  visibility: Visibility
+  createdAt: string
+  creator: { nickname: string }
+  channel: ChannelRef
+  broadcastId: number
+  recordingId: number | null
+}
+
+/** GET /clips/{id}. PROCESSING이면 2초마다 다시 부른다 */
+export type ClipDetail = ClipSummary & {
+  source: ClipSource
+  /** 방송 시작(= 다시보기 0초) 기준 시작 위치(초) */
+  startSeconds: number
+  /** 원본 다시보기로 갈 수 있는지(원본이 READY · PUBLIC이거나 내가 채널 주인) */
+  recordingAvailable: boolean
+  /** READY · PUBLIC일 때만. 비공개는 video-token */
+  videoUrl: string | null
+  /** FAILED일 때 만든 회원 · 채널 주인에게만 */
+  failureReason: string | null
+  isOwner: boolean
+  isCreator: boolean
+}
+
+/** POST /recordings/{id}/clips · POST /clip-drafts/{id}/clips(startSeconds는 초안 기준) */
+export type ClipRequest = { title?: string; startSeconds: number; durationSeconds: number; visibility?: Visibility }
+
+// §4.16 · §4.18 라이브 클립 초안(CLIP-3)
+export type ClipDraftStatus = 'PENDING' | 'READY' | 'FAILED'
+
+/** POST /broadcasts/{id}/clip-drafts · GET /clip-drafts/{id}. PENDING이면 2초마다 다시 부른다 */
+export type ClipDraftDetail = {
+  id: number
+  broadcastId: number
+  status: ClipDraftStatus
+  /** 방송 시작 기준 창의 시작 위치(초) */
+  windowStartSeconds: number
+  /** 창 길이(초). READY면 받은 파일의 실제 길이. 클립은 start + duration ≤ 이 값 */
+  windowSeconds: number
+  /** READY일 때 "/api/clip-drafts/{id}/video?token=…"(토큰 10분), 아니면 null */
+  videoUrl: string | null
+  createdAt: string
+}
+/** PATCH /clips/{id} */
+export type ClipUpdateRequest = { title?: string; visibility?: Visibility }

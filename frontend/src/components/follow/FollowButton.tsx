@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useAuthDialog } from '../../store/authDialog'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@astryxdesign/core/Button'
 import { followChannel, unfollowChannel } from '../../api/follows'
@@ -24,7 +24,7 @@ type Props = {
  * 채널이 바뀌면 상태가 넘어가지 않게 부르는 쪽에서 key={channelId}를 준다.
  */
 export default function FollowButton({ channelId, followerCount, isOwner }: Props) {
-  const location = useLocation()
+  const openLogin = useAuthDialog((state) => state.open)
   const queryClient = useQueryClient()
   const memberId = useAuth((state) => state.member?.id ?? null)
   const myChannelId = useAuth((state) => state.member?.channelId ?? null)
@@ -65,7 +65,7 @@ export default function FollowButton({ channelId, followerCount, isOwner }: Prop
 
   let button
   if (view.kind === 'login') {
-    button = <Button label="팔로우" variant="primary" size="sm" href={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} />
+    button = <Button label="팔로우" variant="primary" size="sm" onClick={() => openLogin()} />
   } else if (view.kind === 'loading') {
     button = <Button label="팔로우" variant="primary" size="sm" isLoading />
   } else {

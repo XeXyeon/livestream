@@ -14,6 +14,7 @@ import Spinner from '../components/common/Spinner'
 import PostEditor from '../components/post/PostEditor'
 import { useAuth } from '../store/auth'
 import { formatDateTime } from '../components/broadcast/format'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 
 /** S10 커뮤니티 글(§6.3): 본문 · 주인 수정 · 삭제 · 댓글 */
@@ -30,6 +31,7 @@ export default function Post() {
   const [error, setError] = useState('')
   // isOwner가 로그인 복구 뒤의 값이 되도록 복구가 끝난 뒤 요청한다
   const query = useQuery({ queryKey: ['post', postId, memberId], queryFn: () => getPost(postId), enabled: valid && authReady })
+  usePageMeta({ title: query.data?.title ?? null, noindex: !valid || (query.error instanceof ApiError && query.error.status === 404) })
 
   if (!valid || (query.error instanceof ApiError && query.error.status === 404)) {
     return <EmptyState headingLevel={1} title="게시글을 찾을 수 없습니다" description="삭제되었거나 없는 주소입니다." />

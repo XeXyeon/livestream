@@ -2,6 +2,8 @@ package com.livestream.livestream.channel;
 
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -28,4 +30,18 @@ public interface ChannelRepository extends JpaRepository<Channel, Long> {
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select c from Channel c where c.id = :id")
 	Optional<Channel> findByIdForUpdate(Long id);
+
+	/**
+	 * 통합 검색(SEARCH-1): 채널 이름 또는 주인 닉네임이 패턴에 맞는 채널, 이름 오름차순. pattern 은 SearchQuery 가 이스케이프한
+	 * {@code %q%} 값이다. 정렬은 쿼리에 있으니 pageable 은 정렬 없이 넘긴다.
+	 */
+	@Query(value = """
+			select c from Channel c join fetch c.member m
+			where c.name like :pattern escape '\\' or m.nickname like :pattern escape '\\'
+			order by c.name, c.id
+			""", countQuery = """
+			select count(c) from Channel c join c.member m
+			where c.name like :pattern escape '\\' or m.nickname like :pattern escape '\\'
+			""")
+	Page<Channel> search(String pattern, Pageable pageable);
 }

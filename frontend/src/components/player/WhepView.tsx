@@ -3,21 +3,24 @@ import type { BroadcastStatus } from '../../api/types'
 import { WhepPlayer } from '../../media/whep'
 import type { WhepState } from '../../media/whep'
 import UnmuteButton from './UnmuteButton'
+import VideoControls from './VideoControls'
+import type { PlayerChrome } from './VideoControls'
 import { useVideoSurface } from './useVideoSurface'
 
 type Props = {
   url: string
   status: BroadcastStatus
   onState?: (state: WhepState) => void
+  chrome?: PlayerChrome
 }
 
 // §6.5 기본 모드(WHEP) 화면. 소리 있는 자동 재생이 막히면 음소거로 재생하고 "소리 켜기"를 보여 준다.
-export default function WhepView({ url, status, onState }: Props) {
+export default function WhepView({ url, status, onState, chrome }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const playerRef = useRef<WhepPlayer | null>(null)
   const onStateRef = useRef(onState)
   const [state, setState] = useState<WhepState>('connecting')
-  const surface = useVideoSurface(videoRef)
+  const surface = useVideoSurface(videoRef, chrome?.fill)
 
   useEffect(() => { onStateRef.current = onState }, [onState])
 
@@ -52,6 +55,7 @@ export default function WhepView({ url, status, onState }: Props) {
         </div>
       )}
       {surface.muted && state === 'playing' && <UnmuteButton onClick={surface.unmute} />}
+      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} />
     </div>
   )
 }

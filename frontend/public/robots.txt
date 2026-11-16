@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /studio
+Disallow: /me
+Disallow: /widget/
+Disallow: /login
+Disallow: /signup
+Disallow: /live/*/chat

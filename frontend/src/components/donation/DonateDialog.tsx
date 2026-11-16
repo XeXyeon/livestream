@@ -77,7 +77,8 @@ export default function DonateDialog({ broadcastId, channelId, isOpen, onOpenCha
     <>
       <Dialog isOpen={isOpen} onOpenChange={(open) => (open ? onOpenChange(true) : close())} purpose={creating ? 'required' : 'form'} width={440}>
         <DialogHeader title="후원하기" subtitle="결제는 토스페이먼츠 테스트 결제로 진행됩니다." onOpenChange={(open) => !open && close()} />
-        <form onSubmit={submit} className="space-y-5 pt-2" noValidate>
+        {/* DialogHeader가 안쪽 여백 16px를 한 번 더 두므로 본문도 px-4로 제목 · 닫기 버튼과 줄을 맞춘다 */}
+        <form onSubmit={submit} className="space-y-5 px-4 pb-4 pt-2" noValidate>
           <fieldset>
             <legend className="text-sm font-medium text-primary">금액</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -177,7 +178,7 @@ function CheckoutPanel({ checkout, onClose }: { checkout: Checkout; onClose: () 
           <Button label="닫기" variant="ghost" size="sm" onClick={onClose} isDisabled={paying} />
         </header>
         {/* Toss 위젯은 흰 배경 iframe이라 밝은 칸 안에 그린다 */}
-        <div className="min-h-0 flex-1 overflow-y-auto bg-white">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white">
           <div id={METHODS_ID} />
           <div id={AGREEMENT_ID} />
           {!ready && !error && <p className="py-10 text-center text-sm text-neutral-500">결제 수단을 불러오는 중…</p>}

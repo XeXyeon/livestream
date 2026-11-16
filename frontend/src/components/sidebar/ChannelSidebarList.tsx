@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Avatar } from '@astryxdesign/core/Avatar'
+import { useAuthDialog } from '../../store/authDialog'
 import { formatCount, formatRelative } from '../broadcast/format'
 import { useMyFollows } from '../follow/useMyFollows'
-import { followsToSidebar } from './sidebarChannels'
+import { followsToSidebar, keepOrder } from './sidebarChannels'
 import type { SidebarChannel } from './sidebarChannels'
 import { useSidebarChannels } from './useSidebarChannels'
 
@@ -32,24 +34,27 @@ type SidebarGroup = {
 export default function ChannelSidebarList({ collapsed = false, onNavigate }: Props) {
   const { live, recommended } = useSidebarChannels()
   const follows = useMyFollows()
-  const { pathname, search } = useLocation()
+  const openLogin = useAuthDialog((state) => state.open)
+  // 30초마다 다시 받을 때 시청자 수 순서로 자리가 바뀌지 않게(내가 보는 방송이 맨 위로 튀는 것 방지)
+  const followChannels = useKeptOrder(follows.data ? followsToSidebar(follows.data) : [])
+  const liveChannels = useKeptOrder(live.channels)
   const followGroup: SidebarGroup = {
     key: 'follow',
     title: '팔로우',
-    channels: follows.data ? followsToSidebar(follows.data) : [],
+    channels: followChannels,
     isPending: !follows.ready || (follows.loggedIn && follows.isPending),
     isError: follows.isError && !follows.data,
     empty: '팔로우한 채널이 없습니다.',
     notice: follows.ready && !follows.loggedIn ? (
       <p className="px-3 py-1 text-xs text-secondary">
         로그인하면 팔로우한 채널이 여기 보입니다.{' '}
-        <Link to={`/login?next=${encodeURIComponent(pathname + search)}`} onClick={onNavigate} className="font-medium text-accent hover:underline">로그인</Link>
+        <button type="button" onClick={() => { onNavigate?.(); openLogin() }} className="font-medium text-accent hover:underline">로그인</button>
       </p>
     ) : undefined,
   }
   const groups: SidebarGroup[] = [
     followGroup,
-    { key: 'live', title: '지금 라이브', ...live, empty: '지금 방송 중인 채널이 없습니다.' },
+    { key: 'live', title: '지금 라이브', ...live, channels: liveChannels, empty: '지금 방송 중인 채널이 없습니다.' },
     { key: 'recommended', title: '추천 채널', ...recommended, empty: '최근 방송한 채널이 없습니다.' },
   ]
 
@@ -74,9 +79,19 @@ export default function ChannelSidebarList({ collapsed = false, onNavigate }: Pr
   )
 }
 
+/** 이전에 그린 순서를 기억해 keepOrder로 맞춘다(렌더 중 상태 갱신: 순서가 달라졌을 때만) */
+function useKeptOrder(channels: SidebarChannel[]): SidebarChannel[] {
+  const [order, setOrder] = useState<number[]>([])
+  const kept = keepOrder(order, channels)
+  const ids = kept.map((channel) => channel.channelId)
+  if (ids.length !== order.length || ids.some((id, index) => id !== order[index])) setOrder(ids)
+  return kept
+}
+
 function CollapsedGroup({ group, onNavigate }: { group: SidebarGroup; onNavigate?: () => void }) {
+  // 라이브 링(ring 2 + offset 2)이 바깥으로 4px 나오므로 링 사이에도 8px가 남게 gap-4
   return (
-    <ul aria-label={group.title} className="flex flex-col items-center gap-2">
+    <ul aria-label={group.title} className="flex flex-col items-center gap-4">
       {group.channels.map((channel) => (
         <li key={channel.channelId}>
           <Link

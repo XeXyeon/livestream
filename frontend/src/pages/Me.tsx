@@ -4,10 +4,13 @@ import { Heading } from '@astryxdesign/core/Heading'
 import ReceivedDonations from '../components/donation/ReceivedDonations'
 import { useLogout } from '../components/layout/useLogout'
 import MyBroadcasts from '../components/me/MyBroadcasts'
+import MyClips from '../components/clip/MyClips'
 import { useAuth } from '../store/auth'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
-// S8 마이페이지(§6.3): 내 방송 기록(제목 수정 · 삭제 · 공개 설정) · 받은 후원 · 로그아웃
+// S8 마이페이지(§6.3): 내 방송 기록(제목 수정 · 삭제 · 공개 설정) · 내 클립 · 받은 후원 · 로그아웃
 export default function Me() {
+  usePageMeta({ title: '내 정보', noindex: true })
   const member = useAuth((state) => state.member)
   const { logout, error, pending } = useLogout()
 
@@ -25,6 +28,7 @@ export default function Me() {
       </div>
       {error && <Banner role="alert" status="error" title={error} />}
       <MyBroadcasts />
+      <MyClips />
       <ReceivedDonations />
     </div>
   )

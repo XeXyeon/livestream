@@ -2,18 +2,31 @@ package com.livestream.livestream.mediamtx;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.livestream.livestream.common.config.AppProperties;
+import java.io.InputStream;
 import java.net.http.HttpClient;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 /**
  * MediaMTX Control API 클라이언트 (DESIGN §4.6). 내부망 전용(:9997, authHTTPExclude 로 인증 콜백을 거치지 않음).
- * 타임아웃 3초.
+ * 타임아웃 3초. 라이브 클립(§4.18)은 재생 서버(:9996, {@code app.mediamtx.playback-url}, 내부망 전용)에서 받는다.
  */
 @Slf4j
 @Component
@@ -22,14 +35,121 @@ public class MediaMtxClient {
 	private static final Duration TIMEOUT = Duration.ofSeconds(3);
 
 	private final RestClient restClient;
+	private final RestClient playbackClient;
 
 	@Autowired
 	public MediaMtxClient(AppProperties props) {
-		this(RestClient.builder().baseUrl(props.mediamtx().apiUrl()).requestFactory(requestFactory()));
+		this(RestClient.builder().baseUrl(props.mediamtx().apiUrl()).requestFactory(requestFactory(TIMEOUT)),
+				playbackBuilder(props));
 	}
 
 	MediaMtxClient(RestClient.Builder builder) {
-		this.restClient = builder.build();
+		this(builder, RestClient.builder());
+	}
+
+	MediaMtxClient(RestClient.Builder apiBuilder, RestClient.Builder playbackBuilder) {
+		this.restClient = apiBuilder.build();
+		this.playbackClient = playbackBuilder.build();
+	}
+
+	private static RestClient.Builder playbackBuilder(AppProperties props) {
+		RestClient.Builder b = RestClient.builder().requestFactory(requestFactory(props.clip().timeout()));
+		String url = props.mediamtx().playbackUrl();
+		return url == null || url.isBlank() ? b : b.baseUrl(url);
+	}
+
+	/**
+	 * 녹화된 구간을 mp4 로 받아 {@code target} 에 쓴다(라이브 클립, DESIGN §4.18):
+	 * {@code GET {playback-url}/get?path=&start=<RFC3339>&duration=<N>s&format=mp4}. 녹화 중인 조각도 내준다(MediaMTX v1.21.3).
+	 * 응답 본문을 메모리에 모으지 않고 파일로 흘려 쓴다. 읽기 타임아웃은 {@code app.clip.timeout}.
+	 *
+	 * @param path     {@code live/<channelId>}
+	 * @param start    구간 시작 시각
+	 * @param duration 구간 길이(초 단위로 보낸다)
+	 * @return 받은 내용이 있으면 true. 404(그 구간에 녹화 없음) · 빈 응답이면 false(파일은 지운다)
+	 * @throws org.springframework.web.client.RestClientException 연결 실패 · 타임아웃 · 그 밖의 HTTP 오류 · 파일 쓰기 실패
+	 *         (본문 처리 중 IOException 은 RestClient 가 ResourceAccessException 으로 감싼다)
+	 */
+	public boolean downloadRecording(String path, Instant start, Duration duration, Path target) {
+		String startText = rfc3339(start);
+		Boolean written = playbackClient.get()
+				.uri(b -> b.path("/get").queryParam("path", path).queryParam("start", startText)
+						.queryParam("duration", duration.toSeconds() + "s").queryParam("format", "mp4").build())
+				.exchange((request, response) -> {
+					int status = response.getStatusCode().value();
+					if (status == 404) {
+						return false;
+					}
+					if (!response.getStatusCode().is2xxSuccessful()) {
+						throw new RestClientException("재생 서버 응답 " + status);
+					}
+					try (InputStream in = response.getBody()) {
+						Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+					}
+					if (Files.size(target) == 0) {
+						Files.deleteIfExists(target);
+						return false;
+					}
+					return true;
+				});
+		return Boolean.TRUE.equals(written);
+	}
+
+	/**
+	 * 녹화 조각 목록(라이브 클립 초안의 창 맞추기, DESIGN §4.18 ①):
+	 * {@code GET {playback-url}/list?path=&start=<RFC3339>&end=<RFC3339>} → {@code [{start, duration(초)}]}, 시작 순.
+	 * MediaMTX 는 브라우저 송출 직후 녹화 조각을 새로 시작할 때가 있어(드리프트 리셋) {@code /get} 이 창 시작이 든 짧은 첫 조각만
+	 * 내주므로, 처리기가 받기 전에 이 목록으로 창 시작을 옮긴다.
+	 *
+	 * @return 그 구간과 겹치는 조각. 404(녹화 없음)는 빈 목록, 시각 · 길이를 읽을 수 없는 항목은 건너뛴다
+	 * @throws RestClientException 연결 실패 · 타임아웃 · 그 밖의 HTTP 오류
+	 */
+	public List<RecordingSegment> listSegments(String path, Instant start, Instant end) {
+		ListItem[] items = playbackClient.get()
+				.uri(b -> b.path("/list").queryParam("path", path).queryParam("start", rfc3339(start))
+						.queryParam("end", rfc3339(end)).build())
+				.exchange((request, response) -> {
+					int status = response.getStatusCode().value();
+					if (status == 404) {
+						return null;
+					}
+					if (!response.getStatusCode().is2xxSuccessful()) {
+						throw new RestClientException("재생 서버 응답 " + status);
+					}
+					return response.bodyTo(ListItem[].class);
+				});
+		if (items == null) {
+			return List.of();
+		}
+		List<RecordingSegment> segments = new ArrayList<>();
+		for (ListItem item : items) {
+			if (item == null || item.start() == null || item.duration() == null || item.duration() < 0) {
+				continue;
+			}
+			try {
+				segments.add(new RecordingSegment(OffsetDateTime.parse(item.start()).toInstant(), item.duration()));
+			} catch (DateTimeParseException e) {
+				log.warn("재생 서버 /list 의 시각을 읽지 못함: {}", item.start());
+			}
+		}
+		segments.sort(Comparator.comparing(RecordingSegment::start));
+		return segments;
+	}
+
+	/** 녹화 조각 하나: 시작 시각과 길이(초). */
+	public record RecordingSegment(Instant start, double durationSeconds) {
+
+		public Instant end() {
+			return start.plusNanos(Math.round(durationSeconds * 1_000_000_000d));
+		}
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	record ListItem(String start, Double duration) {
+	}
+
+	private static String rfc3339(Instant t) {
+		return DateTimeFormatter.ISO_INSTANT.format(t.truncatedTo(ChronoUnit.MILLIS));
 	}
 
 	/**
@@ -80,10 +200,10 @@ public class MediaMtxClient {
 		}
 	}
 
-	private static JdkClientHttpRequestFactory requestFactory() {
+	private static JdkClientHttpRequestFactory requestFactory(Duration readTimeout) {
 		HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 		JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
-		factory.setReadTimeout(TIMEOUT);
+		factory.setReadTimeout(readTimeout);
 		return factory;
 	}
 

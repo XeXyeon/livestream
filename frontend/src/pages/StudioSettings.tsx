@@ -11,12 +11,14 @@ import CopyField from '../components/common/CopyField'
 import Spinner from '../components/common/Spinner'
 import TextField, { inputClassName } from '../components/common/TextField'
 import { MY_CHANNEL_KEY } from '../components/studio/useBroadcastSession'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const errorText = (error: unknown, fallback: string) => (error instanceof ApiError ? error.message : fallback)
 const card = 'space-y-4 rounded-lg border border-border bg-surface p-5'
 
 // S5 채널 설정: 이름 · 소개, 스트림 키(복사 · 재발급), OBS 안내(WHIP · RTMP), 위젯 URL(복사 · 재발급), 다시보기 자동 공개
 export default function StudioSettings() {
+  usePageMeta({ title: '채널 설정 · 스튜디오', noindex: true })
   const queryClient = useQueryClient()
   const channel = useQuery({ queryKey: MY_CHANNEL_KEY, queryFn: getMyChannel })
   const refresh = () => queryClient.invalidateQueries({ queryKey: MY_CHANNEL_KEY })

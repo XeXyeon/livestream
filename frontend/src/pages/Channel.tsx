@@ -11,19 +11,22 @@ import { getChannel } from '../api/channels'
 import type { ChannelResponse } from '../api/types'
 import ChannelPosts from '../components/channel/ChannelPosts'
 import ChannelRecordings from '../components/channel/ChannelRecordings'
+import ClipList from '../components/clip/ClipList'
 import Spinner from '../components/common/Spinner'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
+import { usePageMeta } from '../components/layout/usePageMeta'
 
 const TABS = [
   { value: 'home', label: '홈' },
   { value: 'recordings', label: '다시보기' },
+  { value: 'clips', label: '클립' },
   { value: 'posts', label: '커뮤니티' },
 ] as const
 type TabValue = typeof TABS[number]['value']
 const isTab = (value: string | null): value is TabValue => TABS.some((tab) => tab.value === value)
 
-/** S9 채널 페이지(§6.3): 탭 홈 · 다시보기 · 커뮤니티. 탭은 `?tab=`에 둬 링크 · 뒤로 가기가 맞게 한다 */
+/** S9 채널 페이지(§6.3): 탭 홈 · 다시보기 · 클립 · 커뮤니티. 탭은 `?tab=`에 둬 링크 · 뒤로 가기가 맞게 한다 */
 export default function Channel() {
   const channelId = Number(useParams().channelId)
   const valid = Number.isInteger(channelId) && channelId > 0
@@ -32,6 +35,7 @@ export default function Channel() {
   const tab: TabValue = isTab(requested) ? requested : 'home'
   const member = useAuth((state) => state.member)
   const query = useQuery({ queryKey: ['channel', channelId], queryFn: () => getChannel(channelId), enabled: valid, refetchInterval: 30_000 })
+  usePageMeta({ title: query.data?.name ?? null, noindex: !valid || (query.error instanceof ApiError && query.error.status === 404) })
 
   if (!valid || (query.error instanceof ApiError && query.error.status === 404)) {
     return <EmptyState headingLevel={1} title="채널을 찾을 수 없습니다" description="없는 채널이거나 주소가 잘못되었습니다." />
@@ -64,6 +68,7 @@ export default function Channel() {
       <div id={`channel-panel-${tab}`} role="tabpanel" aria-label={TABS.find((item) => item.value === tab)?.label}>
         {tab === 'home' && <ChannelHome channel={channel} />}
         {tab === 'recordings' && <ChannelRecordings channelId={channel.id} />}
+        {tab === 'clips' && <ClipList source={{ kind: 'channel', id: channel.id }} />}
         {tab === 'posts' && <ChannelPosts channelId={channel.id} isOwner={isOwner} />}
       </div>
     </div>

@@ -34,6 +34,16 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 			""")
 	List<Broadcast> findOngoingByChannelIds(Collection<Long> channelIds);
 
+	/** 통합 검색(SEARCH-1): 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송 중 제목 또는 채널 이름이 패턴에 맞는 것. 정렬은 서비스가 한다. */
+	@Query("""
+			select b from Broadcast b join fetch b.channel c
+			where b.status in (com.livestream.livestream.broadcast.BroadcastStatus.LIVE,
+			                   com.livestream.livestream.broadcast.BroadcastStatus.DISCONNECTED)
+			  and b.deletedAt is null
+			  and (b.title like :pattern escape '\\' or c.name like :pattern escape '\\')
+			""")
+	List<Broadcast> searchOngoing(String pattern);
+
 	default Optional<Broadcast> findOngoing(Long channelId) {
 		return findByChannelAndStatuses(channelId, List.of(BroadcastStatus.LIVE, BroadcastStatus.DISCONNECTED))
 				.stream().findFirst();
@@ -41,6 +51,14 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 
 	@Query("select b from Broadcast b where b.id = :id and b.deletedAt is null")
 	Optional<Broadcast> findActive(Long id);
+
+	/**
+	 * 공유 잠금(FOR SHARE) 읽기: 클립 초안 만들기가 맨 먼저 잡는다. 같은 방송의 초안 요청끼리는 막지 않고, 방송 삭제(X 잠금 뒤 클립 →
+	 * 초안)와는 직렬화해 초안 INSERT 의 FK 공유 잠금이 순서 밖에서 걸리지 않게 한다.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_READ)
+	@Query("select b from Broadcast b where b.id = :id and b.deletedAt is null")
+	Optional<Broadcast> findActiveForShare(Long id);
 
 	/** 상태 전이용 잠금 읽기. 반드시 채널 행을 먼저 잠근 뒤 부른다(잠금 순서 channel → broadcast). */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)

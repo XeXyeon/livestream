@@ -1,5 +1,6 @@
 package com.livestream.livestream.common.config;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
@@ -19,7 +20,8 @@ public record AppProperties(
 		Jwt jwt,
 		Seed seed,
 		String publicUrl,
-		Auth auth
+		Auth auth,
+		Clip clip
 ) {
 
 	/** auth 가 없으면(설정이 비었거나 테스트에서 직접 만들 때) 설계 기본값을 쓴다. */
@@ -28,12 +30,35 @@ public record AppProperties(
 		if (auth == null) {
 			auth = new Auth(10, 10, 300);
 		}
+		if (clip == null) {
+			clip = new Clip(5, 60, Duration.ofMinutes(2), 120, Duration.ofMinutes(10));
+		}
 	}
 
 	/** auth 설정 없이 만드는 기존 생성자(테스트 · 호환용). */
 	public AppProperties(Grid grid, Broadcast broadcast, Thumbnail thumbnail, Recording recording, Uploads uploads,
 			Mediamtx mediamtx, Toss toss, Jwt jwt, Seed seed, String publicUrl) {
-		this(grid, broadcast, thumbnail, recording, uploads, mediamtx, toss, jwt, seed, publicUrl, null);
+		this(grid, broadcast, thumbnail, recording, uploads, mediamtx, toss, jwt, seed, publicUrl, null, null);
+	}
+
+	/**
+	 * 클립(DESIGN §4.18, CLIP-1).
+	 *
+	 * @param minSeconds 클립 최소 길이(초)
+	 * @param maxSeconds 클립 최대 길이(초)
+	 * @param timeout    처리(내려받기 · ffmpeg) 타임아웃
+	 * @param liveWindowSeconds 라이브 클립 초안이 받아 두는 최근 구간 길이(초, CLIP-3)
+	 * @param draftTtl   라이브 클립 초안 보관 시간(CLIP-3)
+	 */
+	public record Clip(int minSeconds, int maxSeconds, Duration timeout, int liveWindowSeconds, Duration draftTtl) {
+
+		public Clip {
+			if (minSeconds <= 0 || maxSeconds < minSeconds || timeout == null || timeout.isNegative() || timeout.isZero()
+					|| liveWindowSeconds < minSeconds || draftTtl == null || draftTtl.isNegative() || draftTtl.isZero()) {
+				throw new IllegalArgumentException("app.clip.* 값이 올바르지 않습니다(0 < min-seconds <= max-seconds, timeout > 0, "
+						+ "live-window-seconds >= min-seconds, draft-ttl > 0)");
+			}
+		}
 	}
 
 	/**
@@ -84,8 +109,19 @@ public record AppProperties(
 	 * @param apiUrl        MediaMTX Control API
 	 * @param rtspUrl       썸네일 캡처용 RTSP
 	 * @param internalToken MediaMTX 훅이 보내는 X-Internal-Token
+	 * @param playbackUrl   재생 서버(녹화 조각을 시간 범위로 내준다, 라이브 클립 §4.18). 내부망 전용
 	 */
-	public record Mediamtx(String apiUrl, String rtspUrl, String internalToken) {
+	public record Mediamtx(String apiUrl, String rtspUrl, String internalToken, String playbackUrl) {
+
+		/** 생성자가 둘이라 바인딩할 쪽을 정한다. */
+		@ConstructorBinding
+		public Mediamtx {
+		}
+
+		/** playback-url 없이 만드는 기존 생성자(테스트 · 호환용). */
+		public Mediamtx(String apiUrl, String rtspUrl, String internalToken) {
+			this(apiUrl, rtspUrl, internalToken, null);
+		}
 	}
 
 	/** 토스페이먼츠 테스트 키 */
