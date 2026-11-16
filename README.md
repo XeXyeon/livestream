@@ -2,7 +2,13 @@
 
 **설치 없이 브라우저 하나로 방송하고, 시청자가 늘면 시청자끼리 영상을 나눠 받아 서버 부담을 줄이는 실시간 라이브 방송 웹 서비스입니다.**
 
-> 서비스 주소 · 시연 영상은 배포를 마친 뒤 이 문서에 채웁니다.
+| 바로가기 | |
+|---|---|
+| **서비스 주소** | **https://gridlive.duckdns.org** |
+| **시연 영상** | _(링크 준비 중)_ |
+| **테스트 계정** | 아래 [테스트 계정](#테스트-계정) 절 (방송인 · 시청자, 비밀번호 공용) |
+| **기능 확인 방법** | 아래 [기능 확인](#기능-확인) 절 (PC · 모바일 송출, 시청, 종료, 지원 환경) |
+| **실행 방법** | 아래 [실행 방법](#실행-방법) 절 (실행 환경 · 환경변수 예시) |
 
 ## 한눈에 보기
 
@@ -14,6 +20,51 @@
 | 남기기 | 자동 녹화 → 다시보기, **라이브 중 최근 2분에서 구간을 골라 만드는 클립**, 다시보기 구간 클립 |
 | 찾기 | 헤더 통합 검색(채널 · 라이브 · 다시보기), 카테고리 필터, 종료 화면 추천, 페이지별 탭 제목 · 공유 태그 |
 | 품질 | 백엔드 테스트 265개(34개 클래스) · 프론트 테스트 196개(31개 파일), 실제 브라우저 송출 · 시청 실행 확인 (2026-11-16 기준) |
+
+## 테스트 계정
+
+https://gridlive.duckdns.org 에는 아래 시연용 계정이 미리 들어 있습니다. 오른쪽 위 **로그인**에서 이메일과 비밀번호를 넣으면 됩니다. 이 비밀번호는 시연 전용이며 다른 곳에서 쓰지 않습니다.
+
+| 역할 | 이메일 | 비밀번호 | 미리 들어 있는 것 |
+|---|---|---|---|
+| 방송인 | `demo-streamer@example.com` | `gridlive-demo-2026` | 채널 "데모 방송인", 어제 방송의 공개 다시보기 1개, 게시글 "첫 공지" |
+| 시청자 | `demo-viewer@example.com` | `gridlive-demo-2026` | 다시보기 댓글 1개 |
+
+- 다른 기기에서 시청을 확인할 때는 방송인 계정으로 송출하고, 시청자 계정 또는 비로그인 상태로 채널 페이지를 엽니다.
+- 직접 가입한 새 계정으로도 모든 기능을 쓸 수 있습니다.
+
+## 기능 확인
+
+### 지원 환경
+| 용도 | 기준 환경 | 비고 |
+|---|---|---|
+| PC 송출 | 데스크톱 **Chrome** 최신 버전 | 탭 소리는 Chrome의 **탭 공유**에서만 함께 보낼 수 있습니다. 창 · 전체 화면 공유는 영상만 갑니다(마이크는 함께 섞임) |
+| 모바일 송출 | Android **Chrome**, iPhone **Safari** | 카메라 · 마이크 권한을 허용해야 합니다 |
+| 시청 | PC · 모바일의 최신 Chrome · Safari · Edge | 로그인 없이 볼 수 있습니다. 채팅 · 후원은 로그인 필요 |
+| 공통 | **HTTPS 주소로 접속** | 브라우저가 HTTPS에서만 화면 공유 · 카메라 · 마이크를 허용합니다 |
+
+### PC 방송 송출
+1. 방송인 계정으로 로그인하고 오른쪽 위 **방송하기**를 누릅니다. PC에서는 PC 스튜디오(`/studio/pc`)가 열립니다.
+2. **방송 제목**과 카테고리를 입력합니다.
+3. **화면 공유 시작** → Chrome 공유 창에서 **Chrome 탭**을 고르고 **탭 오디오도 공유**를 켠 뒤 공유합니다. 마이크 권한을 허용하면 탭 소리와 마이크가 한 오디오로 섞이고, 슬라이더로 각각 음량을 조절합니다.
+4. **송출 시작**을 누르면 상태가 `LIVE`로 바뀌고 홈의 라이브 목록에 나타납니다.
+
+### 모바일 방송 송출
+1. 휴대폰 브라우저로 서비스에 접속해 로그인하고 **방송하기**를 누릅니다. 모바일 기기는 모바일 스튜디오(`/studio/mobile`)로 자동 이동합니다(PC에서는 `/studio/mobile` 주소로 직접 열 수 있습니다).
+2. 카메라 · 마이크 권한을 허용하면 미리보기가 나옵니다. 위쪽 **방송 제목을 입력하세요**를 눌러 제목을 넣고, 카메라 버튼으로 전 · 후면을 바꿉니다.
+3. **시작**을 누르면 송출이 시작됩니다.
+
+### 시청
+1. 다른 기기나 다른 브라우저(시크릿 창)에서 서비스에 접속합니다. 로그인하지 않아도 됩니다.
+2. 홈의 **LIVE** 카드를 누르면 시청 화면(`/live/{채널 번호}`)에서 바로 재생됩니다. 화면 아래 컨트롤로 소리 · 영화관 모드 · 전체 화면 · PiP를 씁니다.
+3. 시청자 계정으로 로그인하면 채팅과 토스페이먼츠 **테스트** 후원을 할 수 있습니다. 후원은 실제로 결제되지 않습니다.
+4. 시청자가 2명 이상이면 플레이어가 그리드 모드(시청자 간 P2P)로 바뀌고, 플레이어 통계에서 서버 · 피어 전송량과 절감률을 볼 수 있습니다.
+
+### 종료
+1. PC는 **방송 종료**, 모바일은 빨간 **종료** 버튼을 누릅니다. 송출 연결을 먼저 끊고 카메라 · 화면 공유를 멈춘 뒤 서버에 종료를 알립니다.
+2. 시청 화면에는 몇 초 안에 종료 안내와 추천 방송이 나오고 재생이 멈춥니다.
+3. 녹화가 자동으로 합쳐져 잠시 뒤 다시보기 목록과 마이페이지에 나타납니다.
+- 송출이 네트워크 문제로 끊기면 60초 동안 `재연결 대기`로 기다렸다가 돌아오지 않으면 자동으로 종료됩니다.
 
 ## 어필 포인트
 
@@ -79,9 +130,44 @@
 
 - 같은 출처 구성이라 CORS 설정이 없습니다. 자세한 설계는 `docs/DESIGN.md`를 보세요.
 
-## 로컬 실행
+## 실행 방법
 
-필요한 것: Docker, JDK 25(Gradle 툴체인), Node.js.
+### 실행 환경
+| 구분 | 버전 |
+|---|---|
+| 운영 서버 | Linux + Docker 29 · Docker Compose v2 이상 (배포 서버: Google Cloud e2-standard-2, 메모리 8 GB, Debian 13) |
+| 로컬 개발 | Docker, JDK 25(Gradle 툴체인이 받음), Node.js 22 |
+| 구성 요소 | Spring Boot 4.1, MySQL 8.4, MediaMTX 1.21.3, Caddy 2, React 19 · Vite 7 |
+
+### 환경변수 예시
+루트의 `.env.example`을 `.env`로 복사해 값을 바꿉니다. `.env`는 Git에 올라가지 않습니다. 로컬 개발은 `.env` 없이 기본값으로도 뜹니다.
+
+```dotenv
+PUBLIC_HOST=example.duckdns.org          # 서비스 도메인 (로컬은 localhost)
+INTERNAL_TOKEN=<openssl rand -hex 32>     # MediaMTX 훅 → 백엔드 내부 호출 토큰
+MYSQL_ROOT_PASSWORD=<임의 값>
+SPRING_DATASOURCE_USERNAME=livestream
+SPRING_DATASOURCE_PASSWORD=<임의 값>
+JWT_SECRET=<32바이트 이상 임의 문자열>
+APP_TOSS_CLIENT_KEY=test_gck_...          # 토스페이먼츠 결제위젯 테스트 키
+APP_TOSS_SECRET_KEY=test_gsk_...
+APP_GRID_THRESHOLD=2                      # 그리드 모드로 바꾸는 시청자 수 (시연 2, 기본 100)
+APP_SEED_ENABLED=true                     # 첫 기동 때 시연 계정 · 다시보기 생성
+APP_SEED_PASSWORD=gridlive-demo-2026      # 시연 계정 비밀번호
+APP_RECORDING_RETENTION_DAYS=365          # 다시보기 보관 일수
+```
+
+### 운영 배포 (서버 한 대)
+도메인이 서버 IP를 가리키고, 80 · 443 · 1935/TCP와 8189/UDP가 열려 있어야 합니다. Caddy가 인증서를 자동으로 받습니다.
+
+```bash
+git clone https://github.com/XeXyeon/livestream.git && cd livestream
+cp .env.example .env    # 위 예시처럼 값 채우기
+docker run --rm -v "$PWD/frontend":/app -w /app node:22 sh -c "npm ci && npm run build"
+docker compose --env-file .env -f infra/compose.yaml up -d --build
+```
+
+### 로컬 개발
 
 ```bash
 docker compose -f infra/compose.dev.yaml up -d --build   # MySQL · MediaMTX · Caddy · tracker
@@ -93,8 +179,8 @@ cd backend && ./gradlew bootRun                          # 8080, local 프로파
 cd frontend && npm install && npm run dev -- --host      # 5173
 ```
 
-- **https://localhost** 로 접속합니다(로컬 인증서라 브라우저 경고가 한 번 뜹니다). 카메라 · 화면 공유는 HTTPS에서만 동작합니다.
-- 환경변수 기본값으로 바로 뜹니다. 후원 결제를 확인하려면 루트에 `.env`(`.env.example` 복사)를 만들고 토스페이먼츠 결제위젯 **테스트 키**를 넣습니다. 더 자세한 내용은 `infra/README.md`에 있습니다.
+- **https://localhost** 로 접속합니다(로컬 인증서라 브라우저 경고가 한 번 뜹니다).
+- 후원 결제를 확인하려면 루트 `.env`에 토스페이먼츠 결제위젯 **테스트 키**를 넣습니다. 더 자세한 내용은 `infra/README.md`에 있습니다.
 
 ### 테스트
 ```bash
@@ -133,18 +219,6 @@ cd frontend && npm run lint && npm run build && npm test
 - **모바일 카메라 + 마이크 송출:** `createMobileStream`(같은 파일)이 `getUserMedia({ video: { facingMode }, audio: true })`로 휴대폰 카메라 영상과 마이크 음성을 함께 받아 같은 `WhipClient`로 송출합니다(`frontend/src/pages/StudioMobile.tsx`, 전 · 후면 전환 지원). 화면 공유를 못 하거나 모바일 UA면 `frontend/src/media/devices.ts`의 `studioTarget`이 모바일 스튜디오로 보냅니다.
 - **종료 순서:** `useBroadcastSession`(`frontend/src/components/studio/useBroadcastSession.ts`)의 `end`가 `whip.close()` → 스트림 정지 → `POST /api/broadcasts/{id}/end` 순으로 처리합니다.
 - **라우트:** `/studio/pc`, `/studio/mobile` (`frontend/src/App.tsx`).
-
-## 테스트 계정
-
-배포된 서비스에는 아래 시연용 계정이 미리 들어 있습니다. 이 비밀번호는 시연 전용이며 다른 곳에서 쓰지 않습니다.
-
-| 역할 | 이메일 | 비밀번호 | 미리 들어 있는 것 |
-|---|---|---|---|
-| 방송인 | `demo-streamer@example.com` | `gridlive-demo-2026` | 채널 "데모 방송인", 어제 방송의 공개 다시보기 1개, 게시글 "첫 공지" |
-| 시청자 | `demo-viewer@example.com` | `gridlive-demo-2026` | 다시보기 댓글 1개 |
-
-- 다른 기기에서 시청을 확인할 때는 방송인 계정으로 송출하고, 시청자 계정 또는 비로그인 상태로 채널 페이지를 엽니다.
-- 직접 가입한 새 계정으로도 모든 기능을 쓸 수 있습니다.
 
 ## 오픈소스 · 외부 서비스 출처
 
