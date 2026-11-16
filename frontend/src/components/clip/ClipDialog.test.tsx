@@ -84,7 +84,7 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
     const live = render({ ...base, status: 'READY', videoUrl: '/v' })
     const html = renderRecording(600)
     expect(html).toContain('src="/vod/a.mp4"')
-    for (const part of ['role="slider"', '구간 재생', 'type="range"', '막대의 손잡이를 끌거나 영상을 멈춰', '클립 공개', 'aria-label="닫기"']) {
+    for (const part of ['role="slider"', '구간 재생', 'type="range"', '시작 위치 · 길이 슬라이더를 끌거나', '클립 공개', 'aria-label="닫기"']) {
       expect(html).toContain(part)
       expect(live).toContain(part)
     }
@@ -96,6 +96,19 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
     const html = renderRecording(600)
     expect(html).toContain('<span>9:00</span><span>13:00</span>')
     expect(html).toMatch(/aria-label="클립 시작"[^>]*aria-valuenow="600"/)
+  })
+})
+
+describe('ClipDialog 시작 위치: 입력 + 끌기 슬라이더', () => {
+  it('다시보기는 시작 슬라이더가 영상 전체(0 ~ 길이 - 클립 길이)를 움직이고 입력란도 함께 있다', () => {
+    const html = renderRecording(600)
+    expect(html).toMatch(/type="range"[^>]*min="0"[^>]*max="3570"[^>]*aria-label="시작 위치 끌기"[^>]*value="600"/)
+    expect(html).toContain('value="10:00"')
+  })
+
+  it('라이브 초안도 같은 슬라이더(0 ~ 90)를 둔다', () => {
+    const html = render({ ...base, status: 'READY', videoUrl: '/v' })
+    expect(html).toMatch(/type="range"[^>]*max="90"[^>]*aria-label="시작 위치 끌기"[^>]*value="90"/)
   })
 })
 
