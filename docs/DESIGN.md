@@ -74,6 +74,8 @@
 ```yaml
 api: yes
 apiAddress: :9997
+playback: yes        # 클립(CLIP-1): 녹화 조각을 시간 범위로 내주는 재생 서버(내부, 외부 노출 금지)
+playbackAddress: :9996
 rtsp: yes            # 썸네일 캡처용(내부)
 rtmp: yes
 hls: yes
@@ -117,6 +119,7 @@ SPRING_DATASOURCE_USERNAME=livestream
 SPRING_DATASOURCE_PASSWORD=livestream
 JWT_SECRET=32바이트_이상
 APP_MEDIAMTX_API_URL=http://mediamtx:9997
+APP_MEDIAMTX_PLAYBACK_URL=http://mediamtx:9996
 APP_MEDIAMTX_INTERNAL_TOKEN=${INTERNAL_TOKEN}
 APP_TOSS_CLIENT_KEY=test_gck_...   # 결제위젯 키(gck · gsk). ck · sk(API 개별 연동 키)는 결제창 SDK용이라 위젯에 못 쓴다(§4.13)
 APP_TOSS_SECRET_KEY=test_gsk_...
@@ -151,7 +154,8 @@ livestream/
 | `app.recording.retention-days` | 30 | 영상 파일 보관 |
 | `app.recording.dir` | `/recordings` | MediaMTX와 공유 볼륨(`raw/` 조각, `vod/` 공개 영상 — Caddy 정적, `private/` 비공개 영상 — Spring만 읽음). 세 폴더가 같은 볼륨이라 이동은 rename 한 번이다 |
 | `app.uploads.dir` | `/uploads` | 썸네일(`thumbnails/`) |
-| `app.mediamtx.api-url` / `app.mediamtx.rtsp-url` / `app.mediamtx.internal-token` | — / `rtsp://mediamtx:8554` / — | |
+| `app.mediamtx.api-url` / `app.mediamtx.rtsp-url` / `app.mediamtx.playback-url` / `app.mediamtx.internal-token` | — / `rtsp://mediamtx:8554` / `http://mediamtx:9996`(local `http://localhost:9996`) / — | `playback-url`은 라이브 클립(§4.18) |
+| `app.clip.min-seconds` / `max-seconds` / `timeout` | 5 / 60 / 2m | 클립 길이 범위 · 처리(내려받기 · ffmpeg) 타임아웃 |
 | `app.toss.client-key` / `app.toss.secret-key` | — | 테스트 키 |
 | `app.jwt.secret` / `app.jwt.access-minutes` / `app.jwt.refresh-days` | — / 15 / 14 | 기존 `custom.jwt.secret`을 `app.jwt.secret`으로 옮긴다 |
 | `app.seed.enabled` | false | 시드 투입 |
@@ -181,6 +185,7 @@ post/        Post · PostRepository · PostService · PostController
 donation/    Donation · DonationStatus · DonationRepository · DonationService · TossPaymentsClient · DonationController
 integration/ WidgetEventController(SSE) · WidgetEventService
 follow/      Follow · FollowRepository · FollowService · FollowController · dto(FollowStatusResponse · FollowedChannelResponse)
+clip/        Clip · ClipStatus · ClipSource · ClipRepository · ClipService(생성 · 조회 · 수정 · 삭제 · 권한) · ClipProcessingService(@Async 단일 스레드: 자르기 · 내려받기 · 썸네일 · READY) · ClipFiles · ClipVideoTokenService · ClipController · dto(ClipCreateRequest · LiveClipCreateRequest · ClipUpdateRequest · ClipSummary · ClipDetail)
 search/      SearchController(/search · /search/{type}) · SearchService · SearchType · dto(SearchQuery · SearchResponse · SearchGroup · ChannelSummary)   ※ 쿼리는 각 도메인 리포지토리에 둔다(SEARCH-1)
 seed/        SeedRunner
 ```
@@ -200,6 +205,7 @@ seed/        SeedRunner
 | `post` | `channel_id FK`, `title VARCHAR(100)`, `content TEXT` | |
 | `comment` | `member_id FK`, `recording_id FK NULL`, `post_id FK NULL`, `parent_id FK NULL(self)`, `content VARCHAR(500)`, `deleted_at NULL` | 대상 하나 규칙 `(recording_id IS NULL) <> (post_id IS NULL)`은 **DB CHECK가 아니라 `Comment.onRecording` · `Comment.onPost` 생성 메서드로** 지킨다(생성자는 private; cascade FK 컬럼은 MySQL CHECK에 못 씀 — `da44053`). FK on delete cascade(recording · post). index(recording_id), index(post_id) |
 | `donation` | `broadcast_id FK`, `channel_id FK`, `donor_member_id FK`, `amount INT`, `message VARCHAR(100) NULL`, `order_id CHAR(36)`, `payment_key VARCHAR(200) NULL`, `status VARCHAR(20)`, `approved_at NULL` | unique(order_id), unique(payment_key). index(broadcast_id, status), index(channel_id, status) |
+| `clip` | `recording_id FK`, `broadcast_id FK`, `channel_id FK`, `creator_member_id FK`, `title VARCHAR(100)`, `source VARCHAR(20)`, `start_seconds INT`, `duration_seconds INT`, `status VARCHAR(20)`, `visibility VARCHAR(10)`, `file_path VARCHAR(255) NULL`, `size_bytes BIGINT NULL`, `thumbnail_path VARCHAR(255) NULL`, `failure_reason VARCHAR(255) NULL`, `deleted_at NULL` | index(channel_id, status), index(recording_id), index(creator_member_id). soft delete. `start_seconds`는 방송 시작(= 다시보기 0초) 기준 시작 위치, `duration_seconds`는 요청 길이(READY 때 ffprobe 실제 길이로 갱신). `file_path`는 다시보기처럼 지금 있는 곳: PUBLIC `vod/clips/<uuid>.mp4`, PRIVATE `private/clips/<uuid>.mp4`(§4.18). `thumbnail_path = "thumbnails/clips/<clipId>.jpg"`(uploads 기준) |
 | `follow` | `member_id FK`(팔로우하는 회원), `channel_id FK`(팔로우 대상 채널) | **unique(member_id, channel_id)**, index(channel_id)(팔로워 수). FK on delete cascade(member · channel). 자기 채널 팔로우 금지는 DB가 아니라 `FollowService`가 검사(FOLLOW-1). `created_at`이 팔로우한 시각 |
 
 Enum:
@@ -207,6 +213,7 @@ Enum:
 - `BroadcastStatus { LIVE, DISCONNECTED, ENDED }`, `BroadcastSource { BROWSER_PC, BROWSER_MOBILE, STREAM_KEY }`
 - `RecordingStatus { RECORDING, PROCESSING, READY, FAILED, FILE_DELETED }`, `Visibility { PUBLIC, PRIVATE }`
 - `DonationStatus { PENDING, APPROVED, FAILED }`
+- `ClipStatus { PROCESSING, READY, FAILED }`, `ClipSource { RECORDING, LIVE }`
 
 ### 4.4 공통 응답 · 에러
 - 성공: 본문 그대로(래퍼 없음). 목록은 `{ "items": [...], "page": 0, "size": 20, "totalElements": n, "hasNext": bool }`.
@@ -275,6 +282,8 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | 댓글 수정 · 삭제 | `comment.member_id == me`만(채널 주인도 남의 댓글 불가) |
 | 채팅 쓰기, 후원 생성 · 승인 | 로그인 + 방송 LIVE/DISCONNECTED |
 | 채널 팔로우 · 해제, 내 팔로우 목록 | 로그인. 자기 채널은 팔로우 불가(400 `VALIDATION_ERROR`) |
+| 클립 만들기 | 로그인. 다시보기 클립은 recording READY이고 PUBLIC(PRIVATE는 채널 주인만), 라이브 클립은 방송 LIVE(DISCONNECTED는 409 `BROADCAST_NOT_LIVE`) |
+| 클립 제목 · 공개 설정 · 삭제, 비공개 클립 조회 · 재생 · video-token | `clip.creator_member_id == me` **또는** `clip.channel.member_id == me`(채널 주인은 남이 만든 자기 채널 클립도) |
 검증 헬퍼: `OwnershipGuard.requireChannelOwner(channel, me)`, `requireAuthor(comment, me)`. 테스트 `OwnerAuthorizationTest`: 다른 회원 토큰으로 수정 · 종료 · 삭제 · 공개 설정 · 게시글 · 댓글 → 403.
 
 ### 4.9 MediaMTX 인증 콜백 `POST /api/internal/mediamtx/auth`
@@ -357,6 +366,13 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end`(204) · `DELETE /broadcasts/{id}`(204) | 주인 | §4.6 |
 | `GET /members/me/broadcasts?page=` | 로그인 | 내 방송 기록(삭제 제외) + recording 상태 · visibility |
 | `GET /members/me/follows` | 로그인 | 페이징 없이 전체 배열 `[FollowedChannel {channelId, name, category:{code,label}, isLive, liveBroadcastId(null 가능), viewerCount, followedAt}]`. `isLive`는 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송이 있을 때(= `liveBroadcastId != null`), `viewerCount`는 그 방송의 시청자 수(없으면 0). 정렬은 고정: **라이브 먼저(시청자 수 내림차순 → 방송 시작 내림차순), 그다음 팔로우한 순(최신 먼저)**. 시청자 수가 메모리 값이라 메모리에서 정렬. 진행 중 방송은 채널 id 목록으로 한 번에 조회(N+1 금지). 사이드바(UI-7 "팔로우" 칸)가 30초마다 다시 부른다 |
+| `POST /recordings/{id}/clips` | 로그인 | 다시보기에서 클립(§4.18) `{title?, startSeconds, durationSeconds, visibility?}` → **202** `ClipDetail`(status PROCESSING). 조건: recording READY(아니면 409 `RECORDING_NOT_READY`), PUBLIC이거나 주인(아니면 403), `durationSeconds`는 `app.clip.min~max`(5~60), `startSeconds ≥ 0`, `startSeconds + durationSeconds ≤ recording.durationSeconds`(아니면 400 `VALIDATION_ERROR` "클립 구간이 영상 범위를 벗어났습니다"). 같은 회원의 PROCESSING 클립이 있으면 409 `CLIP_IN_PROGRESS` |
+| `POST /broadcasts/{id}/clips` | 로그인 | 라이브 "최근 N초" 클립 `{title?, durationSeconds, visibility?}` → 202 `ClipDetail`. 조건: 방송 LIVE(아니면 409 `BROADCAST_NOT_LIVE`), 방송 시작 뒤 `durationSeconds` 이상 지났을 것(아니면 400 `VALIDATION_ERROR` "방송 시작 직후에는 만들 수 없습니다"), 길이 · 동시 처리 규칙은 위와 같음. 구간은 요청 시각 기준 `[now − N, now)`, `startSeconds = (now − N) − broadcast.startedAt` |
+| `GET /clips/{id}` | 누구나/권한 | `ClipDetail {id, title, status, visibility, source, startSeconds, durationSeconds, thumbnailUrl, createdAt, creator:{nickname}, channel:{id,name}, broadcastId, recordingId, recordingAvailable(원본이 READY · PUBLIC이거나 내가 주인), videoUrl(READY이고 PUBLIC일 때 `"/" + file_path`, 아니면 null), failureReason(FAILED · creator 또는 주인에게만), isOwner(채널 주인), isCreator}`. PRIVATE는 creator · 주인만(아니면 403), 삭제 · 없음은 404 `CLIP_NOT_FOUND`. 프론트는 PROCESSING이면 2초마다 다시 부른다 |
+| `GET /channels/{id}/clips?page=` · `GET /recordings/{id}/clips?page=` | 누구나 | READY · PUBLIC 클립 최신순(`created_at`, id 내림차순), 채널 주인이 부르면 PRIVATE도 포함 → `PageResponse<ClipSummary {id, title, durationSeconds, thumbnailUrl, status, visibility, createdAt, creator:{nickname}, channel:{id,name}, broadcastId, recordingId}>` |
+| `GET /members/me/clips?page=` | 로그인 | 내가 만든 클립 전부(PROCESSING · FAILED 포함, 삭제 제외) 최신순 → `PageResponse<ClipSummary>` |
+| `PATCH /clips/{id}` · `DELETE /clips/{id}`(204) | creator · 주인 | `{title?, visibility?}`. 공개 설정 변경은 다시보기(§4.10)와 같은 폴더 이동 규칙(READY면 `vod/clips/` ↔ `private/clips/` `ATOMIC_MOVE`, 아니면 값만). 삭제는 soft delete + 커밋 뒤 파일 · 썸네일 삭제 |
+| `POST /clips/{id}/video-token` · `GET /clips/{id}/video?token=` | creator · 주인 | PRIVATE 재생. `ClipVideoTokenService`: `aud=clip-video`, `sub=clipId`, 5분, 키는 `app.jwt.secret`에서 `"clip-video-token:" + secret` SHA-256 파생(다시보기 토큰과도 분리). READY가 아니면 409 `CLIP_NOT_READY`. GET은 `ResourceRegion` Range 응답 |
 | `GET /search?q=` | 누구나 | **통합 검색 요약**(헤더 검색창 → 결과 화면 S12, SEARCH-1). `q`는 trim · 연속 공백을 하나로 정규화한 뒤 1~50자가 아니면 400 `VALIDATION_ERROR`("검색어는 1~50자"). 세 종류를 각각 **최대 5개** + 전체 수 → `SearchResponse {q(정규화된 값), channels:{items:[ChannelSummary], total}, lives:{items:[BroadcastSummary], total}, recordings:{items:[RecordingSummary], total}}`. 매칭은 `LIKE '%q%'` 부분 일치(기본 콜레이션이라 대소문자 무시, `%` · `_` · `\`는 `\`로 이스케이프해 글자로 찾음, 토큰 분리 없이 구 전체): **채널**은 `channel.name` 또는 주인 `member.nickname`, **라이브**는 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송의 `title` 또는 채널 이름, **다시보기**는 공개 조건(`RecordingRepository.findPublic`과 같음: ENDED · READY · PUBLIC · 삭제 제외)의 `title` 또는 채널 이름. 정렬: 채널은 `name` 오름차순 → id 오름차순(DB), 라이브는 `/broadcasts`와 같음(시청자 수 → startedAt → id 내림차순, 메모리), 다시보기는 `/recordings`와 같음(startedAt → id 내림차순). `ChannelSummary {id, name, description, category:{code,label}, isLive, liveBroadcastId(null 가능), viewerCount, followerCount}` — `isLive` · `viewerCount`는 `/members/me/follows`와 같은 규칙, 그 페이지의 채널 id 목록으로 한 번에 채움(N+1 금지). 인덱스 없는 LIKE 풀스캔을 허용한다(규모 작음, 커지면 FULLTEXT로) |
 | `GET /search/{channels\|lives\|recordings}?q=&page=&size=20` | 누구나 | 한 종류의 전체 목록(S12 "더 보기") → `PageResponse<위와 같은 Summary>`. 조건 · 정렬 · `q` 규칙은 위와 같음. 채널 · 다시보기는 DB 페이징, 라이브는 `/broadcasts`처럼 메모리 페이징. `size` 최대 50(`PageResponse.pageable`). 다른 type은 404 `NOT_FOUND` |
 | `GET /recordings?page=&sort=recent` | 누구나 | READY · PUBLIC → `RecordingSummary {id, broadcastId, title, category, thumbnailUrl, durationSeconds, startedAt, channel:{id,name}, commentCount}` |
@@ -372,8 +388,19 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1). 통합: 검색 매칭 · 제외 조건 · 이스케이프 · 페이징(`SearchApiTest`, §9 SEARCH-1).
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1). 통합: 검색 매칭 · 제외 조건 · 이스케이프 · 페이징(`SearchApiTest`, §9 SEARCH-1). 통합: 클립 생성 조건 · 권한 · 공개 설정 이동 · 삭제(`ClipApiTest`, 처리기는 가짜 `FfmpegRunner` · `MediaMtxClient`), 단위: `ClipProcessingService` 경로 선택 · 실패 처리(§9 CLIP-1).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
+
+### 4.18 클립 (`clip`, CLIP-1)
+- **두 원천, 한 파이프라인.** `POST`는 조건 · 권한을 검사하고 `clip`을 PROCESSING으로 저장한 뒤 커밋 뒤에(`AfterCommit`) `ClipProcessingService.enqueue(clipId)`(`@Async("clipExecutor")`, 단일 스레드 풀 — 병합과 같은 방식)를 부르고 202로 돌려준다. 처리기는 시작할 때 clip을 다시 읽어 PROCESSING이 아니면(삭제됨) 아무것도 하지 않는다.
+  - `RECORDING`: 병합된 파일(`RecordingFiles.locateVideo(recording.file_path)`)을 `ffmpeg -hide_banner -loglevel error -nostdin -y -ss {start} -i {src} -t {duration} -c copy -avoid_negative_ts make_zero -movflags +faststart {dir}/private/clips/<uuid>.mp4`로 자른다. `-c copy`라 시작은 직전 키프레임으로 당겨질 수 있다(수 초; 재인코딩은 하지 않는다 — 시연 서버 CPU).
+  - `LIVE`: MediaMTX 재생 서버(§2.3 `playback`, v1.21.3은 녹화 중인 조각도 내준다)에서 `GET {playback-url}/get?path=live/{channelId}&start={RFC3339 (now−N)}&duration={N}s&format=mp4`를 `MediaMtxClient.downloadRecording(path, start, duration, target)`로 받아 `private/clips/<uuid>.mp4`에 그대로 쓴다(ffmpeg 불필요; 끝의 1초 part가 아직 안 내려와 조금 짧을 수 있음). 404 · 빈 응답이면 FAILED(`NO_MEDIA`).
+  - 공통 마무리: `ffprobe`로 길이(0이면 FAILED `EMPTY`) · 파일 크기, 썸네일 `ffmpeg -ss 1 -i {clip} -frames:v 1 -vf scale=640:-2 -q:v 4 -y {uploads}/thumbnails/clips/<clipId>.tmp.jpg` → rename `<clipId>.jpg`(실패해도 클립은 READY, 썸네일만 null). 그다음 새 트랜잭션에서 clip을 잠그고 PROCESSING일 때만 READY로 바꾸되, 그때의 `visibility`가 PUBLIC이면 `vod/clips/<uuid>.mp4`로 옮긴 뒤 `file_path`를 적는다(§4.10과 같은 "항상 private에 먼저" 규칙). 그 사이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + `failure_reason`(앞 200자). 타임아웃 `app.clip.timeout`(2분).
+- **원본과의 관계.** 클립은 만들어진 뒤 독립 파일이다: 원본 다시보기가 PRIVATE로 바뀌거나 보관 만료(FILE_DELETED)돼도 클립은 그대로 재생된다(`recordingAvailable`만 false). 방송이 삭제되면(`DELETE /broadcasts/{id}`) 그 방송의 클립도 같은 트랜잭션에서 soft delete하고 커밋 뒤 파일 · 썸네일을 지운다(`ClipService.deleteAllOfBroadcast`, `BroadcastService.delete`에서 호출).
+- **기본값.** `title`은 trim 뒤 비었으면 방송 제목, `visibility` 생략은 PUBLIC. 회원당 동시 처리 1개(`existsByCreatorIdAndStatus(me, PROCESSING)` → 409 `CLIP_IN_PROGRESS`).
+- **서빙.** PUBLIC READY → `videoUrl = "/vod/clips/<uuid>.mp4"`(Caddy `/vod/*` 정적, §2.2 그대로). PRIVATE → video-token(§4.16). 썸네일 `/uploads/thumbnails/clips/<clipId>.jpg`. 보관 만료 정리는 두지 않는다(클립은 작다).
+- **기동 복구.** `ClipProcessingService.resumePending()`(`ApplicationReadyEvent`)이 PROCESSING 클립을 다시 큐에 넣는다. LIVE 원천은 요청 시각의 `[start, start+N)`을 clip에 저장해 두므로(`start_seconds` + 방송 `started_at`로 복원) 재시작 뒤에도 같은 구간을 받는다.
+- 새 에러 코드: `CLIP_NOT_FOUND`(404 "클립을 찾을 수 없습니다"), `CLIP_IN_PROGRESS`(409 "이미 만드는 중인 클립이 있습니다"), `CLIP_NOT_READY`(409 "클립이 아직 준비되지 않았습니다").
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
 없을 때만 생성: 회원 `demo-streamer@example.com` / `demo-viewer@example.com`(비밀번호는 `.env.example`의 `APP_SEED_PASSWORD`, README에 기재), 채널(방송인 채널 name "데모 방송인", title "데모 방송", GAME), ENDED 방송 1(어제) + recording READY · PUBLIC(`infra/seed/sample.mp4`를 `vod/seed-sample.mp4`로 복사, duration은 ffprobe, 썸네일은 2초 지점 한 프레임), 게시글 1("첫 공지"), 댓글 1. 방송인 계정이 있으면 DB는 건너뛰고 영상 파일만 없을 때 다시 복사한다. 샘플 경로는 `app.seed.sample-path`(운영 compose는 `infra/seed`를 `/seed`로 읽기 전용 마운트, `local` 프로파일은 `../infra/seed/sample.mp4`). 시연 `.env`: `APP_GRID_THRESHOLD=2`, `APP_RECORDING_RETENTION_DAYS=365`.
@@ -387,12 +414,12 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
 ```
 frontend/src/
 ├─ main.tsx · App.tsx(라우터 · QueryClient · 부트스트랩 refresh)
-├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · follows.ts · search.ts · types.ts(응답 타입 = §4.16)
+├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · follows.ts · search.ts · clips.ts · types.ts(응답 타입 = §4.16)
 ├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear)   ※ player.ts(mode · stats)는 두지 않는다 — 모드 · 통계는 Player 안의 로컬 상태(GRID-2). 다른 화면이 모드를 읽어야 할 때 store로 옮긴다
 ├─ media/      mixer.ts · whip.ts · whep.ts · gridPlayer.ts · devices.ts(기기 감지)
 ├─ ws/         stomp.ts(연결 · 구독 · 전송, 토큰 헤더)
-├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · follow/(FollowButton) · search/(SearchBox · SearchSection · ChannelCard · searchQuery.ts) · common/(Button · Input · Modal · Spinner · Thumbnail)
-├─ pages/      Home · Live · StudioEntry · StudioPc · StudioMobile · StudioSettings · Video · Login · Signup · Me · Channel · Post · Widget · Search
+├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · follow/(FollowButton) · search/(SearchBox · SearchSection · ChannelCard · searchQuery.ts) · clip/(ClipDialog · LiveClipButton · ClipCard · ClipList · useClipStatus.ts) · common/(Button · Input · Modal · Spinner · Thumbnail)
+├─ pages/      Home · Live · StudioEntry · StudioPc · StudioMobile · StudioSettings · Video · Login · Signup · Me · Channel · Post · Widget · Search · Clip
 └─ styles/     index.css(Tailwind)
 ```
 
@@ -411,6 +438,7 @@ frontend/src/
 | `/channel/:channelId` | Channel(S9) | — | 탭 홈(라이브면 Live로 링크 · 소개) · 다시보기(`/channels/{id}/broadcasts`) · 커뮤니티(`/channels/{id}/posts`, 주인이면 글쓰기) |
 | `/posts/:postId` | Post(S10) | — | 게시글 · 댓글 |
 | `/widget/:widgetKey` | Widget(S11) | — | 레이아웃 없음 · 투명 배경, SSE 구독, 알림 카드 + `speechSynthesis` |
+| `/clips/:clipId` | Clip(S13) | — | `GET /clips/{id}`(PROCESSING이면 2초 refetch), `<video>`(PUBLIC은 `videoUrl`, PRIVATE는 `/clips/{id}/video-token` 흐름 — 다시보기와 같은 `RecordingVideo` 재사용), 원본 링크 `/videos/:recordingId?t=startSeconds`(`recordingAvailable`일 때), 제목 수정 · 공개 설정 · 삭제(`isCreator \|\| isOwner`), 주소 복사 |
 | `/search` | Search(S12) | — | `?q=`(필수) · `?type=all\|channels\|lives\|recordings`(기본 all) · `?page=`(종류일 때). all이면 `GET /search?q=` 한 번, 종류면 `GET /search/{type}?q=&page=`. `q`가 없거나 공백뿐이면 호출하지 않고 안내 문구. 결과 캐시 키 `['search', type, q, page]`, staleTime 30초, 주기 refetch 없음 |
 
 ### 6.4 인증 처리 (`api/client.ts`, `store/auth.ts`)
@@ -457,6 +485,8 @@ frontend/src/
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**(헤더에 팔로워 수 + 같은 `FollowButton`), **S10 Post**: §6.3.
+- **클립**(CLIP-2): **S2 Live**의 플레이어 아래 "클립" 버튼(`LiveClipButton`: 길이 15 · 30 · 60초 선택, 기본 30, 비로그인은 `/login?next=`, LIVE가 아니면 숨김) → `POST /broadcasts/{id}/clips` → 토스트 "클립을 만드는 중…" → `useClipStatus`(2초 폴링)로 READY면 "클립 보기" 링크(`/clips/:id`), FAILED면 `failureReason` 없이 "클립을 만들지 못했습니다". **S6 Video**의 "클립 만들기" 버튼 → `ClipDialog`(시작 = 현재 재생 위치(수정 가능, `mm:ss`), 길이 슬라이더 5~60 기본 30, 제목(기본 영상 제목), 공개 여부, 미리보기 없음) → `POST /recordings/{id}/clips` → 같은 폴링 · 링크. `?t=` 쿼리가 있으면 그 위치부터 재생(클립 → 원본 링크). S6 아래 "이 영상의 클립"(`ClipList`, `GET /recordings/{id}/clips`, 없으면 절 숨김). **S9 Channel**에 "클립" 탭(`GET /channels/{id}/clips`, `ClipCard` 그리드: 썸네일 · 길이 배지 · 제목 · 만든 사람 · 날짜). **S8 Me**에 "내 클립" 절(`GET /members/me/clips`, 상태 배지 PROCESSING · FAILED 포함, 삭제).
+- **S13 Clip**: §6.3. 제목, 채널 링크 · "{nickname}님이 만듦" · 만든 날짜 · 길이, PROCESSING이면 플레이어 자리에 "클립을 만드는 중…"(폴링), FAILED면 안내, READY면 `<video controls autoplay muted?>`(자동 재생은 소리 없이, 다시보기 플레이어와 같은 UnmuteButton).
 - **헤더 검색창**(`components/search/SearchBox.tsx`, SEARCH-2, 라우트 아님): 헤더에서 로고와 오른쪽 메뉴 사이 **가운데**에 둔다(최대 폭 제한, 남는 폭을 차지). placeholder "채널 · 라이브 · 다시보기 검색", `<form role="search">` 제출(Enter · 돋보기 버튼) → `/search?q=`(`searchQuery.ts`로 trim · 공백 정리 · 50자 자름, 빈 값이면 이동하지 않음, `encodeURIComponent`). `/search`에 있으면 URL의 `q`를 입력창에 맞추고, 다른 페이지로 가면 비운다. **sm 미만**에서는 돋보기 `IconButton`만 두고 누르면 헤더 한 줄이 입력창(자동 포커스) + 닫기 버튼으로 바뀐다(Escape · 제출 뒤 닫힘). 자동완성 · 최근 검색어 · 입력 중 검색은 범위 밖.
 - **S12 Search**: 제목 "'{q}' 검색 결과". `type=all`: **채널**(`ChannelCard`: 이름 · 소개 한 줄 · 카테고리 · 라이브면 LIVE 점 + 시청자 수 · 팔로워 수, 누르면 라이브 중이면 `/live/:channelId` 아니면 `/channel/:channelId`) → **라이브**(`LiveCard` 그리드) → **다시보기**(`RecordingCard`) 순으로 절 세 개(`SearchSection`). 절 제목에 전체 수, `total`이 5를 넘으면 "더 보기 (N)" → `?type=`. 결과가 없는 절은 숨기고, 셋 다 0이면 "'{q}'에 맞는 채널 · 라이브 · 다시보기가 없습니다". `type=한 종류`: 그 종류의 목록 + 이전 · 다음(`hasNext`) + "전체 결과로" 링크. `q` 없음 · 공백은 "검색어를 입력하세요". 오류는 `message`.
 - **왼쪽 채널 사이드바**(UI-7 · FOLLOW-2, 라우트 아님): 맨 위 "팔로우" 칸은 로그인 상태에서만 `GET /members/me/follows`를 30초마다 불러 채널 이름 · 라이브 점 · 시청자 수를 보여 주고, 누르면 `/live/:channelId`. 비로그인이면 "로그인하면 팔로우한 채널이 여기 보입니다" 한 줄 + 로그인 링크. 팔로우 · 해제 응답을 받으면 목록을 바로 다시 불러 사이드바와 버튼이 어긋나지 않게 한다.
@@ -476,6 +506,7 @@ frontend/src/
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
 | OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
+| MediaMTX v1.21.3 재생 서버(`/get?path&start&duration&format=mp4`)가 **녹화 중인** 조각(6시간 fMP4, 1초 part)을 시간 범위로 내주는지 · 받은 mp4가 `<video>`에서 바로 재생되는지 | CLIP-1(구현 전에 로컬 compose로 PoC: 송출 중 `curl "http://localhost:9996/get?path=live/<id>&start=<now−30s>&duration=30s&format=mp4" -o x.mp4`) | 1차 대안: 라이브 클립을 `raw/live/<channelId>/` 최신 fMP4 파일에서 `ffprobe` 길이 − N을 `-ss`로 `-c copy` 자르기. 그것도 안 되면 라이브 클립은 제외하고 다시보기 클립만(로드맵 CLIP-1 범위 축소, 사용자에게 알림) |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
 ## 9. 항목별 구현 지침 (로드맵 ID)
@@ -582,6 +613,17 @@ frontend/src/
 ### FOLLOW-2 팔로우 UI
 - 읽을 절: §6.7 S2 · S9 · 사이드바, §4.16 위 네 엔드포인트. 공용 `components/follow/FollowButton.tsx`(props: `channelId`, `isFollowing`, `followerCount`, `isOwner`; 표시 판단은 `followView.ts`, 목록은 `useMyFollows.ts`의 `['me','follows', memberId]`; 응답으로 `['channel', id]` · `['broadcast', *]` 캐시의 두 필드를 고치고 `['me','follows']`를 무효화). `api/types.ts`에 `FollowStatus` · `FollowedChannel`.
 - 완료: 채널 페이지 · 시청 화면에서 팔로우 · 해제가 되고 사이드바 "팔로우" 칸에 바로 반영된다. 비로그인 클릭은 `/login?next=`. 자기 채널에는 버튼이 없다.
+
+### CLIP-1 클립 API · 처리
+- 읽을 절: §4.18 전체, §4.16 클립 행 8개, §4.3 `clip`, §4.8 클립 두 행, §4.1 `app.clip.*` · `playback-url`, §2.3 `playback`, §2.4, §4.10(파일 규칙 · 토큰 분리 · 잠금 순서 — 같은 방식으로), §8 재생 서버 위험.
+- **먼저 PoC**(§8): 로컬 compose에서 `infra/mediamtx.yml`에 `playback: yes` · `playbackAddress: :9996`, `compose.dev.yaml`에 `127.0.0.1:9996:9996`(운영 `compose.yaml`은 포트 공개 없이 내부 네트워크만)을 넣고 송출 중 curl로 받은 mp4가 재생되는지 본다. 송출 · 확인은 포트를 쓰므로 지휘 세션에 명령 · 기대 결과를 보내 부탁한다(그동안 다시보기 클립 경로를 먼저 구현). 결과와 안 될 때의 대안 선택을 카드와 §8 행에 적는다.
+- 구조: 새 패키지 `clip/`(§4.2). `ClipFiles`는 `RecordingFiles`를 재사용하거나 같은 규칙(`locateVideo` · `moveVideo` · `deleteVideoQuietly`, 하위 폴더 `clips/`)으로 둔다. `MediaMtxClient.downloadRecording(path, Instant start, Duration duration, Path target)`(RestClient 스트리밍, `app.clip.timeout`). 비동기 실행기 `clipExecutor`(`AsyncConfig`, 단일 스레드)는 병합 실행기와 분리. `ClipVideoTokenService`는 `VideoTokenService`와 같은 구조에 aud · 파생 문자열만 다르게. 컨트롤러: `ClipController`(`/clips/**`, `/recordings/{id}/clips`, `/broadcasts/{id}/clips`, `/channels/{id}/clips`, `/members/me/clips`). `SecurityConfig` GET 공개 목록에 `/api/clips/*`, `/api/clips/*/video`, `/api/channels/*/clips`, `/api/recordings/*/clips`. `BroadcastService.delete`에 `clipService.deleteAllOfBroadcast(id)` 호출. springdoc `@Tag` · `@Schema`.
+- 완료: 통합 `ClipApiTest`(`@MockitoBean FfmpegRunner` · `MediaMtxClient`는 가짜 파일을 써 주는 stub) — ① 다시보기 클립 202 → 처리 뒤 READY · `videoUrl` `/vod/clips/…` · 파일 존재 · 썸네일 경로 ② PRIVATE 요청은 `private/clips/`에 있고 `videoUrl` null, video-token으로 200 · 다른 회원 403 ③ 비공개 다시보기는 주인만(403), READY 아님 409, 구간 초과 400, 길이 4 · 61 → 400, 동시 처리 409 ④ 라이브 클립: LIVE 202 · `startSeconds` 계산, DISCONNECTED · ENDED 409, 시작 직후 400 ⑤ PATCH 공개 설정 → 파일 이동 · `videoUrl` 변화, 제목 수정, creator가 아닌 채널 주인도 가능, 제3자 403 ⑥ DELETE → 404 · 파일 삭제 ⑦ 목록 세 개(공개만 / 주인은 비공개 포함 / 내 클립은 상태 포함) ⑧ 방송 삭제 시 클립 삭제 ⑨ 처리 실패(stub 실패) → FAILED · `failureReason`은 creator에게만. `OwnerAuthorizationTest`에 클립 행 추가. 흐름 문서 `~/.work-dash/flows/livestream.md`에 "클립" 절(BE 단계, FE는 `진행 중 차이`)을 FLOWS-FORMAT대로 추가. 실행 확인(실제 송출 중 라이브 클립 · 다시보기 클립 재생)은 지휘 세션.
+
+### CLIP-2 클립 UI
+- 읽을 절: §6.3 `/clips/:clipId`, §6.7 클립 · S13, §4.16 클립 행, §6.2. 파일: `api/clips.ts`, `api/types.ts`(`ClipSummary` · `ClipDetail` · 요청 타입), `components/clip/*`, `pages/Clip.tsx`, `App.tsx` 라우트, S2(`Live.tsx`) · S6(`Video.tsx`) · S9(`Channel.tsx`) · S8(`Me.tsx`) 수정.
+- 파일 겹침: `Live.tsx` · `App.tsx` 등은 M2 프론트 세션의 미커밋 변경과 겹친다 — SEARCH-2와 같은 규칙(그 커밋 뒤, `git status` 확인).
+- 완료: ① 다시보기에서 클립 만들기 → 폴링 → 클립 페이지 재생 ② 라이브에서 "클립" → 같은 흐름 ③ 채널 "클립" 탭 · 내 클립 · 삭제 · 공개 설정 ④ 비공개 클립 토큰 재생 ⑤ vitest: `useClipStatus`(PROCESSING → READY 폴링 멈춤), `ClipDialog` 구간 검증(순수 함수) ⑥ `npm run build` · lint. 실행 확인은 지휘 세션.
 
 ### SEARCH-1 통합 검색 API
 - 읽을 절: §4.16 `/search` 두 행, §4.2 `search/`, §4.3(channel · member · broadcast · recording 컬럼), §4.4 에러 형식, `PageResponse.pageable`.
