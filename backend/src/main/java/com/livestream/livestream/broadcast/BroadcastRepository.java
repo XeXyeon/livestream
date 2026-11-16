@@ -34,6 +34,16 @@ public interface BroadcastRepository extends JpaRepository<Broadcast, Long> {
 			""")
 	List<Broadcast> findOngoingByChannelIds(Collection<Long> channelIds);
 
+	/** 통합 검색(SEARCH-1): 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송 중 제목 또는 채널 이름이 패턴에 맞는 것. 정렬은 서비스가 한다. */
+	@Query("""
+			select b from Broadcast b join fetch b.channel c
+			where b.status in (com.livestream.livestream.broadcast.BroadcastStatus.LIVE,
+			                   com.livestream.livestream.broadcast.BroadcastStatus.DISCONNECTED)
+			  and b.deletedAt is null
+			  and (b.title like :pattern escape '\\' or c.name like :pattern escape '\\')
+			""")
+	List<Broadcast> searchOngoing(String pattern);
+
 	default Optional<Broadcast> findOngoing(Long channelId) {
 		return findByChannelAndStatuses(channelId, List.of(BroadcastStatus.LIVE, BroadcastStatus.DISCONNECTED))
 				.stream().findFirst();

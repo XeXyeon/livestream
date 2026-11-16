@@ -73,6 +73,25 @@ public interface RecordingRepository extends JpaRepository<Recording, Long> {
 			""")
 	Page<Recording> findPublic(Pageable pageable);
 
+	/** 통합 검색(SEARCH-1): {@link #findPublic} 과 같은 조건·정렬에 방송 제목 또는 채널 이름이 패턴에 맞는 것. */
+	@Query(value = """
+			select r from Recording r join fetch r.broadcast b join fetch b.channel c
+			where b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
+			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
+			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
+			  and (b.title like :pattern escape '\\' or c.name like :pattern escape '\\')
+			order by b.startedAt desc, b.id desc
+			""", countQuery = """
+			select count(r) from Recording r join r.broadcast b join b.channel c
+			where b.deletedAt is null
+			  and b.status = com.livestream.livestream.broadcast.BroadcastStatus.ENDED
+			  and r.status = com.livestream.livestream.recording.RecordingStatus.READY
+			  and r.visibility = com.livestream.livestream.recording.Visibility.PUBLIC
+			  and (b.title like :pattern escape '\\' or c.name like :pattern escape '\\')
+			""")
+	Page<Recording> searchPublic(String pattern, Pageable pageable);
+
 	/** 채널 페이지의 recordingCount: {@link #findPublicByChannel} 과 같은 조건의 수. */
 	@Query("""
 			select count(r) from Recording r join r.broadcast b

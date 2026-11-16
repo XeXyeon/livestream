@@ -54,7 +54,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class BroadcastService implements LiveBroadcastLookup {
 
 	/** 시청자 수 내림차순 → 시작 시각 최신순 → id 내림차순(같은 시각일 때 순서 고정). */
-	static final Comparator<BroadcastSummary> POPULAR_FIRST = Comparator
+	public static final Comparator<BroadcastSummary> POPULAR_FIRST = Comparator
 			.comparingLong(BroadcastSummary::viewerCount).reversed()
 			.thenComparing(BroadcastSummary::startedAt, Comparator.reverseOrder())
 			.thenComparing(BroadcastSummary::id, Comparator.reverseOrder());
