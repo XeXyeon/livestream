@@ -208,6 +208,99 @@ class RecordingMergeTest {
 	}
 
 	@Test
+	void 영상이_있으면_영상_없는_첫_조각을_빼고_libx264로_다시_인코딩한다() throws Exception {
+		// FE-3#1: MediaMTX 드리프트 리셋으로 생긴 첫 조각은 영상 트랙만 있고 패킷이 없다(init 은 기본값 avcC).
+		// 이 조각이 concat 첫 파일이면 다시보기 전체가 디코딩되지 않는다.
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		String stub = rawSegment(a, "s0.mp4", "stub-");
+		String seg1 = rawSegment(a, "s1.mp4", "video");
+		segmentHook(a.channelId(), stub);
+		segmentHook(a.channelId(), seg1);
+		end(a);
+		Recording rec = recordingOf(a);
+		when(ffmpeg.ffprobe(anyList(), any())).thenAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			if (!args.contains("-count_packets")) {
+				return new FfmpegRunner.Result(0, "12.6\n", false);
+			}
+			String body = Files.readString(Path.of(args.getLast()));
+			return new FfmpegRunner.Result(0, body.startsWith("stub")
+					? "width=1920\nheight=1080\nnb_read_packets=N/A\nduration=2.0\n"
+					: "width=1081\nheight=2400\nnb_read_packets=300\nduration=10.0\n", false);
+		});
+		AtomicReference<List<String>> ffmpegArgs = new AtomicReference<>();
+		doAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			ffmpegArgs.set(args);
+			return fakeConcat(args);
+		}).when(ffmpeg).ffmpeg(anyList(), any());
+
+		mergeService.merge(rec.getId());
+
+		Recording done = recordingRepository.findById(rec.getId()).orElseThrow();
+		assertThat(done.getStatus()).isEqualTo(RecordingStatus.READY);
+		assertThat(Files.readString(recordingsDir.resolve(done.getFilePath()))).isEqualTo("video");
+		assertThat(String.join(" ", ffmpegArgs.get()))
+				.contains("-c:v libx264 -preset veryfast", "scale=w=864:h=1920:", "-c:a copy")
+				.doesNotContain("-c copy");
+		// 뺀 조각도 다른 조각처럼 지운다
+		assertThat(Files.exists(Path.of(stub))).isFalse();
+		assertThat(Files.exists(Path.of(seg1))).isFalse();
+	}
+
+	@Test
+	void 조각_영상_확인이_실패하면_조각을_빼지_않고_raw를_남긴_채_PROBE_FAILED() throws Exception {
+		// 6시간짜리 큰 조각에서 ffprobe 가 시간 초과로 실패해도 "영상 없음"으로 읽어 빼고 지우면 안 된다(리뷰 지적)
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		String stub = rawSegment(a, "s0.mp4", "stub-");
+		String big = rawSegment(a, "s1.mp4", "big");
+		segmentHook(a.channelId(), stub);
+		segmentHook(a.channelId(), big);
+		end(a);
+		Recording rec = recordingOf(a);
+		when(ffmpeg.ffprobe(anyList(), any())).thenAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			if (args.contains("-count_packets") && args.getLast().endsWith("s1.mp4")) {
+				return new FfmpegRunner.Result(-1, "", true);
+			}
+			return new FfmpegRunner.Result(0, "width=1920\nheight=1080\nnb_read_packets=N/A\nduration=2.0\n", false);
+		});
+
+		mergeService.merge(rec.getId());
+
+		Recording r = recordingRepository.findById(rec.getId()).orElseThrow();
+		assertThat(r.getStatus()).isEqualTo(RecordingStatus.FAILED);
+		assertThat(r.getFailureReason()).isEqualTo("PROBE_FAILED");
+		assertThat(Files.exists(Path.of(stub))).isTrue();
+		assertThat(Files.exists(Path.of(big))).isTrue();
+		verify(ffmpeg, never()).ffmpeg(anyList(), any());
+	}
+
+	@Test
+	void 영상이_없는_녹화는_그대로_복사한다() throws Exception {
+		Account a = TestAccounts.create(mvc);
+		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);
+		segmentHook(a.channelId(), rawSegment(a, "s1.mp4", "audio"));
+		end(a);
+		Recording rec = recordingOf(a);
+		when(ffmpeg.ffprobe(anyList(), any())).thenAnswer(inv -> new FfmpegRunner.Result(0,
+				((List<String>) inv.getArgument(0)).contains("-count_packets") ? "duration=12.6\n" : "12.6\n", false));
+		AtomicReference<List<String>> ffmpegArgs = new AtomicReference<>();
+		doAnswer(inv -> {
+			List<String> args = inv.getArgument(0);
+			ffmpegArgs.set(args);
+			return fakeConcat(args);
+		}).when(ffmpeg).ffmpeg(anyList(), any());
+
+		mergeService.merge(rec.getId());
+
+		assertThat(recordingRepository.findById(rec.getId()).orElseThrow().getStatus()).isEqualTo(RecordingStatus.READY);
+		assertThat(String.join(" ", ffmpegArgs.get())).contains("-c copy").doesNotContain("libx264");
+	}
+
+	@Test
 	void 조각이_없으면_FAILED_NO_SEGMENTS() throws Exception {
 		Account a = TestAccounts.create(mvc);
 		lifecycle.onReady(a.channelId(), BroadcastSource.BROWSER_PC);

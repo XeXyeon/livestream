@@ -15,7 +15,7 @@ type Props = {
   /** 영화관 모드: 부모(Live)가 높이를 정하고 영상이 그 높이를 채운다 */
   theater?: boolean
   onTheaterChange?: (theater: boolean) => void
-  /** 모드 줄 왼쪽 끝에 놓을 것(시청 화면의 방송 제목). 재생 모드 · 통계는 오른쪽 끝 */
+  /** 영상 바로 아래 한 줄(시청 화면의 방송 제목). 재생 모드 · 통계 줄은 그 아래 */
   title?: ReactNode
 }
 
@@ -51,12 +51,11 @@ export default function Player({ broadcast, initialMode, theater = false, onThea
           </div>
         )}
       </div>
-      <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 ${fullscreen ? 'hidden' : fill ? 'px-4 py-2' : 'pt-1'}`}>
-        <div className="min-w-0 flex-1">{title}</div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {mode === 'grid' && <PlayerStats stats={stats} p2p={p2p} />}
-          <ModeToggle mode={mode} onChange={setMode} />
-        </div>
+      {/* 제목은 모드 줄과 나눠 혼자 한 줄을 쓴다: 같은 줄에 두면 휴대폰 폭에서 제목 칸이 거의 0이 되어 글자가 한 자씩 꺾였다 */}
+      {title && <div className={`min-w-0 ${fullscreen ? 'hidden' : fill ? 'px-4 pt-2' : 'pt-1'}`}>{title}</div>}
+      <div className={`flex flex-wrap items-center justify-end gap-2 ${fullscreen ? 'hidden' : fill ? 'px-4 pb-2' : ''}`}>
+        {mode === 'grid' && <PlayerStats stats={stats} p2p={p2p} />}
+        <ModeToggle mode={mode} onChange={setMode} />
       </div>
     </div>
   )
