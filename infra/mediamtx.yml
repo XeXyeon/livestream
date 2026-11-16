@@ -14,6 +14,7 @@ hlsAlwaysRemux: yes  # 시청자 없어도 HLS 준비(그리드 전환 지연 �
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+webrtcTrackGatherTimeout: 10s # FE-2#1: H.264 하드웨어 인코더는 첫 프레임이 수 초 늦어 기본값이면 영상 트랙이 빠진다. 트랙이 다 오면 바로 확정(DESIGN §2.3)
 
 # 송출(publish)은 backend 인증 콜백이 스트림 키로 검사하고, 재생(read · playback)은 콜백이 모두 허용한다 (DESIGN §4.9).
 # 콜백 주소는 docker 내부망 전용이다(Caddy 가 /api/internal/* 를 바깥에 노출하지 않음).
