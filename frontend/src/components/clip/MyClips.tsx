@@ -71,8 +71,8 @@ function MyClipRow({ clip }: { clip: ClipSummary }) {
   }
 
   return (
-    <li className="flex flex-col gap-4 py-4 sm:flex-row" aria-labelledby={titleId}>
-      <div className="w-full shrink-0 sm:w-44"><Thumbnail src={clip.thumbnailUrl} alt="" /></div>
+    <li className="flex flex-col gap-4 py-4 lg:flex-row" aria-labelledby={titleId}>
+      <div className="w-full shrink-0 lg:w-44"><Thumbnail src={clip.thumbnailUrl} alt="" /></div>
       <div className="min-w-0 flex-1 space-y-2">
         <p id={titleId} className="break-words font-semibold text-primary">
           {clip.status === 'READY'
@@ -88,7 +88,7 @@ function MyClipRow({ clip }: { clip: ClipSummary }) {
         </p>
         {error && <p role="alert" className="text-sm text-error">{error}</p>}
       </div>
-      <div className="flex shrink-0 gap-2 sm:flex-col">
+      <div className="flex shrink-0 gap-2 lg:flex-col">
         {/* 만드는 중에는 처리 결과와 엇갈리지 않게 삭제를 막는다 */}
         <Button label="삭제" variant="destructive" size="sm" isDisabled={clip.status === 'PROCESSING'} onClick={() => setConfirmOpen(true)} />
       </div>
