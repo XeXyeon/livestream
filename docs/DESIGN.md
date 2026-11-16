@@ -181,6 +181,7 @@ post/        Post · PostRepository · PostService · PostController
 donation/    Donation · DonationStatus · DonationRepository · DonationService · TossPaymentsClient · DonationController
 integration/ WidgetEventController(SSE) · WidgetEventService
 follow/      Follow · FollowRepository · FollowService · FollowController · dto(FollowStatusResponse · FollowedChannelResponse)
+search/      SearchController(/search · /search/{type}) · SearchService · SearchType · dto(SearchQuery · SearchResponse · SearchGroup · ChannelSummary)   ※ 쿼리는 각 도메인 리포지토리에 둔다(SEARCH-1)
 seed/        SeedRunner
 ```
 계층: Controller(요청 검증 · DTO) → Service(규칙 · 트랜잭션 · 권한) → Repository(JPA). 엔티티는 Lombok `@Getter`, 생성자는 정적 팩토리, setter 없음.
@@ -356,6 +357,8 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 | `PATCH /broadcasts/{id}` · `POST /broadcasts/{id}/end`(204) · `DELETE /broadcasts/{id}`(204) | 주인 | §4.6 |
 | `GET /members/me/broadcasts?page=` | 로그인 | 내 방송 기록(삭제 제외) + recording 상태 · visibility |
 | `GET /members/me/follows` | 로그인 | 페이징 없이 전체 배열 `[FollowedChannel {channelId, name, category:{code,label}, isLive, liveBroadcastId(null 가능), viewerCount, followedAt}]`. `isLive`는 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송이 있을 때(= `liveBroadcastId != null`), `viewerCount`는 그 방송의 시청자 수(없으면 0). 정렬은 고정: **라이브 먼저(시청자 수 내림차순 → 방송 시작 내림차순), 그다음 팔로우한 순(최신 먼저)**. 시청자 수가 메모리 값이라 메모리에서 정렬. 진행 중 방송은 채널 id 목록으로 한 번에 조회(N+1 금지). 사이드바(UI-7 "팔로우" 칸)가 30초마다 다시 부른다 |
+| `GET /search?q=` | 누구나 | **통합 검색 요약**(헤더 검색창 → 결과 화면 S12, SEARCH-1). `q`는 trim · 연속 공백을 하나로 정규화한 뒤 1~50자가 아니면 400 `VALIDATION_ERROR`("검색어는 1~50자"). 세 종류를 각각 **최대 5개** + 전체 수 → `SearchResponse {q(정규화된 값), channels:{items:[ChannelSummary], total}, lives:{items:[BroadcastSummary], total}, recordings:{items:[RecordingSummary], total}}`. 매칭은 `LIKE '%q%'` 부분 일치(기본 콜레이션이라 대소문자 무시, `%` · `_` · `\`는 `\`로 이스케이프해 글자로 찾음, 토큰 분리 없이 구 전체): **채널**은 `channel.name` 또는 주인 `member.nickname`, **라이브**는 진행 중(LIVE · DISCONNECTED, 삭제 제외) 방송의 `title` 또는 채널 이름, **다시보기**는 공개 조건(`RecordingRepository.findPublic`과 같음: ENDED · READY · PUBLIC · 삭제 제외)의 `title` 또는 채널 이름. 정렬: 채널은 `name` 오름차순 → id 오름차순(DB), 라이브는 `/broadcasts`와 같음(시청자 수 → startedAt → id 내림차순, 메모리), 다시보기는 `/recordings`와 같음(startedAt → id 내림차순). `ChannelSummary {id, name, description, category:{code,label}, isLive, liveBroadcastId(null 가능), viewerCount, followerCount}` — `isLive` · `viewerCount`는 `/members/me/follows`와 같은 규칙, 그 페이지의 채널 id 목록으로 한 번에 채움(N+1 금지). 인덱스 없는 LIKE 풀스캔을 허용한다(규모 작음, 커지면 FULLTEXT로) |
+| `GET /search/{channels\|lives\|recordings}?q=&page=&size=20` | 누구나 | 한 종류의 전체 목록(S12 "더 보기") → `PageResponse<위와 같은 Summary>`. 조건 · 정렬 · `q` 규칙은 위와 같음. 채널 · 다시보기는 DB 페이징, 라이브는 `/broadcasts`처럼 메모리 페이징. `size` 최대 50(`PageResponse.pageable`). 다른 type은 404 `NOT_FOUND` |
 | `GET /recordings?page=&sort=recent` | 누구나 | READY · PUBLIC → `RecordingSummary {id, broadcastId, title, category, thumbnailUrl, durationSeconds, startedAt, channel:{id,name}, commentCount}` |
 | `GET /recordings/{id}` | 누구나/주인 | `{…Summary, status, visibility, videoUrl(READY·PUBLIC일 때), fileDeleted, donationTotal, isOwner}` |
 | `PATCH /recordings/{id}` | 주인 | `{visibility}` |
@@ -369,7 +372,7 @@ DB · API 모두 UTC ISO-8601(`2026-11-09T02:11:00Z`). 표시 변환은 프론�
 springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README의 소유자 검증 시연은 Swagger UI에서 다른 계정 토큰으로 `PATCH /broadcasts/{id}` → 403.
 
 ### 4.17 테스트 기준
-- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1).
+- 단위: 서비스 규칙(상태 전이, 권한, 댓글 깊이, 후원 금액 검증). 통합(`@SpringBootTest` + Testcontainers): 인증 흐름, 소유자 403(`OwnerAuthorizationTest`), 후원 멱등(`DonationConfirmIdempotencyTest`), 유예 종료 스케줄러. 단위: 댓글 대상 하나 규칙(생성 메서드). 통합: 팔로우 멱등 · 자기 채널 400 · 목록 정렬(`FollowApiTest`, §9 FOLLOW-1). 통합: 검색 매칭 · 제외 조건 · 이스케이프 · 페이징(`SearchApiTest`, §9 SEARCH-1).
 - 외부(MediaMTX · Toss · ffmpeg)는 인터페이스 뒤에 두고 테스트에서 mock. ffmpeg 병합은 `FfmpegRunner`를 가짜로.
 
 ## 5. 시드 · 시연 설정 (`seed/SeedRunner`, `app.seed.enabled=true`)
@@ -384,12 +387,12 @@ springdoc: 모든 컨트롤러에 `@Tag`, DTO에 `@Schema(description)`. README�
 ```
 frontend/src/
 ├─ main.tsx · App.tsx(라우터 · QueryClient · 부트스트랩 refresh)
-├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · types.ts(응답 타입 = §4.16)
+├─ api/        client.ts(fetch 래퍼 · 401 갱신 1회) · auth.ts · channels.ts · broadcasts.ts · recordings.ts · comments.ts · posts.ts · donations.ts · follows.ts · search.ts · types.ts(응답 타입 = §4.16)
 ├─ store/      auth.ts(Zustand: accessToken · member · setAuth · clear)   ※ player.ts(mode · stats)는 두지 않는다 — 모드 · 통계는 Player 안의 로컬 상태(GRID-2). 다른 화면이 모드를 읽어야 할 때 store로 옮긴다
 ├─ media/      mixer.ts · whip.ts · whep.ts · gridPlayer.ts · devices.ts(기기 감지)
 ├─ ws/         stomp.ts(연결 · 구독 · 전송, 토큰 헤더)
-├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · common/(Button · Input · Modal · Spinner · Thumbnail)
-├─ pages/      Home · Live · StudioEntry · StudioPc · StudioMobile · StudioSettings · Video · Login · Signup · Me · Channel · Post · Widget
+├─ components/ layout/(Header · Protected) · player/(Player · WhepView · GridView · PlayerStats · ModeToggle) · chat/(ChatPanel · ChatMessage · DonationBanner) · broadcast/(LiveCard · RecordingCard · RecommendList) · comment/(CommentList · CommentForm) · donation/(DonateDialog) · follow/(FollowButton) · search/(SearchBox · SearchSection · ChannelCard · searchQuery.ts) · common/(Button · Input · Modal · Spinner · Thumbnail)
+├─ pages/      Home · Live · StudioEntry · StudioPc · StudioMobile · StudioSettings · Video · Login · Signup · Me · Channel · Post · Widget · Search
 └─ styles/     index.css(Tailwind)
 ```
 
@@ -408,6 +411,7 @@ frontend/src/
 | `/channel/:channelId` | Channel(S9) | — | 탭 홈(라이브면 Live로 링크 · 소개) · 다시보기(`/channels/{id}/broadcasts`) · 커뮤니티(`/channels/{id}/posts`, 주인이면 글쓰기) |
 | `/posts/:postId` | Post(S10) | — | 게시글 · 댓글 |
 | `/widget/:widgetKey` | Widget(S11) | — | 레이아웃 없음 · 투명 배경, SSE 구독, 알림 카드 + `speechSynthesis` |
+| `/search` | Search(S12) | — | `?q=`(필수) · `?type=all\|channels\|lives\|recordings`(기본 all) · `?page=`(종류일 때). all이면 `GET /search?q=` 한 번, 종류면 `GET /search/{type}?q=&page=`. `q`가 없거나 공백뿐이면 호출하지 않고 안내 문구. 결과 캐시 키 `['search', type, q, page]`, staleTime 30초, 주기 refetch 없음 |
 
 ### 6.4 인증 처리 (`api/client.ts`, `store/auth.ts`)
 - 앱 시작: `POST /auth/refresh`(쿠키 자동) → 성공 시 `setAuth`, 실패는 조용히 비로그인.
@@ -453,6 +457,8 @@ frontend/src/
 - **S3 StudioPc**: 왼쪽 미리보기(`<video muted>`), 소스 선택(화면 공유 버튼 · 마이크 드롭다운 · 시스템 소리 포함 체크 · 각 볼륨), 경고(`NO_SYSTEM_AUDIO`: "탭/시스템 소리가 포함되지 않았습니다"), 방송 정보 폼(제목 · 카테고리, 송출 중에도 저장 → `PATCH /broadcasts/{id}`), 송출 시작/종료 버튼, 상태 표시(연결 중 · 라이브 · 재연결 중 · 시청자 수), ChatPanel, 후원 알림, `getDisplayMedia` 없으면 안내 + "모바일 화면으로".
 - **S4 StudioMobile**: 전체 화면 카메라 미리보기, 상단 방송 정보(제목 · 카테고리), 전/후면 전환 · 마이크 음소거, 하단 큰 시작/종료, 라이브 중 시청자 수. 화면 꺼짐 방지 `navigator.wakeLock`.
 - **S5 StudioSettings**, **S6 Video**(댓글은 `recording.status`가 READY/FILE_DELETED일 때만 폼 표시, FILE_DELETED면 "보관 기간(30일)이 지나 영상이 삭제되었습니다"), **S8 Me**, **S9 Channel**(헤더에 팔로워 수 + 같은 `FollowButton`), **S10 Post**: §6.3.
+- **헤더 검색창**(`components/search/SearchBox.tsx`, SEARCH-2, 라우트 아님): 헤더에서 로고와 오른쪽 메뉴 사이 **가운데**에 둔다(최대 폭 제한, 남는 폭을 차지). placeholder "채널 · 라이브 · 다시보기 검색", `<form role="search">` 제출(Enter · 돋보기 버튼) → `/search?q=`(`searchQuery.ts`로 trim · 공백 정리 · 50자 자름, 빈 값이면 이동하지 않음, `encodeURIComponent`). `/search`에 있으면 URL의 `q`를 입력창에 맞추고, 다른 페이지로 가면 비운다. **sm 미만**에서는 돋보기 `IconButton`만 두고 누르면 헤더 한 줄이 입력창(자동 포커스) + 닫기 버튼으로 바뀐다(Escape · 제출 뒤 닫힘). 자동완성 · 최근 검색어 · 입력 중 검색은 범위 밖.
+- **S12 Search**: 제목 "'{q}' 검색 결과". `type=all`: **채널**(`ChannelCard`: 이름 · 소개 한 줄 · 카테고리 · 라이브면 LIVE 점 + 시청자 수 · 팔로워 수, 누르면 라이브 중이면 `/live/:channelId` 아니면 `/channel/:channelId`) → **라이브**(`LiveCard` 그리드) → **다시보기**(`RecordingCard`) 순으로 절 세 개(`SearchSection`). 절 제목에 전체 수, `total`이 5를 넘으면 "더 보기 (N)" → `?type=`. 결과가 없는 절은 숨기고, 셋 다 0이면 "'{q}'에 맞는 채널 · 라이브 · 다시보기가 없습니다". `type=한 종류`: 그 종류의 목록 + 이전 · 다음(`hasNext`) + "전체 결과로" 링크. `q` 없음 · 공백은 "검색어를 입력하세요". 오류는 `message`.
 - **왼쪽 채널 사이드바**(UI-7 · FOLLOW-2, 라우트 아님): 맨 위 "팔로우" 칸은 로그인 상태에서만 `GET /members/me/follows`를 30초마다 불러 채널 이름 · 라이브 점 · 시청자 수를 보여 주고, 누르면 `/live/:channelId`. 비로그인이면 "로그인하면 팔로우한 채널이 여기 보입니다" 한 줄 + 로그인 링크. 팔로우 · 해제 응답을 받으면 목록을 바로 다시 불러 사이드바와 버튼이 어긋나지 않게 한다.
 - **S11 Widget**: `EventSource(/api/public/widget/{key}/events)`(CLOSED 뒤 다시 열 때 `?lastEventId=<마지막 donation id>`, §4.15); `donation` 이벤트 → 카드 6초 표시 + `speechSynthesis.speak("{nickname}님이 {amount}원 후원: {message}")`(한국어 음성 선택, 없으면 기본). 큐로 순차 재생. 같은 후원이 두 번 올 수 있으므로(재연결 · `Last-Event-ID` 경계) **후원 `id`로 중복을 거른다**(최근 id 집합 보관).
 
@@ -576,6 +582,16 @@ frontend/src/
 ### FOLLOW-2 팔로우 UI
 - 읽을 절: §6.7 S2 · S9 · 사이드바, §4.16 위 네 엔드포인트. 공용 `components/follow/FollowButton.tsx`(props: `channelId`, `isFollowing`, `followerCount`, `isOwner`; 표시 판단은 `followView.ts`, 목록은 `useMyFollows.ts`의 `['me','follows', memberId]`; 응답으로 `['channel', id]` · `['broadcast', *]` 캐시의 두 필드를 고치고 `['me','follows']`를 무효화). `api/types.ts`에 `FollowStatus` · `FollowedChannel`.
 - 완료: 채널 페이지 · 시청 화면에서 팔로우 · 해제가 되고 사이드바 "팔로우" 칸에 바로 반영된다. 비로그인 클릭은 `/login?next=`. 자기 채널에는 버튼이 없다.
+
+### SEARCH-1 통합 검색 API
+- 읽을 절: §4.16 `/search` 두 행, §4.2 `search/`, §4.3(channel · member · broadcast · recording 컬럼), §4.4 에러 형식, `PageResponse.pageable`.
+- 구조: 새 패키지 `search/`. `SearchType { CHANNELS("channels"), LIVES("lives"), RECORDINGS("recordings") }`는 경로 값으로 찾고 없으면 404 `NOT_FOUND`. `SearchQuery.of(raw)`가 정규화(`strip`, `\s+` → 한 칸) · 길이 검사(1~50, 아니면 `ApiException(VALIDATION_ERROR)`) · LIKE 패턴(`%` + `\` → `\\`, `%` → `\%`, `_` → `\_` + `%`)을 만든다. `SearchService.summary(q)` · `page(type, q, page, size)`. 쿼리는 각 도메인 리포지토리에 더한다(JPQL `like :pattern escape '\\'`): `ChannelRepository.search(pattern, pageable)`(`join fetch c.member`, `c.name like … or c.member.nickname like …`, `order by c.name, c.id`; countQuery 포함), `BroadcastRepository.searchOngoing(pattern)`(List, `status in (LIVE, DISCONNECTED)` · 삭제 제외 · `join fetch b.channel` · `b.title like … or b.channel.name like …`), `RecordingRepository.searchPublic(pattern, pageable)`(`findPublic`과 같은 조건 + title · 채널 이름, 같은 정렬, countQuery 포함), `FollowRepository.countByChannelIds(ids)`(`select f.channel.id, count(f) … group by` → 맵). 채널 요약의 `isLive` · `liveBroadcastId` · `viewerCount`는 `BroadcastRepository.findOngoingByChannelIds` + `ViewerCounter`로 페이지 단위 한 번에. 라이브는 `BroadcastService.POPULAR_FIRST`로 정렬한 뒤 요약은 앞 5개 + 전체 수, 페이지는 `/broadcasts`와 같은 메모리 페이징(기존 코드를 재사용하거나 같은 규칙으로). 요약의 채널 · 다시보기는 `PageRequest.of(0, 5)`의 `Page`에서 items + `totalElements`. `SecurityConfig`의 GET 공개 목록에 `/api/search`, `/api/search/*` 추가. 새 설정값 · 새 에러 코드 · 새 의존성 없음. springdoc `@Tag` · `@Schema`.
+- 완료: 통합 테스트 `SearchApiTest` — 제목 · 채널 이름 · 닉네임으로 각각 찾아짐 / 대소문자 무시 / `%` · `_`가 글자로 검색됨(와일드카드 아님) / 삭제 · ENDED 방송은 `lives`에 없음 / PRIVATE · READY 아님 · 삭제 방송의 다시보기는 `recordings`에 없음 / 빈 q · 공백뿐 · 51자 → 400 `VALIDATION_ERROR`, 앞뒤 공백 · 연속 공백은 정규화되어 찾아짐 / 요약은 종류별 최대 5개 + `total`은 전체 수 / `GET /search/recordings` 페이징(`hasNext`) / 라이브 정렬 시청자 수 순 / 채널 `isLive` · `viewerCount` · `followerCount` / 모르는 type 404 / 비로그인 200. 라이브 방송 · 시청자 수는 `FollowApiTest`와 같은 방식(`Broadcast.start` 저장, `ViewerCounter`). 실행 확인은 지휘 세션.
+
+### SEARCH-2 헤더 검색창 · 검색 결과 화면
+- 읽을 절: §6.3 `/search`, §6.7 헤더 검색창 · S12, §4.16 `/search` 두 행, §6.2. 파일: `api/search.ts`(`search(q)`, `searchPage(type, q, page)`), `api/types.ts`에 `ChannelSummary` · `SearchGroup<T>` · `SearchResponse` · `SearchType`, `components/search/searchQuery.ts`(정규화 · `/search` URL 만들기 · URL에서 읽기, 순수 함수) · `SearchBox.tsx` · `SearchSection.tsx` · `ChannelCard.tsx`, `pages/Search.tsx`. `Header.tsx`에 `SearchBox`를 넣고 `App.tsx`에 `/search` 라우트(Header 레이아웃 안). 카드는 기존 `LiveCard` · `RecordingCard` · ASTRYX 공통 컴포넌트를 쓴다.
+- 파일 겹침: `Header.tsx` · `App.tsx`는 M2 프론트 세션이 미커밋으로 고치는 중이다. 백엔드(SEARCH-1) · 새 파일을 먼저 만들고, 두 파일은 그 세션의 커밋이 들어온 뒤(`git status`로 깨끗한지 확인) 마지막에 손댄다. 그때까지 커밋이 없으면 지휘 세션에 묻는다.
+- 완료: ① 헤더 입력창에서 Enter → `/search?q=`로 이동해 세 절이 나오고 절마다 전체 수 · "더 보기" ② "더 보기" → `?type=` 목록 + 이전 · 다음 ③ sm 미만 폭에서 돋보기 → 입력창 펼침 · Escape 닫힘 ④ 빈 입력은 이동하지 않음, `/search` 밖으로 가면 입력창이 비워짐 ⑤ vitest: `searchQuery.test.ts`(정규화 · 빈 값 · 50자 · 인코딩 · URL 읽기), `SearchBox.test.tsx`(제출 → navigate, 빈 값 미이동) ⑥ `npm run build` · `npm run lint` 통과. 실행 확인(PC · 모바일 폭)은 지휘 세션.
 
 ### FE-7 다시보기 · 마이페이지 · 채널 페이지
 - 읽을 절: §6.3 · §6.7 S6 · S8 · S9(커뮤니티 탭은 FE-8). 비공개 재생은 video-token 흐름.
