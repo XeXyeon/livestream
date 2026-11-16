@@ -14,6 +14,37 @@ export const WHIP_RETRY_MS = 3000
 export const WHIP_MAX_RETRIES = 20
 const VIDEO_MAX_BITRATE = 3_000_000
 
+/**
+ * §6.5 비디오 코덱은 H.264 우선(FE-2#1). MediaMTX 녹화기(fMP4)는 VP8을 기록하지 못해 VP8로 협상되면
+ * 다시보기 · 클립에 소리만 남는다. H.264를 앞으로 옮기고 나머지(VP8 · VP9 · AV1 · rtx · red · ulpfec)는 순서를 그대로 둔다.
+ */
+export function preferH264<T extends { mimeType: string }>(codecs: readonly T[]): T[] {
+  const isH264 = (codec: T) => codec.mimeType.toLowerCase() === 'video/h264'
+  return [...codecs.filter(isH264), ...codecs.filter((codec) => !isH264(codec))]
+}
+
+export const NO_H264_TEXT = '이 브라우저는 H.264 송출을 지원하지 않아 다시보기 · 클립에 영상이 남지 않습니다.'
+
+/** 이 브라우저가 H.264로 송출할 수 있는지. 판단할 수 없으면(getCapabilities 없음) true로 보고 경고하지 않는다 */
+export function supportsH264Encoding(): boolean {
+  if (typeof RTCRtpSender === 'undefined' || typeof RTCRtpSender.getCapabilities !== 'function') return true
+  const codecs = RTCRtpSender.getCapabilities('video')?.codecs
+  if (!codecs) return true
+  return codecs.some((codec) => codec.mimeType.toLowerCase() === 'video/h264')
+}
+
+/** 비디오 transceiver의 코덱 우선순위를 H.264 먼저로. API가 없으면 건너뛴다(브라우저 기본 협상) */
+function applyH264Preference(transceiver: RTCRtpTransceiver): void {
+  if (typeof transceiver.setCodecPreferences !== 'function' || typeof RTCRtpSender.getCapabilities !== 'function') return
+  const codecs = RTCRtpSender.getCapabilities('video')?.codecs
+  if (!codecs || codecs.length === 0) return
+  try {
+    transceiver.setCodecPreferences(preferH264(codecs))
+  } catch {
+    // 일부 브라우저는 목록을 거절한다. 기본 협상으로 송출은 계속한다
+  }
+}
+
 export class WhipError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
@@ -92,9 +123,11 @@ export class WhipClient {
     const pc = new RTCPeerConnection({ iceServers: [] })
     this.pc = pc
     for (const track of stream.getTracks()) {
-      pc.addTransceiver(track, track.kind === 'video'
-        ? { direction: 'sendonly', streams: [stream], sendEncodings: [{ maxBitrate: VIDEO_MAX_BITRATE }] }
-        : { direction: 'sendonly', streams: [stream] })
+      if (track.kind === 'video') {
+        applyH264Preference(pc.addTransceiver(track, { direction: 'sendonly', streams: [stream], sendEncodings: [{ maxBitrate: VIDEO_MAX_BITRATE }] }))
+      } else {
+        pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] })
+      }
     }
     pc.addEventListener('connectionstatechange', () => {
       if (stale()) return

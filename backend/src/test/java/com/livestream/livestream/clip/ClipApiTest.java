@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -52,8 +53,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * CLIP-1 (DESIGN §4.18 · §4.16 클립 행 · §4.8 · §9 CLIP-1 완료 ①~⑨): 다시보기 · 라이브 클립 생성 조건, 처리(가짜 ffmpeg ·
- * 재생 서버) 뒤 READY · 파일 위치, 비공개 토큰 재생, 공개 설정 이동, 삭제, 목록 세 개, 방송 삭제 연동, 처리 실패.
+ * CLIP-1 (DESIGN §4.18 · §4.16 클립 행 · §4.8 · §9 CLIP-1 완료 ①~⑨): 다시보기 · 라이브(CLIP-3 초안 경로) 클립 생성 조건, 처리(가짜
+ * ffmpeg · 재생 서버) 뒤 READY · 파일 위치, 비공개 토큰 재생, 공개 설정 이동, 삭제, 목록 세 개, 방송 삭제 연동, 처리 실패.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -222,51 +223,52 @@ class ClipApiTest {
 		awaitProcessed(mvc, viewer, second);
 	}
 
-	// ④ 라이브 클립
+	// ④ 라이브 클립(CLIP-3): 재생 서버를 바로 부르지 않고 초안 파일에서 자른다
 	@Test
-	void 라이브_클립은_LIVE에서만_최근_N초를_받고_시작_직후는_400() throws Exception {
+	void 라이브_클립은_초안_파일에서_잘리고_초안_파일이_없으면_SOURCE_FILE_MISSING() throws Exception {
 		Account streamer = TestAccounts.create(mvc);
 		Account viewer = TestAccounts.create(mvc);
 		lifecycle.onReady(streamer.channelId(), BroadcastSource.BROWSER_PC);
 		long broadcastId = broadcastRepository.findOngoing(streamer.channelId()).orElseThrow().getId();
+		jdbc.update("update broadcast set started_at = started_at - interval 300 second where id = ?", broadcastId);
+		long draftId = ClipFixtures.readyDraft(mvc, viewer, broadcastId);
+		Integer windowStart = jdbc.queryForObject("select window_start_seconds from clip_draft where id = ?", Integer.class, draftId);
+		String draftFile = jdbc.queryForObject("select file_path from clip_draft where id = ?", String.class, draftId);
+		assertThat(draftFile).startsWith("private/clip-drafts/");
 
-		liveClip(viewer, broadcastId, 10).andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-				.andExpect(jsonPath("$.message").value(ClipService.TOO_EARLY));
-
-		jdbc.update("update broadcast set started_at = started_at - interval 120 second where id = ?", broadcastId);
-		Instant startedAt = broadcastRepository.findById(broadcastId).orElseThrow().getStartedAt();
-		String created = liveClip(viewer, broadcastId, 30).andExpect(status().isAccepted())
+		String created = mvc.perform(post("/api/clip-drafts/" + draftId + "/clips").header(HttpHeaders.AUTHORIZATION, viewer.bearer())
+						.contentType(MediaType.APPLICATION_JSON).content("{\"startSeconds\":3,\"durationSeconds\":5}"))
+				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.source").value("LIVE"))
 				.andExpect(jsonPath("$.status").value("PROCESSING"))
-				.andExpect(jsonPath("$.durationSeconds").value(30))
+				.andExpect(jsonPath("$.startSeconds").value(windowStart + 3)) // 방송 시작 기준으로 바꿔 저장
 				.andExpect(jsonPath("$.broadcastId").value((int) broadcastId))
 				.andExpect(jsonPath("$.recordingAvailable").value(false))
 				.andReturn().getResponse().getContentAsString();
-		int startSeconds = JsonPath.read(created, "$.startSeconds");
-		assertThat(startSeconds).isBetween(88, 91); // (now − 30) − (now − 120) = 90, 초 내림 · 실행 시간 여유
 		long clipId = ((Number) JsonPath.read(created, "$.id")).longValue();
-
 		String done = awaitProcessed(mvc, viewer, clipId);
 		assertThat((String) JsonPath.read(done, "$.status")).isEqualTo("READY");
 		assertThat((String) JsonPath.read(done, "$.videoUrl")).startsWith("/vod/clips/");
-		ArgumentCaptor<Instant> start = ArgumentCaptor.forClass(Instant.class);
-		verify(mediaMtxClient).downloadRecording(eq("live/" + streamer.channelId()), start.capture(), eq(Duration.ofSeconds(30)), any());
-		assertThat(start.getValue()).isEqualTo(startedAt.plusSeconds(startSeconds));
 
-		// 재생 서버에 그 구간이 없으면 FAILED(NO_MEDIA)
-		knobs.liveHasMedia = false;
-		long noMedia = ((Number) JsonPath.read(liveClip(viewer, broadcastId, 5).andExpect(status().isAccepted())
-				.andReturn().getResponse().getContentAsString(), "$.id")).longValue();
-		String failed = awaitProcessed(mvc, viewer, noMedia);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<String>> args = ArgumentCaptor.forClass(List.class);
+		verify(ffmpeg, timeout(1000).atLeastOnce()).ffmpeg(args.capture(), any());
+		List<String> cut = args.getAllValues().stream().filter(a -> a.contains("-avoid_negative_ts")).findFirst().orElseThrow();
+		assertThat(String.join(" ", cut)).contains("-ss 3 -i ").contains(draftFile + " -t 5 -c copy"); // 초안 기준 시작
+		// 재생 서버는 초안 받기에서 한 번만 부른다(창 전체)
+		verify(mediaMtxClient, times(1)).downloadRecording(eq("live/" + streamer.channelId()), any(), eq(Duration.ofSeconds(120)), any());
+
+		// 초안 파일이 없어졌으면 FAILED(SOURCE_FILE_MISSING)
+		Files.delete(recordingsDir.resolve(draftFile));
+		long missing = ClipFixtures.createDraftClip(mvc, viewer, draftId, "{\"startSeconds\":0,\"durationSeconds\":5}");
+		String failed = awaitProcessed(mvc, viewer, missing);
 		assertThat((String) JsonPath.read(failed, "$.status")).isEqualTo("FAILED");
-		assertThat((String) JsonPath.read(failed, "$.failureReason")).isEqualTo("NO_MEDIA");
+		assertThat((String) JsonPath.read(failed, "$.failureReason")).isEqualTo("SOURCE_FILE_MISSING");
 
-		lifecycle.onNotReady(streamer.channelId()); // DISCONNECTED
-		liveClip(viewer, broadcastId, 10).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("BROADCAST_NOT_LIVE"));
-		lifecycle.endOngoingOf(streamer.channelId()); // ENDED
-		liveClip(viewer, broadcastId, 10).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("BROADCAST_NOT_LIVE"));
-		liveClip(viewer, 999_999_999L, 10).andExpect(status().isNotFound());
+		// "최근 N초" 원클릭 엔드포인트는 없어졌다
+		mvc.perform(post("/api/broadcasts/" + broadcastId + "/clips").header(HttpHeaders.AUTHORIZATION, viewer.bearer())
+				.contentType(MediaType.APPLICATION_JSON).content("{\"durationSeconds\":10}"))
+				.andExpect(result -> assertThat(result.getResponse().getStatus()).isIn(404, 405));
 	}
 
 	// ⑤ 공개 설정 · 제목 수정
@@ -512,11 +514,6 @@ class ClipApiTest {
 	private ResultActions clip(Account a, long recordingId, int start, int duration) throws Exception {
 		return mvc.perform(post("/api/recordings/" + recordingId + "/clips").header(HttpHeaders.AUTHORIZATION, a.bearer())
 				.contentType(MediaType.APPLICATION_JSON).content("{\"startSeconds\":" + start + ",\"durationSeconds\":" + duration + "}"));
-	}
-
-	private ResultActions liveClip(Account a, long broadcastId, int duration) throws Exception {
-		return mvc.perform(post("/api/broadcasts/" + broadcastId + "/clips").header(HttpHeaders.AUTHORIZATION, a.bearer())
-				.contentType(MediaType.APPLICATION_JSON).content("{\"durationSeconds\":" + duration + "}"));
 	}
 
 	private ResultActions patchClip(Account a, long clipId, String json) throws Exception {

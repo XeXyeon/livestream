@@ -11,6 +11,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import type { CategoryCode } from '../api/types'
 import { createPcStream } from '../media/mixer'
 import type { MixerWarning, PcStream } from '../media/mixer'
+import { NO_H264_TEXT, supportsH264Encoding } from '../media/whip'
 import BroadcastInfoForm from '../components/studio/BroadcastInfoForm'
 import SessionStatus from '../components/studio/SessionStatus'
 import { useBroadcastSession } from '../components/studio/useBroadcastSession'
@@ -22,9 +23,11 @@ import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import DonationBanner from '../components/donation/DonationBanner'
 import { useDonationBanner } from '../components/donation/useDonationBanner'
 
-const WARNING_TEXT: Record<MixerWarning, string> = {
+const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
   NO_SYSTEM_AUDIO: '탭/시스템 소리가 포함되지 않았습니다. 탭을 공유할 때 "탭 오디오도 공유"를 켜 주세요.',
   MIC_UNAVAILABLE: '마이크를 열지 못했습니다. 브라우저의 마이크 권한을 확인해 주세요.',
+  // §6.5 FE-2#1: 송출은 막지 않는다
+  NO_H264: NO_H264_TEXT,
 }
 
 const supportsDisplayMedia = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function'
@@ -158,7 +161,10 @@ export default function StudioPc() {
   const channel = session.channel.data
   const currentInfo = info ?? { title: channel.title, category: channel.category.code as CategoryCode }
   const busy = session.phase === 'starting' || session.phase === 'ending'
-  const warnings = media?.warnings.filter((warning) => warning !== 'MIC_UNAVAILABLE' || mic !== null) ?? []
+  const warnings: (MixerWarning | 'NO_H264')[] = [
+    ...(supportsH264Encoding() ? [] : ['NO_H264' as const]),
+    ...(media?.warnings.filter((warning) => warning !== 'MIC_UNAVAILABLE' || mic !== null) ?? []),
+  ]
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">

@@ -2,6 +2,7 @@ package com.livestream.livestream.clip;
 
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -49,6 +50,14 @@ public interface ClipRepository extends JpaRepository<Clip, Long> {
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select c from Clip c where c.broadcast.id = :broadcastId and c.deletedAt is null")
 	List<Clip> findActiveByBroadcastIdForUpdate(Long broadcastId);
+
+	/**
+	 * 초안을 지우기 직전에 그 초안을 가리키는 클립(삭제된 것 포함)을 먼저 잠근다. 초안 삭제는 FK {@code ON DELETE SET NULL} 로 이 행들을
+	 * 고치므로, 미리 잡아 두어야 잠금 순서 clip → clip_draft(방송 삭제와 같은 순서)가 지켜진다.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select c from Clip c where c.draft.id in :draftIds")
+	List<Clip> findByDraftIdsForUpdate(Collection<Long> draftIds);
 
 	/** 채널의 READY 클립(주인이면 비공개 포함) 최신순. */
 	@Query(value = """
@@ -107,10 +116,18 @@ public interface ClipRepository extends JpaRepository<Clip, Long> {
 			""")
 	List<Long> findProcessingCreatedBefore(Instant before);
 
-	/** 처리기가 시작할 때 읽는 값: 원천 · 구간 · 다시보기 파일 · 방송 시작 시각 · 채널. */
+	/** 처리기가 시작할 때 읽는 값: 원천 · 구간 · 다시보기 파일 · 초안(LIVE) · 방송 삭제 여부. */
 	@Query("""
-			select c from Clip c join fetch c.recording join fetch c.broadcast join fetch c.channel
+			select c from Clip c join fetch c.recording join fetch c.broadcast join fetch c.channel left join fetch c.draft
 			where c.id = :id
 			""")
 	Optional<Clip> findForProcessing(Long id);
+
+	/** 보관 정리가 초안을 지우기 직전에(초안을 잠근 뒤) 다시 본다: 그 초안을 가리키는 처리 중 클립이 있는가. */
+	@Query("""
+			select count(c) > 0 from Clip c
+			where c.draft.id = :draftId and c.deletedAt is null
+			  and c.status = com.livestream.livestream.clip.ClipStatus.PROCESSING
+			""")
+	boolean existsProcessingByDraftId(Long draftId);
 }

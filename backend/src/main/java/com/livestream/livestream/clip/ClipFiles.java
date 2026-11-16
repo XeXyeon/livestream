@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 /**
  * 클립 파일 경로 (DESIGN §4.18). 다시보기({@link RecordingFiles}, §4.10)와 같은 규칙에 하위 폴더 {@code clips/} 만 다르다:
  * 공개면 {@code vod/clips/}(Caddy 정적), 비공개면 {@code private/clips/}(Spring 만 읽음). 처리 결과는 항상 비공개 폴더에 먼저 쓴다.
- * 썸네일은 업로드 디렉터리의 {@code thumbnails/clips/<clipId>.jpg}.
+ * 썸네일은 업로드 디렉터리의 {@code thumbnails/clips/<clipId>.jpg}. 라이브 클립 초안(CLIP-3)은 항상 {@code private/clip-drafts/}.
  */
 @Slf4j
 @Component
@@ -23,6 +23,7 @@ public class ClipFiles {
 	static final String PUBLIC_DIR = "vod/clips/";
 	static final String PRIVATE_DIR = "private/clips/";
 	static final String THUMBNAIL_DIR = "thumbnails/clips/";
+	static final String DRAFT_DIR = "private/clip-drafts/";
 
 	private final RecordingFiles recordingFiles;
 	private final AppProperties props;
@@ -85,6 +86,13 @@ public class ClipFiles {
 		String other = counterpart(relative);
 		if (other != null) {
 			recordingFiles.deleteQuietly(other);
+		}
+	}
+
+	/** 라이브 클립 초안 파일을 지운다(초안 폴더 밖 경로는 무시). 실패는 로그만. */
+	public void deleteDraftQuietly(String relative) {
+		if (relative != null && relative.startsWith(DRAFT_DIR)) {
+			recordingFiles.deleteQuietly(relative);
 		}
 	}
 

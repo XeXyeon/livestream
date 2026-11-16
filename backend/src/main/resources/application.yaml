@@ -47,6 +47,8 @@ app:
     min-seconds: 5
     max-seconds: 60
     timeout: 2m # 처리(내려받기 · ffmpeg) 타임아웃
+    live-window-seconds: 120 # 라이브 클립 초안이 받아 두는 최근 구간(CLIP-3)
+    draft-ttl: 10m # 초안 보관 시간
   toss:
     client-key: ${TOSS_CLIENT_KEY:}
     secret-key: ${TOSS_SECRET_KEY:}

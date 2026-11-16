@@ -22,6 +22,7 @@ const Me = lazy(() => import('./pages/Me'))
 const Video = lazy(() => import('./pages/Video'))
 const Channel = lazy(() => import('./pages/Channel'))
 const Post = lazy(() => import('./pages/Post'))
+const Clip = lazy(() => import('./pages/Clip'))
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery } } })
 
@@ -39,6 +40,7 @@ function AppRoutes() {
         <Route path="/videos/:recordingId" element={<Video />} />
         <Route path="/channel/:channelId" element={<Channel />} />
         <Route path="/posts/:postId" element={<Post />} />
+        <Route path="/clips/:clipId" element={<Clip />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route element={<Protected />}>
