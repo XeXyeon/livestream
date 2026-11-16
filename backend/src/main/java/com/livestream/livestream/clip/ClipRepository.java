@@ -1,6 +1,7 @@
 package com.livestream.livestream.clip;
 
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -96,6 +97,15 @@ public interface ClipRepository extends JpaRepository<Clip, Long> {
 			order by c.id
 			""")
 	List<Long> findProcessingIds();
+
+	/** 갇힌 클립 후보: PROCESSING 이고 기준 시각 전에 만든 것(삭제 제외). */
+	@Query("""
+			select c.id from Clip c
+			where c.status = com.livestream.livestream.clip.ClipStatus.PROCESSING and c.deletedAt is null
+			and c.createdAt < :before
+			order by c.id
+			""")
+	List<Long> findProcessingCreatedBefore(Instant before);
 
 	/** 처리기가 시작할 때 읽는 값: 원천 · 구간 · 다시보기 파일 · 방송 시작 시각 · 채널. */
 	@Query("""

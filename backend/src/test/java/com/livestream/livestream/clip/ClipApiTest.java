@@ -78,6 +78,7 @@ class ClipApiTest {
 	@Autowired ClipRepository clipRepository;
 	@Autowired RecordingMergeService mergeService;
 	@Autowired TransactionTemplate tx;
+	@Autowired ClipProcessingService processing;
 	@Autowired JdbcTemplate jdbc;
 	@MockitoBean MediaMtxClient mediaMtxClient;
 	@MockitoBean FfmpegRunner ffmpeg;
@@ -456,6 +457,49 @@ class ClipApiTest {
 		knobs.failCut = false;
 		long next = createRecordingClip(mvc, creator, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
 		awaitProcessed(mvc, creator, next);
+	}
+
+	// ⑩ 갇힌 클립 정리
+	@Test
+	void 처리기_집합에_없는_오래된_PROCESSING은_failStale_뒤_TIMEOUT이고_새_클립을_만들_수_있다() throws Exception {
+		Account owner = TestAccounts.create(mvc);
+		Account creator = TestAccounts.create(mvc);
+		long recordingId = readyRecording(owner, Visibility.PUBLIC);
+		// 처리 끝난 클립을 PROCESSING 으로 되돌려 "처리기 집합에 없는 PROCESSING"(갇힌 클립)을 만든다
+		long stuck = createRecordingClip(mvc, creator, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
+		awaitProcessed(mvc, creator, stuck);
+		jdbc.update("update clip set status = 'PROCESSING' where id = ?", stuck);
+		clip(creator, recordingId, 0, 5).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CLIP_IN_PROGRESS"));
+
+		// 유예(app.clip.timeout) 안이면 그대로
+		processing.failStale(Instant.now());
+		assertThat(clipRepository.findById(stuck).orElseThrow().getStatus()).isEqualTo(ClipStatus.PROCESSING);
+
+		// 유예가 지나도 재시작 복구(resumePending) 전이면 그대로(되살릴 클립을 TIMEOUT 으로 만들지 않게)
+		// (스케줄러가 끼어들지 않게 막은 뒤 created_at 을 옮긴다)
+		ReflectionTestUtils.setField(processing, "resumed", false);
+		try {
+			jdbc.update("update clip set created_at = created_at - interval 10 minute where id = ?", stuck);
+			assertThat(processing.failStale(Instant.now())).isZero();
+		} finally {
+			ReflectionTestUtils.setField(processing, "resumed", true);
+		}
+		assertThat(clipRepository.findById(stuck).orElseThrow().getStatus()).isEqualTo(ClipStatus.PROCESSING);
+
+		// 복구 뒤 유예가 지난 것은 FAILED(TIMEOUT), 그 회원은 다시 만들 수 있다
+		processing.failStale(Instant.now());
+		mvc.perform(get("/api/clips/" + stuck).header(HttpHeaders.AUTHORIZATION, creator.bearer()))
+				.andExpect(jsonPath("$.status").value("FAILED")).andExpect(jsonPath("$.failureReason").value("TIMEOUT"));
+
+		// 처리기 집합에 있는(처리 중인) 클립은 오래돼도 그대로
+		knobs.holdCut = new CountDownLatch(1);
+		long held = createRecordingClip(mvc, creator, recordingId, "{\"startSeconds\":0,\"durationSeconds\":5}");
+		jdbc.update("update clip set created_at = created_at - interval 10 minute where id = ?", held);
+		processing.failStale(Instant.now());
+		assertThat(clipRepository.findById(held).orElseThrow().getStatus()).isEqualTo(ClipStatus.PROCESSING);
+		knobs.holdCut.countDown();
+		knobs.holdCut = null;
+		assertThat((String) JsonPath.read(awaitProcessed(mvc, creator, held), "$.status")).isEqualTo("READY");
 	}
 
 	// ---------- 도우미 ----------

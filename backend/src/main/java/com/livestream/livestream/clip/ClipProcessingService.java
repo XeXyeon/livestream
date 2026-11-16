@@ -14,13 +14,18 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
@@ -33,8 +38,10 @@ import org.springframework.web.client.RestClientException;
  *   <li>LIVE: MediaMTX 재생 서버에서 {@code [started_at + start_seconds, +duration)} 구간 mp4 를 받는다. 404 · 빈 응답이면 FAILED(NO_MEDIA).</li>
  *   <li>결과는 항상 {@code private/clips/} 에 먼저 쓴다. ffprobe 길이가 0 이면 FAILED(EMPTY). 썸네일은 실패해도 READY(썸네일만 null).</li>
  *   <li>새 트랜잭션에서 클립을 잠그고 PROCESSING · 삭제 안 됨일 때만 READY. 그때의 visibility 가 PUBLIC 이면 {@code vod/clips/} 로
- *       옮긴 뒤 경로를 적는다. 그 사이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + 사유(앞 200자).</li>
+ *       옮긴 뒤 경로를 적는다. 그 사이 클립이나 원본 방송이 삭제됐으면 만든 파일을 지운다. 실패는 FAILED + 사유 코드.</li>
  *   <li>서버가 재시작되면 PROCESSING 클립을 다시 줄 세운다(LIVE 도 저장된 구간으로 같은 범위를 받는다).</li>
+ *   <li>줄 서 있거나 처리 중인 클립은 {@link #inFlight} 에 있다. 1분마다 집합에 없는 오래된 PROCESSING 을 FAILED(TIMEOUT)로
+ *       정리한다(갇힌 클립 정리, CLIP-1#1). 단일 인스턴스 전제(단일 스레드 실행기와 같은 전제).</li>
  * </ul>
  */
 @Slf4j
@@ -51,6 +58,7 @@ public class ClipProcessingService {
 	static final String DOWNLOAD_FAILED = "DOWNLOAD_FAILED";
 	static final String IO_ERROR = "IO_ERROR";
 	static final String ERROR = "ERROR";
+	static final String TIMEOUT = "TIMEOUT";
 
 	private final ClipRepository clipRepository;
 	private final ClipFiles files;
@@ -60,6 +68,15 @@ public class ClipProcessingService {
 	private final TransactionTemplate tx;
 	private final AppProperties props;
 	private final TaskExecutor executor;
+	/** 줄 서 있거나 처리 중인 clipId. 여기 없는 오래된 PROCESSING 은 갇힌 것으로 본다({@link #failStale(Instant)}). */
+	private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+	/**
+	 * 재시작 복구({@link #resumePending})가 끝났는가. 스케줄러는 ApplicationReadyEvent 전에 첫 실행을 하므로,
+	 * 그 전에 정리하면 집합이 비어 되살릴 클립까지 TIMEOUT 이 된다.
+	 */
+	private volatile boolean resumed;
+	/** 종료 중이면 중단된 작업이 집합에서 빠져도 정리하지 않는다(재시작 때 다시 줄 세운다). */
+	private volatile boolean shuttingDown;
 
 	public ClipProcessingService(ClipRepository clipRepository, ClipFiles files, RecordingFiles recordingFiles,
 			FfmpegRunner ffmpeg, MediaMtxClient mediaMtxClient, TransactionTemplate tx, AppProperties props,
@@ -77,26 +94,84 @@ public class ClipProcessingService {
 	/** 재시작 전에 줄 서 있던 클립을 되살린다. */
 	@EventListener(ApplicationReadyEvent.class)
 	public void resumePending() {
-		List<Long> pending = clipRepository.findProcessingIds();
-		if (!pending.isEmpty()) {
-			log.info("재시작 뒤 처리 대기 클립 {}건 다시 줄 세움", pending.size());
-			pending.forEach(this::enqueue);
+		try {
+			List<Long> pending = clipRepository.findProcessingIds();
+			if (!pending.isEmpty()) {
+				log.info("재시작 뒤 처리 대기 클립 {}건 다시 줄 세움", pending.size());
+				pending.forEach(this::enqueue);
+			}
+		} finally {
+			resumed = true;
 		}
+	}
+
+	@EventListener(ContextClosedEvent.class)
+	public void onShutdown() {
+		shuttingDown = true;
 	}
 
 	/** 처리기에 줄 세운다(커밋 뒤에 부른다). */
 	public void enqueue(Long clipId) {
-		executor.execute(() -> {
-			try {
-				process(clipId);
-			} catch (RuntimeException e) {
-				if (Thread.currentThread().isInterrupted()) {
-					return; // 종료 중: PROCESSING 으로 두고 재시작 때 다시
+		inFlight.add(clipId);
+		try {
+			executor.execute(() -> {
+				try {
+					process(clipId);
+				} catch (RuntimeException e) {
+					if (Thread.currentThread().isInterrupted()) {
+						return; // 종료 중: PROCESSING 으로 두고 재시작 때 다시
+					}
+					log.error("클립 처리 중 예외: clip={}", clipId, e);
+					fail(clipId, ERROR);
+				} finally {
+					inFlight.remove(clipId);
 				}
-				log.error("클립 처리 중 예외: clip={}", clipId, e);
-				fail(clipId, ERROR);
+			});
+		} catch (RejectedExecutionException e) {
+			// 종료 중 등으로 실행기가 거절: PROCESSING 으로 두고 재시작 때 resumePending 이 다시 줄 세운다
+			inFlight.remove(clipId);
+			log.warn("클립 처리 줄 세우기 거절됨(재시작 때 다시): clip={}", clipId);
+		}
+	}
+
+	@Scheduled(fixedDelay = 60_000)
+	public void failStale() {
+		int failed = failStale(Instant.now());
+		if (failed > 0) {
+			log.warn("갇힌 클립 {}건을 FAILED(TIMEOUT)로 정리", failed);
+		}
+	}
+
+	/**
+	 * {@code PROCESSING AND created_at < now − app.clip.timeout} 가운데 {@link #inFlight} 에 없는 것을 FAILED(TIMEOUT)로.
+	 * 집합에 있는 것은 큐에서 오래 기다리는 정상 클립이라 건드리지 않는다. 유예는 커밋과 enqueue 사이의 틈을 덮는다.
+	 * @param now 기준 시각(테스트에서 주입)
+	 * @return 정리한 건수(방송 삭제로 버린 것 포함)
+	 */
+	public int failStale(Instant now) {
+		if (!resumed || shuttingDown) {
+			return 0;
+		}
+		Instant before = now.minus(props.clip().timeout());
+		int failed = 0;
+		for (Long id : clipRepository.findProcessingCreatedBefore(before)) {
+			if (inFlight.contains(id)) {
+				continue;
 			}
-		});
+			Boolean done = tx.execute(s -> clipRepository.findByIdForUpdate(id)
+					.filter(c -> c.isProcessable() && c.getCreatedAt().isBefore(before) && !inFlight.contains(id))
+					.map(c -> {
+						if (!discardIfBroadcastDeleted(c)) {
+							c.markFailed(TIMEOUT);
+							log.warn("갇힌 클립 정리: clip={} createdAt={}", id, c.getCreatedAt());
+						}
+						return true;
+					}).orElse(false));
+			if (Boolean.TRUE.equals(done)) {
+				failed++;
+			}
+		}
+		return failed;
 	}
 
 	/** 처리기가 시작할 때 읽는 값. LIVE 의 구간 시작은 방송 시작 + start_seconds 로 복원한다. */
