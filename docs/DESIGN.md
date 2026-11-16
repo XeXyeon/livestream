@@ -622,7 +622,7 @@ frontend/src/
 
 ### CLIP-2 클립 UI
 - 읽을 절: §6.3 `/clips/:clipId`, §6.7 클립 · S13, §4.16 클립 행, §6.2. 파일: `api/clips.ts`, `api/types.ts`(`ClipSummary` · `ClipDetail` · 요청 타입), `components/clip/*`, `pages/Clip.tsx`, `App.tsx` 라우트, S2(`Live.tsx`) · S6(`Video.tsx`) · S9(`Channel.tsx`) · S8(`Me.tsx`) 수정.
-- 파일 겹침: `Live.tsx` · `App.tsx` 등은 M2 프론트 세션의 미커밋 변경과 겹친다 — SEARCH-2와 같은 규칙(그 커밋 뒤, `git status` 확인).
+- 파일 겹침: M2 프론트 세션의 UI 변경은 2026-11-16에 커밋됐다. SEARCH-2와 같은 규칙(`git status`로 `frontend/` 확인, 다른 세션의 미커밋 파일만 피함).
 - 완료: ① 다시보기에서 클립 만들기 → 폴링 → 클립 페이지 재생 ② 라이브에서 "클립" → 같은 흐름 ③ 채널 "클립" 탭 · 내 클립 · 삭제 · 공개 설정 ④ 비공개 클립 토큰 재생 ⑤ vitest: `useClipStatus`(PROCESSING → READY 폴링 멈춤), `ClipDialog` 구간 검증(순수 함수) ⑥ `npm run build` · lint. 실행 확인은 지휘 세션.
 
 ### SEARCH-1 통합 검색 API
@@ -632,7 +632,7 @@ frontend/src/
 
 ### SEARCH-2 헤더 검색창 · 검색 결과 화면
 - 읽을 절: §6.3 `/search`, §6.7 헤더 검색창 · S12, §4.16 `/search` 두 행, §6.2. 파일: `api/search.ts`(`search(q)`, `searchPage(type, q, page)`), `api/types.ts`에 `ChannelSummary` · `SearchGroup<T>` · `SearchResponse` · `SearchType`, `components/search/searchQuery.ts`(정규화 · `/search` URL 만들기 · URL에서 읽기, 순수 함수) · `SearchBox.tsx` · `SearchSection.tsx` · `ChannelCard.tsx`, `pages/Search.tsx`. `Header.tsx`에 `SearchBox`를 넣고 `App.tsx`에 `/search` 라우트(Header 레이아웃 안). 카드는 기존 `LiveCard` · `RecordingCard` · ASTRYX 공통 컴포넌트를 쓴다.
-- 파일 겹침: `Header.tsx` · `App.tsx`는 M2 프론트 세션이 미커밋으로 고치는 중이다. 백엔드(SEARCH-1) · 새 파일을 먼저 만들고, 두 파일은 그 세션의 커밋이 들어온 뒤(`git status`로 깨끗한지 확인) 마지막에 손댄다. 그때까지 커밋이 없으면 지휘 세션에 묻는다.
+- 파일 겹침: `Header.tsx` · `App.tsx`의 M2 프론트 세션 변경은 2026-11-16에 커밋됐다(a845af4까지). 손대기 전에 `git status`로 `frontend/`가 깨끗한지 한 번 확인하고, 다른 세션의 미커밋 변경이 있으면 그 파일만 피한다.
 - 완료: ① 헤더 입력창에서 Enter → `/search?q=`로 이동해 세 절이 나오고 절마다 전체 수 · "더 보기" ② "더 보기" → `?type=` 목록 + 이전 · 다음 ③ sm 미만 폭에서 돋보기 → 입력창 펼침 · Escape 닫힘 ④ 빈 입력은 이동하지 않음, `/search` 밖으로 가면 입력창이 비워짐 ⑤ vitest: `searchQuery.test.ts`(정규화 · 빈 값 · 50자 · 인코딩 · URL 읽기), `SearchBox.test.tsx`(제출 → navigate, 빈 값 미이동) ⑥ `npm run build` · `npm run lint` 통과. 실행 확인(PC · 모바일 폭)은 지휘 세션.
 
 ### FE-7 다시보기 · 마이페이지 · 채널 페이지
