@@ -463,6 +463,7 @@ frontend/src/
 
 `media/whip.ts` — `class WhipClient { constructor(url, bearer) ; publish(stream) ; close() ; onState(cb) }`
 - `RTCPeerConnection({ iceServers: [] })`(같은 서버로 직접, TURN 없음), `addTransceiver(track, { direction: 'sendonly' })`, 비디오 인코딩 `maxBitrate 3_000_000`.
+- **비디오 코덱은 H.264 우선**(FE-2#1). MediaMTX 녹화기(fMP4)는 VP8을 기록하지 못해(`skipping track (VP8)`, 오류 없이 소리만 녹화) 브라우저가 VP8로 협상하면 다시보기 · 클립에 영상이 남지 않는다. 비디오 transceiver에 `setCodecPreferences(RTCRtpSender.getCapabilities('video').codecs`를 `mimeType === 'video/H264'`가 앞에 오게 안정 정렬한 목록`)`을 건다(다른 코덱 · rtx · red · ulpfec는 뒤에 그대로 두어 협상 실패를 막는다). `export function supportsH264Encoding(): boolean`(capabilities에 H.264가 있는지)을 두고, 없으면 스튜디오(S3 · 모바일)가 경고 `NO_H264` "이 브라우저는 H.264 송출을 지원하지 않아 다시보기 · 클립에 영상이 남지 않습니다"를 보이되 송출은 막지 않는다(라이브 시청은 된다). `getCapabilities`가 없는 브라우저는 선호를 걸지 않고 경고도 없음.
 - `createOffer` → `setLocalDescription` → ICE gathering 완료 대기(최대 2초) → `POST url` (`Content-Type: application/sdp`, `Authorization: Bearer <streamKey>`) → 201 + `Location` 저장 → `setRemoteDescription(answer)`.
 - `close()`: `closed = true`(이후 재시도 중단) → `DELETE Location` → `pc.close()`. `oniceconnectionstatechange`: `failed`/`disconnected`이고 `!closed`면 `onState('reconnecting')` → 3초 간격 재시도 최대 20회(유예 60초 안) → 성공 시 `'live'`. 재시도 중 401(종료 차단)을 받으면 즉시 중단하고 `'ended'`.
 - 송출 URL은 `channels/me.publish.whipUrl + '?src=pc'`(모바일은 `?src=mobile`).
@@ -508,7 +509,7 @@ frontend/src/
 | iOS Safari 네이티브 HLS가 Opus 오디오를 재생하는지 | GRID-1 | 그리드 모드는 iOS에서 소리 없음 안내, 기본 모드 사용 |
 | ~~MediaMTX가 WHIP `Authorization: Bearer`를 인증 콜백 `password`로 전달하는지~~ **해소(2026-11-10, BC-1)**: v1.21.3은 Bearer를 `token`, RTMP pass를 `password`로 보낸다. ffmpeg 9.0.2로 확인, 실제 OBS · 브라우저는 미확인 | BC-1 | (불필요 — §4.9의 키 탐색 순서가 둘 다 받는다) |
 | OBS 브라우저 소스에서 `speechSynthesis` 동작 | FE-9 | 위젯을 일반 Chrome 창으로 열어 OBS 창 캡처 안내 |
-| ~~MediaMTX v1.21.3 재생 서버(`/get?path&start&duration&format=mp4`)가 **녹화 중인** 조각을 시간 범위로 내주는지~~ **해소(2026-11-16, 지휘 세션 PoC)**: 송출 54초 뒤 `list`가 진행 중 조각(duration 52.8초)까지 보여 주고, `get … start=now−30s&duration=30s&format=mp4`가 200 · 876KB · 0.06초, ffprobe h264 + aac 30.03초, Chrome 재생 · 탐색 정상. RTMP(AAC) 송출로 확인했고 **브라우저 WHIP(Opus) 송출의 mp4 재생은 미확인** → CLIP-1 실행 확인 때 스튜디오 송출로 한 번 더. 주의: 인증 콜백이 playback을 무조건 허용하므로 9996은 비공개 다시보기 구간도 내준다 — 운영 `compose.yaml`에서 포트를 공개하지 않는다(내부망만) | CLIP-1 | (해소) 대안은 안 씀 |
+| ~~MediaMTX v1.21.3 재생 서버(`/get?path&start&duration&format=mp4`)가 **녹화 중인** 조각을 시간 범위로 내주는지~~ **해소(2026-11-16, 지휘 세션 PoC)**: 송출 54초 뒤 `list`가 진행 중 조각(duration 52.8초)까지 보여 주고, `get … start=now−30s&duration=30s&format=mp4`가 200 · 876KB · 0.06초, ffprobe h264 + aac 30.03초, Chrome 재생 · 탐색 정상. RTMP(AAC) 송출로 확인했고, 브라우저 WHIP(Opus) 송출도 CLIP-1 실행 확인(2026-11-16, 지휘 세션)에서 해소: 모바일 스튜디오 WHIP 송출 중 라이브 15초 클립이 READY · 14.94초 · Opus 소리 재생, h264+opus 다시보기 구간 클립도 Chromium에서 영상 · 소리 재생. 남은 미확인(낮음): 기동 직후 `failStale`이 재시작 복구 전에 돌지 않는지 로그로 못 봄(코드 가드 `resumed`만 있음, 정리 대상 클립이 없었음). 주의: 인증 콜백이 playback을 무조건 허용하므로 9996은 비공개 다시보기 구간도 내준다 — 운영 `compose.yaml`에서 포트를 공개하지 않는다(내부망만) | CLIP-1 | (해소) 대안은 안 씀 |
 | 가정 회선 인바운드 443 차단(맥미니 호스트일 때) | OPS-5 | Lightsail |
 
 ## 9. 항목별 구현 지침 (로드맵 ID)
