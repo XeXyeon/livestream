@@ -12,6 +12,7 @@ import { useAuthDialog } from '../../store/authDialog'
 import { usePlayerUi } from '../../store/playerUi'
 import { useMediaQuery } from '../common/useMediaQuery'
 import AuthDialog from '../auth/AuthDialog'
+import SearchBox from '../search/SearchBox'
 import ChannelSidebar from '../sidebar/ChannelSidebar'
 import ChannelSidebarList from '../sidebar/ChannelSidebarList'
 import { hasSidebar, readCollapsed, writeCollapsed } from '../sidebar/sidebarChannels'
@@ -69,7 +70,7 @@ export default function Header() {
     <LinkProvider component={Link}>
       <div className="min-h-screen bg-body text-primary">
         <header className="sticky top-0 z-30 bg-body">
-          <div className="flex h-14 items-center justify-between gap-3 pl-2.5 pr-4 sm:pr-5">
+          <div className="flex h-14 items-center gap-3 pl-2.5 pr-4 sm:gap-4 sm:pr-5">
             <div className="flex min-w-0 items-center gap-2">
               {sidebar && (
                 <IconButton
@@ -84,6 +85,10 @@ export default function Header() {
                 <img src="/favicon.svg" alt="" aria-hidden className="h-7 w-7" />
                 그리드라이브
               </Link>
+            </div>
+            {/* 가운데 통합 검색창(SEARCH-2): sm 이상은 입력창, 미만은 오른쪽 가까이 돋보기 버튼 */}
+            <div className="flex min-w-0 flex-1 justify-end sm:justify-center">
+              <SearchBox />
             </div>
             <nav aria-label="주 메뉴" className="flex items-center gap-1 sm:gap-2">
               {ready && (

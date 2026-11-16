@@ -5,6 +5,7 @@ import { bootstrapAuth, shouldRetryQuery } from './api/client'
 import Header from './components/layout/Header'
 import Protected from './components/layout/Protected'
 import Home from './pages/Home'
+import Search from './pages/Search'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Placeholder from './pages/Placeholder'
@@ -33,6 +34,7 @@ function AppRoutes() {
       <Route path="/live/:channelId/chat" element={<Suspense fallback={null}><LiveChatPopout /></Suspense>} />
       <Route element={<Header />}>
         <Route path="/" element={<Home />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/live/:channelId" element={<Live />} />
         <Route path="/videos/:recordingId" element={<Video />} />
         <Route path="/channel/:channelId" element={<Channel />} />
