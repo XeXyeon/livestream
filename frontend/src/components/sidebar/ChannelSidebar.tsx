@@ -22,7 +22,7 @@ export default function ChannelSidebar({ wide, collapsed, onCollapsedChange, onE
   }
 
   return (
-    <div className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] shrink-0 bg-body sm:block">
+    <div className="channel-sidebar sticky top-14 hidden h-[calc(100dvh-3.5rem)] shrink-0 bg-body sm:block" data-collapsed={isCollapsed}>
       {/* buttonLabel은 SideNav가 읽지 않아 접기 버튼을 직접 두고 한국어 이름을 준다. 랜드마크 이름도 기본 영어 대신 지정 */}
       <SideNav
         aria-label="채널"
