@@ -248,3 +248,30 @@ export type Post = {
   isOwner: boolean
 }
 export type PostWriteInput = { title: string; content: string }
+
+// ---------- 통합 검색 (§4.16 /search) ----------
+
+export type SearchType = 'channels' | 'lives' | 'recordings'
+
+/** 검색 결과의 채널 카드. isLive · viewerCount는 /members/me/follows와 같은 규칙 */
+export type ChannelSummary = {
+  id: number
+  name: string
+  description: string | null
+  category: Category
+  isLive: boolean
+  liveBroadcastId: number | null
+  viewerCount: number
+  followerCount: number
+}
+
+/** 요약의 한 종류: 앞쪽 최대 5개 + 조건에 맞는 전체 수 */
+export type SearchGroup<T> = { items: T[]; total: number }
+
+/** GET /search?q= — q는 서버가 정규화한 값 */
+export type SearchResponse = {
+  q: string
+  channels: SearchGroup<ChannelSummary>
+  lives: SearchGroup<BroadcastSummary>
+  recordings: SearchGroup<RecordingSummary>
+}

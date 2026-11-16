@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import type { BroadcastDetail, BroadcastStatus, PlayerMode } from '../../api/types'
 import type { GridStats } from '../../media/gridStats'
+import { useIsFullscreen } from '../common/useMediaQuery'
 import EndedView from './EndedView'
 import GridView from './GridView'
 import ModeToggle from './ModeToggle'
@@ -10,11 +12,19 @@ import WhepView from './WhepView'
 type Props = {
   broadcast: BroadcastDetail
   initialMode?: PlayerMode
+  /** 영화관 모드: 부모(Live)가 높이를 정하고 영상이 그 높이를 채운다 */
+  theater?: boolean
+  onTheaterChange?: (theater: boolean) => void
+  /** 모드 줄 왼쪽 끝에 놓을 것(시청 화면의 방송 제목). 재생 모드 · 통계는 오른쪽 끝 */
+  title?: ReactNode
 }
 
 // §6.5 Player. 처음 모드는 서버의 recommendedMode(시청자 수가 임계값 이상이면 grid), 이후는 토글로 바꾼다
 // (바꿀 때 이전 플레이어는 언마운트되며 close). 상태별: DISCONNECTED → 재연결 대기 오버레이, ENDED → 종료 화면.
-export default function Player({ broadcast, initialMode }: Props) {
+export default function Player({ broadcast, initialMode, theater = false, onTheaterChange, title }: Props) {
+  const fullscreen = useIsFullscreen()
+  const fill = theater || fullscreen
+  const chrome = { fill, theater, onTheaterChange }
   const [mode, setMode] = useState<PlayerMode>(initialMode ?? broadcast.recommendedMode)
   const [stats, setStats] = useState<GridStats | null>(null)
   const [p2p, setP2p] = useState(true)
@@ -28,11 +38,12 @@ export default function Player({ broadcast, initialMode }: Props) {
 
   if (broadcast.status === 'ENDED') return <EndedView broadcast={broadcast} />
   return (
-    <div className="space-y-2">
-      <div className="relative overflow-hidden rounded-lg">
+    // 채우기(영화관 · 전체 화면): 영상 칸이 남은 높이를 다 쓰고, 전체 화면에서는 모드 줄을 숨긴다
+    <div className={fill ? 'flex h-full flex-col' : 'space-y-2'}>
+      <div className={`relative overflow-hidden ${fill ? 'min-h-0 flex-1' : 'rounded-lg'}`}>
         {mode === 'whep'
-          ? <WhepView url={broadcast.play.whepUrl} status={broadcast.status} />
-          : <GridView key={gridGeneration} hlsUrl={broadcast.play.hlsUrl} onStats={setStats} onP2pUnavailable={() => setP2p(false)} />}
+          ? <WhepView url={broadcast.play.whepUrl} status={broadcast.status} chrome={chrome} />
+          : <GridView key={gridGeneration} hlsUrl={broadcast.play.hlsUrl} onStats={setStats} onP2pUnavailable={() => setP2p(false)} chrome={chrome} />}
         {broadcast.status === 'DISCONNECTED' && (
           <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-6 text-center text-slate-100">
             <span aria-hidden className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
@@ -40,9 +51,12 @@ export default function Player({ broadcast, initialMode }: Props) {
           </div>
         )}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <ModeToggle mode={mode} onChange={setMode} />
-        {mode === 'grid' && <PlayerStats stats={stats} p2p={p2p} />}
+      <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 ${fullscreen ? 'hidden' : fill ? 'px-4 py-2' : 'pt-1'}`}>
+        <div className="min-w-0 flex-1">{title}</div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {mode === 'grid' && <PlayerStats stats={stats} p2p={p2p} />}
+          <ModeToggle mode={mode} onChange={setMode} />
+        </div>
       </div>
     </div>
   )

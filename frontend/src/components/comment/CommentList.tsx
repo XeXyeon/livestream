@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { useLocation } from 'react-router-dom'
+import { useAuthDialog } from '../../store/authDialog'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Heading } from '@astryxdesign/core/Heading'
@@ -23,7 +23,7 @@ type Props = {
 /** 다시보기(S6) · 게시글(S10) 댓글. 평면 목록을 2단 트리로 보여 주고, 작성 · 답글 · 수정 · 삭제 뒤 목록을 새로 받는다 */
 export default function CommentList({ target, count, closedReason }: Props) {
   const queryClient = useQueryClient()
-  const location = useLocation()
+  const openLogin = useAuthDialog((state) => state.open)
   const member = useAuth((state) => state.member)
   const ready = useAuth((state) => state.ready)
   const [replyTo, setReplyTo] = useState<number | null>(null)
@@ -61,7 +61,7 @@ export default function CommentList({ target, count, closedReason }: Props) {
       ) : canWrite ? (
         <CommentForm label="댓글을 입력하세요" submitLabel="댓글 쓰기" onSubmit={(content) => write(content)} />
       ) : ready && (
-        <Button href={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} label="로그인하고 댓글 쓰기" variant="secondary" />
+        <Button onClick={() => openLogin()} label="로그인하고 댓글 쓰기" variant="secondary" />
       )}
       {query.isPending && <Spinner label="댓글을 불러오는 중" />}
       {query.isError && <Banner role="alert" status="error" title="댓글을 불러오지 못했습니다." />}

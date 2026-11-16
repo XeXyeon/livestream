@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Avatar } from '@astryxdesign/core/Avatar'
+import { useAuthDialog } from '../../store/authDialog'
 import { formatCount, formatRelative } from '../broadcast/format'
 import { useMyFollows } from '../follow/useMyFollows'
 import { followsToSidebar } from './sidebarChannels'
@@ -32,7 +33,7 @@ type SidebarGroup = {
 export default function ChannelSidebarList({ collapsed = false, onNavigate }: Props) {
   const { live, recommended } = useSidebarChannels()
   const follows = useMyFollows()
-  const { pathname, search } = useLocation()
+  const openLogin = useAuthDialog((state) => state.open)
   const followGroup: SidebarGroup = {
     key: 'follow',
     title: '팔로우',
@@ -43,7 +44,7 @@ export default function ChannelSidebarList({ collapsed = false, onNavigate }: Pr
     notice: follows.ready && !follows.loggedIn ? (
       <p className="px-3 py-1 text-xs text-secondary">
         로그인하면 팔로우한 채널이 여기 보입니다.{' '}
-        <Link to={`/login?next=${encodeURIComponent(pathname + search)}`} onClick={onNavigate} className="font-medium text-accent hover:underline">로그인</Link>
+        <button type="button" onClick={() => { onNavigate?.(); openLogin() }} className="font-medium text-accent hover:underline">로그인</button>
       </p>
     ) : undefined,
   }
