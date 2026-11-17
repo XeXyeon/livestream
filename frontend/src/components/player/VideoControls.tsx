@@ -4,6 +4,17 @@ import { Check, LoaderCircle, Maximize, Minimize, Pause, PictureInPicture2, Play
 import { useIsFullscreen } from '../common/useMediaQuery'
 import PlayerSlider from './PlayerSlider'
 
+/** 컨트롤 줄 오른쪽 묶음 맨 앞에 그리는 아이콘 버튼(시청 화면의 클립 · 그리드 모드) */
+export type PlayerAction = {
+  id: string
+  label: string
+  icon: ReactNode
+  onClick: () => void
+  /** 켜진 상태(강조색 · aria-pressed) */
+  pressed?: boolean
+  disabled?: boolean
+}
+
 type Props = {
   videoRef: RefObject<HTMLVideoElement | null>
   /** 파일 영상(다시보기 · 클립): 탐색 막대 · 시간 · 10초 이동 · 재생 속도를 더한다. 없으면 라이브(LIVE 표시) */
@@ -11,6 +22,8 @@ type Props = {
   /** 영화관 모드 상태와 바꾸기. 없으면 버튼을 그리지 않는다 */
   theater?: boolean
   onTheaterChange?: (theater: boolean) => void
+  /** 영화관 · PiP 앞에 그릴 버튼. 전체 화면에서도 보인다 */
+  actions?: PlayerAction[]
 }
 
 /** Player가 화면(WhepView · GridView)에 넘기는 모양 설정 */
@@ -19,6 +32,7 @@ export type PlayerChrome = {
   fill?: boolean
   theater?: boolean
   onTheaterChange?: (theater: boolean) => void
+  actions?: PlayerAction[]
 }
 
 type WebkitVideo = HTMLVideoElement & { webkitEnterFullscreen?: () => void }
@@ -45,7 +59,7 @@ export function formatTime(seconds: number): string {
  * PiP(화면 속 화면)는 브라우저가 Picture-in-Picture API를 지원할 때만 보인다(Firefox는 자체 버튼이 있어 숨김).
  * 전체 화면은 영상 칸이 아니라 가장 가까운 `[data-player-root]`(후원 배너까지 포함한 칸)를 띄운다. 요소 전체 화면이 없는 iOS Safari는 영상만 띄운다.
  */
-export default function VideoControls({ videoRef, seekable = false, theater, onTheaterChange }: Props) {
+export default function VideoControls({ videoRef, seekable = false, theater, onTheaterChange, actions }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [paused, setPaused] = useState(false)
   const [waiting, setWaiting] = useState(false)
@@ -327,6 +341,11 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
             </span>
           )}
           <div className="flex-1" />
+          {actions?.map((action) => (
+            <ControlButton key={action.id} label={action.label} onClick={action.onClick} pressed={action.pressed} disabled={action.disabled}>
+              {action.icon}
+            </ControlButton>
+          ))}
           {seekable && (
             <div className="relative">
               <ControlButton label={`재생 속도 (${rate}배)`} onClick={() => setMenuOpen(!menuOpen)} pressed={menuOpen}>

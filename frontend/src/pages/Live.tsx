@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { MessageSquare, Users } from 'lucide-react'
+import { HandCoins, MessageSquare, Users } from 'lucide-react'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -15,6 +15,7 @@ import type { BroadcastDetail, ChannelResponse } from '../api/types'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import { formatCount, formatRelative } from '../components/broadcast/format'
 import ChatPanel from '../components/chat/ChatPanel'
+import MobileComposerBar, { MOBILE_COMPOSER_SPACE } from '../components/chat/MobileComposerBar'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
 import Player from '../components/player/Player'
@@ -24,7 +25,7 @@ import { useDonationBanner } from '../components/donation/useDonationBanner'
 import { useDonationReturn } from '../components/donation/useDonationReturn'
 import type { DonationReturnState } from '../components/donation/useDonationReturn'
 import ClipStrip from '../components/clip/ClipStrip'
-import { LiveClipButton, LiveClipNotice } from '../components/clip/LiveClipButton'
+import { LiveClipNotice, useLiveClip } from '../components/clip/LiveClipButton'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
 import { useAuthDialog } from '../store/authDialog'
@@ -102,6 +103,11 @@ function LiveMain() {
     setChatCollapsed(next)
     writeChatCollapsed(next)
   }
+  // 클립(CLIP-2 · FE-12): 가위 버튼은 플레이어 컨트롤 줄에, 다이얼로그 · 오류 · 진행 알림은 방송 정보 아래에 둔다
+  const [clipId, setClipId] = useState<number | null>(null)
+  // 패널 밖 입력 줄(lg 미만)에서 보내면 올려서 채팅 목록이 맨 아래로 따라가게 한다
+  const [sentTick, setSentTick] = useState(0)
+  const clip = useLiveClip(broadcast.data ?? null, setClipId)
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {
     return <Padded><p className="py-20 text-center text-secondary">채널을 찾을 수 없습니다.</p></Padded>
@@ -116,6 +122,9 @@ function LiveMain() {
   // lg 이상: 채팅이 오른쪽 끝에 헤더 아래 전체 높이로 붙고 접을 수 있다. 그보다 좁으면 플레이어 아래 카드.
   // 영화관 모드(lg 이상): 영상 칸이 헤더 아래 높이를 다 채우고(검은 바탕), 방송 정보는 그 아래로 스크롤해 본다.
   // data-player-root: 플레이어의 전체 화면 버튼이 이 칸(후원 배너 포함)을 띄운다.
+  // 입력 줄: lg 이상은 패널 안, 그보다 좁으면 패널 밖 화면 하단 고정 줄(방송이 끝나면 없음)
+  const ended = broadcast.data.status === 'ENDED'
+  const donate = !ended && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
   return (
     <div className="lg:flex lg:items-start">
       <div className="min-w-0 flex-1">
@@ -127,8 +136,8 @@ function LiveMain() {
               initialMode={broadcast.data.recommendedMode}
               theater={theaterOn}
               onTheaterChange={setTheater}
-              // 길면 한 줄에서 말줄임(…), 잘리면 툴팁으로 전체 제목
-              title={<Heading level={1} maxLines={1}>{broadcast.data.title}</Heading>}
+              actions={clip.action ? [clip.action] : undefined}
+              title={<BroadcastTitle title={broadcast.data.title} />}
             />
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center">
               <div className="w-full max-w-md"><DonationBanner donation={banner.current} overlay /></div>
@@ -141,22 +150,36 @@ function LiveMain() {
           </div>
         </div>
         <div className="space-y-4 px-4 pb-4 pt-2 sm:px-6">
-          <BroadcastInfo broadcast={broadcast.data} />
+          <BroadcastInfo broadcast={broadcast.data} clipId={clipId} onClipDismiss={() => setClipId(null)} clipElement={clip.element} />
           <DonateDialog broadcastId={broadcast.data.id} channelId={channelId} isOpen={donating} onOpenChange={setDonating} />
         </div>
       </div>
       <ChatPanel
         chat={chat}
-        ended={broadcast.data.status === 'ENDED'}
+        ended={ended}
         framed={false}
+        composer={wide ? 'inside' : 'none'}
+        stickSignal={sentTick}
         onCollapse={() => changeChatCollapsed(true)}
         onPopout={popoutChat}
-        actions={broadcast.data.status !== 'ENDED' && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined}
+        actions={donate}
         // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 플레이어 아래 둥근 칸
         className={`mx-4 mb-6 h-[28rem] rounded-lg bg-surface sm:mx-6 lg:sticky lg:top-14 lg:m-0 lg:h-[calc(100dvh-3.5rem)] lg:w-[340px] lg:shrink-0 lg:rounded-none lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
       />
+      {!wide && !ended && (
+        <>
+          <div aria-hidden className={MOBILE_COMPOSER_SPACE} />
+          <MobileComposerBar chat={chat} actions={donate} onSent={() => setSentTick((tick) => tick + 1)} />
+        </>
+      )}
     </div>
   )
+}
+
+// 방송 제목: 어느 폭에서든 한 줄, 길면 말줄임(…)이고 전체 제목은 title(툴팁)로 본다.
+// ASTRYX Heading maxLines={1}은 휴대폰 폭에서 두 줄로 꺾여 보여(원인 미확인) 네이티브 h1의 truncate로 바꿨다.
+function BroadcastTitle({ title }: { title: string }) {
+  return <h1 title={title} className="truncate text-xl font-bold leading-snug text-primary">{title}</h1>
 }
 
 function Padded({ children }: { children: ReactNode }) {
@@ -172,36 +195,52 @@ function writeChatCollapsed(collapsed: boolean) {
   try { localStorage.setItem(CHAT_COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* 기억하지 못해도 화면은 동작 */ }
 }
 
-function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
-  // 클립(CLIP-2): 정보 줄 끝의 "클립" 버튼 → 아래 한 줄 알림(만드는 중 → 클립 보기)
-  const [clipId, setClipId] = useState<number | null>(null)
+function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
+  broadcast: BroadcastDetail
+  clipId: number | null
+  onClipDismiss: () => void
+  clipElement: ReactNode
+}) {
   return (
     <div className="space-y-3">
       {/* 방송 중에는 제목이 플레이어 바로 아래 줄에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
-      {broadcast.status === 'ENDED' && <div className="mb-2 min-w-0"><Heading level={1} maxLines={1}>{broadcast.title}</Heading></div>}
+      {broadcast.status === 'ENDED' && <div className="mb-2 min-w-0"><BroadcastTitle title={broadcast.title} /></div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
         <Link to={`/channel/${broadcast.channel.id}`} className="font-semibold text-primary hover:text-accent">{broadcast.channel.name}</Link>
         <FollowButton channelId={broadcast.channel.id} isFollowing={broadcast.isFollowing} followerCount={broadcast.followerCount} isOwner={broadcast.isOwner} />
         {broadcast.status !== 'ENDED' && (
-          <span className="flex items-center gap-1"><Users aria-hidden className="h-4 w-4" />시청자 {formatCount(broadcast.viewerCount)}</span>
+          <span role="img" className="flex items-center gap-1" title={`시청자 ${broadcast.viewerCount.toLocaleString('ko-KR')}명`} aria-label={`시청자 ${broadcast.viewerCount.toLocaleString('ko-KR')}명`}>
+            <Users aria-hidden className="h-4 w-4" />{formatCount(broadcast.viewerCount)}
+          </span>
         )}
         <Badge variant="neutral" label={broadcast.category.label} />
         <span>{formatRelative(broadcast.startedAt)} 시작</span>
-        <span className="ml-auto"><LiveClipButton broadcast={broadcast} onCreated={setClipId} /></span>
       </div>
-      <LiveClipNotice clipId={clipId} onDismiss={() => setClipId(null)} />
-      <div className="pt-3"><ClipStrip channelId={broadcast.channel.id} /></div>
+      {/* 클립(CLIP-2): 플레이어의 가위 버튼 → 만들기 창 · 오류 · 한 줄 알림(만드는 중 → 클립 보기) */}
+      {clipElement}
+      <LiveClipNotice clipId={clipId} onDismiss={onClipDismiss} />
+      {/* 모바일(lg 미만)은 방송 정보 줄 바로 아래가 채팅이다: 클립 목록은 넓은 화면에서만 */}
+      <div className="hidden pt-3 lg:block"><ClipStrip channelId={broadcast.channel.id} /></div>
     </div>
   )
 }
 
-// 채팅 입력창 아래 왼쪽. 채팅 보내기와 같이 모양은 하나이고, 비로그인이 누르면 로그인 모달을 띄운다
+// 채팅 입력 줄 왼쪽의 후원 아이콘. 채팅 보내기와 같이 모양은 하나이고, 비로그인이 누르면 로그인 모달을 띄운다
 function DonateButton({ onDonate }: { onDonate: () => void }) {
   const loggedIn = useAuth((state) => state.member !== null)
   const authReady = useAuth((state) => state.ready)
   const openLogin = useAuthDialog((state) => state.open)
   if (!authReady) return null
-  return <Button label="후원하기" variant="secondary" size="sm" onClick={() => (loggedIn ? onDonate() : openLogin())} />
+  return (
+    <IconButton
+      label="후원하기"
+      tooltip="후원하기"
+      icon={<HandCoins aria-hidden className="h-5 w-5" />}
+      variant="ghost"
+      size="sm"
+      onClick={() => (loggedIn ? onDonate() : openLogin())}
+    />
+  )
 }
 
 // 결제에서 돌아온 결과. 확인 중에는 닫을 수 없다(useDonationReturn)
