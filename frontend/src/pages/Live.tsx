@@ -137,8 +137,7 @@ function LiveMain() {
               theater={theaterOn}
               onTheaterChange={setTheater}
               actions={clip.action ? [clip.action] : undefined}
-              // 길면 한 줄에서 말줄임(…), 잘리면 툴팁으로 전체 제목
-              title={<Heading level={1} maxLines={1}>{broadcast.data.title}</Heading>}
+              title={<BroadcastTitle title={broadcast.data.title} />}
             />
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex justify-center">
               <div className="w-full max-w-md"><DonationBanner donation={banner.current} overlay /></div>
@@ -177,6 +176,12 @@ function LiveMain() {
   )
 }
 
+// 방송 제목: 어느 폭에서든 한 줄, 길면 말줄임(…)이고 전체 제목은 title(툴팁)로 본다.
+// ASTRYX Heading maxLines={1}은 휴대폰 폭에서 두 줄로 꺾여 보여(원인 미확인) 네이티브 h1의 truncate로 바꿨다.
+function BroadcastTitle({ title }: { title: string }) {
+  return <h1 title={title} className="truncate text-xl font-bold leading-snug text-primary">{title}</h1>
+}
+
 function Padded({ children }: { children: ReactNode }) {
   return <div className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-10">{children}</div>
 }
@@ -199,12 +204,14 @@ function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
   return (
     <div className="space-y-3">
       {/* 방송 중에는 제목이 플레이어 바로 아래 줄에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
-      {broadcast.status === 'ENDED' && <div className="mb-2 min-w-0"><Heading level={1} maxLines={1}>{broadcast.title}</Heading></div>}
+      {broadcast.status === 'ENDED' && <div className="mb-2 min-w-0"><BroadcastTitle title={broadcast.title} /></div>}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-secondary">
         <Link to={`/channel/${broadcast.channel.id}`} className="font-semibold text-primary hover:text-accent">{broadcast.channel.name}</Link>
         <FollowButton channelId={broadcast.channel.id} isFollowing={broadcast.isFollowing} followerCount={broadcast.followerCount} isOwner={broadcast.isOwner} />
         {broadcast.status !== 'ENDED' && (
-          <span className="flex items-center gap-1"><Users aria-hidden className="h-4 w-4" />시청자 {formatCount(broadcast.viewerCount)}</span>
+          <span role="img" className="flex items-center gap-1" title={`시청자 ${broadcast.viewerCount.toLocaleString('ko-KR')}명`} aria-label={`시청자 ${broadcast.viewerCount.toLocaleString('ko-KR')}명`}>
+            <Users aria-hidden className="h-4 w-4" />{formatCount(broadcast.viewerCount)}
+          </span>
         )}
         <Badge variant="neutral" label={broadcast.category.label} />
         <span>{formatRelative(broadcast.startedAt)} 시작</span>
