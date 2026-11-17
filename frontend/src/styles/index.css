@@ -18,6 +18,25 @@
 /* 영상 · 위젯처럼 테마 밖에 둘 화면은 각자 배경을 정한다. 앱 본문 배경은 셸(Header)이 정한다. */
 
 /*
+ * 채널 사이드바 폭: SideNav는 접고 펼 때 레이아웃 폭을 바로 최종값으로 바꾸고 안쪽에서 가장자리만 잘라 보여 준다
+ * (ASTRYX AppShell 안에서는 본문 칸이 그 움직임을 따라가지만, 여기서는 AppShell을 쓰지 않아 본문이 한 번에 늘어났다).
+ * 그래서 바깥 래퍼가 폭을 SideNav와 같은 값(펼침 260px · 접힘 spacing-12)과 같은 시간 · 곡선(테마 토큰)으로 전환하고,
+ * 본문(flex-1)은 그 폭을 따라간다. 움직임 줄이기에서는 바로 바뀐다.
+ */
+.channel-sidebar {
+  width: 260px;
+  transition: width var(--duration-medium, 410ms) var(--ease-move, cubic-bezier(0.24, 1, 0.4, 1));
+}
+.channel-sidebar[data-collapsed='true'] {
+  width: var(--spacing-12, 3rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .channel-sidebar {
+    transition: none;
+  }
+}
+
+/*
  * 채널 사이드바(SideNav 안 스크롤 영역) 스크롤바: 접힌 48px 레일에서는 숨긴다(아바타 · 라이브 링 자리를 먹지 않게).
  * 펼치면 얇게, 마우스를 올렸을 때만 보인다. 어느 쪽이든 휠 · 터치 · 키보드 스크롤은 그대로 된다.
  * 스크롤 영역은 ASTRYX SideNav 내부 요소라 클래스를 줄 수 없어 감싸는 div 아래 자손 전체에 건다.
