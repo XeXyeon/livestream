@@ -6,6 +6,9 @@ export type ChatEntry = ChatMessage | DonationMessage
 export const CHAT_LIMIT = 200
 export const CHAT_MAX_LENGTH = 200
 
+/** 채팅 연결이 `connected`가 아닐 때 목록 위에 보이는 문구(ChatPanel · ChatOverlay 공유) */
+export const CONNECTION_TEXT = { connecting: '채팅에 연결하는 중…', reconnecting: '채팅 연결이 끊겨 다시 연결하는 중…' } as const
+
 export function entryKey(entry: ChatEntry): string {
   return entry.type === 'chat' ? `c:${entry.id}` : `d:${entry.id}`
 }
