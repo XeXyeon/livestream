@@ -119,12 +119,13 @@ function LiveMain() {
   // lg 이상: 채팅이 오른쪽 끝에 헤더 아래 전체 높이로 붙고 접을 수 있다. 그보다 좁으면 플레이어 아래 카드.
   // 영화관 모드(lg 이상): 영상 칸이 헤더 아래 높이를 다 채우고(검은 바탕), 방송 정보는 그 아래로 스크롤해 본다.
   // data-player-root: 플레이어의 전체 화면 버튼이 이 칸(후원 배너 포함)을 띄운다.
-  // 입력 줄은 어느 폭에서든 채팅 카드 안. lg 미만 카드는 본문 아래 전체 폭 · 헤더 아래 화면 높이의 마지막 요소이고, 입력칸 칸이 sticky로 화면 아래에 붙는다(overflow를 주지 않는다)
+  // 입력 줄은 어느 폭에서든 채팅 카드 안. lg 미만은 본문이 헤더 아래 화면 높이의 세로 flex(플레이어 · 방송 정보는 제 크기, 채팅 카드가 남는 공간)이고
+  // 카드는 전체 폭 · 마지막 요소다. 공간이 모자라면(가로로 누운 휴대폰) 카드 min-h 때문에 페이지가 스크롤되고 입력칸 칸의 sticky가 화면 아래에 붙인다(카드에 overflow를 주지 않는다)
   const ended = broadcast.data.status === 'ENDED'
   const donate = !ended && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
   return (
-    <div className="lg:flex lg:items-start">
-      <div className="min-w-0 flex-1">
+    <div className="flex max-lg:h-[calc(100dvh-3.5rem)] max-lg:flex-col lg:items-start">
+      <div className="min-w-0 flex-1 max-lg:flex-none">
         <div className={theaterOn ? '' : 'px-4 pt-6 sm:px-6'}>
           <div data-player-root className={`relative ${theaterOn ? 'h-[calc(100dvh-3.5rem)] bg-black' : ''}`}>
             <Player
@@ -158,8 +159,8 @@ function LiveMain() {
         onCollapse={() => changeChatCollapsed(true)}
         onPopout={popoutChat}
         actions={donate}
-        // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 본문 아래 전체 폭 · 화면 높이(위 테두리만)
-        className={`h-[calc(100dvh-3.5rem)] border-t border-border bg-surface lg:sticky lg:top-14 lg:w-[340px] lg:shrink-0 lg:border-t-0 lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
+        // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 본문 아래 전체 폭 · 남는 높이(위 테두리만)
+        className={`border-t border-border bg-surface max-lg:min-h-[12rem] max-lg:flex-1 lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)] lg:w-[340px] lg:shrink-0 lg:border-t-0 lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
       />
     </div>
   )
