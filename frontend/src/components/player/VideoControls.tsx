@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { Check, LoaderCircle, Maximize, Minimize, Pause, PictureInPicture2, Play, RectangleHorizontal, RotateCcw, RotateCw, Settings, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Tooltip } from '@astryxdesign/core/Tooltip'
 import { useIsFullscreen } from '../common/useMediaQuery'
 import PlayerSlider from './PlayerSlider'
 
@@ -56,6 +57,8 @@ export function formatTime(seconds: number): string {
  * - 보임: 멈춘 동안, 마우스를 움직인 뒤 2.5초, 컨트롤 위에 있거나 키보드로 들어온 동안. 재생 중 가만히 두면 커서와 함께 숨는다.
  * - 영상 클릭 = 재생 · 정지, 두 번 클릭 = 전체 화면. 터치는 한 번 누르면 컨트롤을 보이고 · 숨긴다.
  * - 단축키(플레이어에 초점이 있을 때): 스페이스 · K 재생, M 소리, F 전체 화면, ←/→ 5초 · J/L 10초(파일 영상).
+ * 컨트롤 줄 아이콘 버튼은 마우스를 올리거나 키보드로 초점을 주면 위쪽에 툴팁(aria-label과 같은 문구 + 단축키)을 띄운다.
+ *   터치로 누를 때는 띄우지 않는다(한 번에 눌리게). 툴팁은 Popover(최상위 층)라 전체 화면에서도 보인다.
  * PiP(화면 속 화면)는 브라우저가 Picture-in-Picture API를 지원할 때만 보인다(Firefox는 자체 버튼이 있어 숨김).
  * 전체 화면은 영상 칸이 아니라 가장 가까운 `[data-player-root]`(후원 배너까지 포함한 칸)를 띄운다. 요소 전체 화면이 없는 iOS Safari는 영상만 띄운다.
  */
@@ -309,7 +312,7 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
           />
         )}
         <div className="flex items-center gap-0.5">
-          <ControlButton label={paused ? '재생' : '정지'} shortcut="K" onClick={togglePlay}>
+          <ControlButton label={paused ? '재생' : '일시정지'} shortcut="K" onClick={togglePlay}>
             {paused ? <Play aria-hidden className="h-5 w-5 fill-current" /> : <Pause aria-hidden className="h-5 w-5 fill-current" />}
           </ControlButton>
           {seekable && (
@@ -323,7 +326,7 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
             </>
           )}
           <div className="group/volume flex items-center">
-            <ControlButton label={muted ? '소리 켜기' : '소리 끄기'} shortcut="M" onClick={toggleMute}>
+            <ControlButton label={muted ? '음소거 해제' : '음소거'} shortcut="M" onClick={toggleMute}>
               <VolumeIcon aria-hidden className="h-5 w-5" />
             </ControlButton>
             {/* 소리 크기 막대: 마우스를 올리거나 키보드로 들어오면 펼친다(터치 기기는 기기 음량을 쓴다) */}
@@ -348,7 +351,7 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
           ))}
           {seekable && (
             <div className="relative">
-              <ControlButton label={`재생 속도 (${rate}배)`} onClick={() => setMenuOpen(!menuOpen)} pressed={menuOpen}>
+              <ControlButton label={`재생 속도 (${rate}배)`} tip="재생 속도" tipEnabled={!menuOpen} onClick={() => setMenuOpen(!menuOpen)} pressed={menuOpen}>
                 <Settings aria-hidden className={`h-5 w-5 transition-transform duration-200 ${menuOpen ? 'rotate-45' : ''}`} />
                 {rate !== 1 && <span className="absolute right-0.5 top-0.5 rounded bg-accent px-0.5 text-[9px] font-bold leading-tight">{rate}x</span>}
               </ControlButton>
@@ -373,16 +376,16 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
             </div>
           )}
           {onTheaterChange && !fullscreen && (
-            <ControlButton label={theater ? '영화관 모드 끄기' : '영화관 모드'} onClick={() => onTheaterChange(!theater)} className="hidden lg:inline-flex" pressed={theater}>
+            <ControlButton label={theater ? '영화관 모드 종료' : '영화관 모드'} onClick={() => onTheaterChange(!theater)} className="hidden lg:inline-flex" pressed={theater}>
               <RectangleHorizontal aria-hidden className="h-5 w-5" />
             </ControlButton>
           )}
           {pipSupported && !fullscreen && (
-            <ControlButton label={pip ? 'PiP 끝내기' : 'PiP(화면 속 화면)'} onClick={togglePip} pressed={pip} disabled={!pipReady && !pip}>
+            <ControlButton label={pip ? '화면 속 화면 종료' : '화면 속 화면'} onClick={togglePip} pressed={pip} disabled={!pipReady && !pip}>
               <PictureInPicture2 aria-hidden className="h-5 w-5" />
             </ControlButton>
           )}
-          <ControlButton label={fullscreen ? '전체 화면 끝내기' : '전체 화면'} shortcut="F" onClick={toggleFullscreen}>
+          <ControlButton label={fullscreen ? '전체 화면 종료' : '전체 화면'} shortcut="F" onClick={toggleFullscreen}>
             {fullscreen ? <Minimize aria-hidden className="h-5 w-5" /> : <Maximize aria-hidden className="h-5 w-5" />}
           </ControlButton>
         </div>
@@ -391,19 +394,41 @@ export default function VideoControls({ videoRef, seekable = false, theater, onT
   )
 }
 
-function ControlButton({ label, shortcut, onClick, children, className = '', pressed, disabled }: { label: string; shortcut?: string; onClick: () => void; children: ReactNode; className?: string; pressed?: boolean; disabled?: boolean }) {
+type ControlButtonProps = {
+  label: string
+  /** 툴팁 문구. 없으면 label */
+  tip?: string
+  /** 단축키. 툴팁 뒤에 "(K)"처럼 붙인다 */
+  shortcut?: string
+  /** 메뉴가 열려 있을 때처럼 툴팁이 가리면 끈다 */
+  tipEnabled?: boolean
+  onClick: () => void
+  children: ReactNode
+  className?: string
+  pressed?: boolean
+  disabled?: boolean
+}
+
+/** 툴팁 문구: "재생 (K)" */
+export function controlTip(label: string, shortcut?: string): string {
+  return shortcut ? `${label} (${shortcut})` : label
+}
+
+function ControlButton({ label, tip, shortcut, tipEnabled = true, onClick, children, className = '', pressed, disabled }: ControlButtonProps) {
+  // Tooltip은 display:contents 래퍼라 줄 배치(hidden sm:inline-flex 등)에 끼어들지 않는다. 터치 탭은 버튼 몫이라 툴팁을 열지 않는다(touchTrigger auto)
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={shortcut ? `${label} (${shortcut})` : label}
-      aria-pressed={pressed}
-      disabled={disabled}
-      onClick={onClick}
-      // 'hidden sm:inline-flex'처럼 표시를 바꿔 넘기면 기본 inline-flex를 빼야 hidden이 먹는다
-      className={`relative ${className.includes('hidden') ? '' : 'inline-flex'} h-10 w-10 items-center justify-center rounded-full opacity-90 transition hover:bg-white/15 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-white ${pressed ? 'text-accent' : ''} ${className}`}
-    >
-      {children}
-    </button>
+    <Tooltip content={controlTip(tip ?? label, shortcut)} placement="above" isEnabled={tipEnabled}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={pressed}
+        disabled={disabled}
+        onClick={onClick}
+        // 'hidden sm:inline-flex'처럼 표시를 바꿔 넘기면 기본 inline-flex를 빼야 hidden이 먹는다
+        className={`relative ${className.includes('hidden') ? '' : 'inline-flex'} h-10 w-10 items-center justify-center rounded-full opacity-90 transition hover:bg-white/15 hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-white ${pressed ? 'text-accent' : ''} ${className}`}
+      >
+        {children}
+      </button>
+    </Tooltip>
   )
 }
