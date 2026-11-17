@@ -23,17 +23,16 @@ describe('ClipDialog 라이브 모드(LiveDraftStage)', () => {
   it('READY면 초안 영상과 구간 선택(기본: 끝 30초)을 그린다', () => {
     const html = render({ ...base, status: 'READY', videoUrl: '/api/clip-drafts/3/video?token=t' })
     expect(html).toContain('src="/api/clip-drafts/3/video?token=t"')
-    expect(html).toContain('value="1:30"') // 120초 초안의 마지막 30초
-    expect(html).toContain('type="range"')
-    expect(html).toContain('step="1"')
+    expect(html).toContain('value="1:30"') // 120초 초안의 마지막 30초: 시작
+    expect(html).toContain('value="2:00"') // 끝
     expect(html).toContain('value="오늘의 방송"')
-    expect(html).toContain('1:30 ~ 2:00 구간을 클립으로 만듭니다.')
+    expect(html).toContain('1:30 ~ 2:00 · 30초')
   })
 
   it('짧은 초안이면 길이 기본값도 초안 길이로 줄인다', () => {
     const html = render({ ...base, status: 'READY', windowSeconds: 12, videoUrl: '/v' })
     expect(html).toContain('value="0:00"')
-    expect(html).toContain('0:00 ~ 0:12 구간을 클립으로 만듭니다.')
+    expect(html).toContain('0:00 ~ 0:12 · 12초')
   })
 
   it('FAILED · 조회 실패면 안내와 닫기만 그린다', () => {
@@ -46,19 +45,19 @@ describe('ClipDialog 라이브 모드(LiveDraftStage)', () => {
 })
 
 describe('ClipDialog 구간 막대(CLIP-4)', () => {
-  it('READY 초안이면 막대 손잡이 · 시작 입력 · 길이 슬라이더가 같은 구간(1:30 ~ 2:00)을 보인다', () => {
+  it('READY 초안이면 막대 손잡이 · 시작 · 끝 입력이 같은 구간(1:30 ~ 2:00)을 보인다', () => {
     const html = render({ ...base, status: 'READY', videoUrl: '/v' })
     expect(html).toMatch(/role="slider"[^>]*aria-label="클립 시작"[^>]*aria-valuenow="90"/)
     expect(html).toMatch(/role="slider"[^>]*aria-label="클립 끝"[^>]*aria-valuenow="120"/)
     expect(html).toContain('value="1:30"')
-    expect(html).toMatch(/type="range"[^>]*value="30"/)
+    expect(html).toContain('value="2:00"')
     expect(html).toContain('구간 재생')
   })
 
   it('5초보다 짧은 초안이면 막대 없이 입력만', () => {
     const html = render({ ...base, status: 'READY', windowSeconds: 4, videoUrl: '/v' })
     expect(html).not.toContain('role="slider"')
-    expect(html).toContain('type="range"')
+    expect(html).toContain('끝 위치')
   })
 })
 
@@ -84,7 +83,7 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
     const live = render({ ...base, status: 'READY', videoUrl: '/v' })
     const html = renderRecording(600)
     expect(html).toContain('src="/vod/a.mp4"')
-    for (const part of ['role="slider"', '구간 재생', 'type="range"', '시작 위치 · 길이 슬라이더를 끌거나', '클립 공개', 'aria-label="닫기"']) {
+    for (const part of ['role="slider"', '구간 재생', '시작 위치', '끝 위치', '최대 60초까지', '클립 공개', 'aria-label="닫기"']) {
       expect(html).toContain(part)
       expect(live).toContain(part)
     }
@@ -99,16 +98,15 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
   })
 })
 
-describe('ClipDialog 시작 위치: 입력 + 끌기 슬라이더', () => {
-  it('다시보기는 시작 슬라이더가 영상 전체(0 ~ 길이 - 클립 길이)를 움직이고 입력란도 함께 있다', () => {
+describe('ClipDialog 구간 입력: 시작 · 끝 위치 + 60초 안내', () => {
+  it('두 모드 모두 길이 · 시작 슬라이더 없이 시작 · 끝 입력과 5~60초 안내만 둔다', () => {
+    for (const html of [renderRecording(600), render({ ...base, status: 'READY', videoUrl: '/v' })]) {
+      expect(html).not.toContain('type="range"')
+      expect(html).toContain('클립은 최소 5초, 최대 60초까지 만들 수 있습니다.')
+    }
     const html = renderRecording(600)
-    expect(html).toMatch(/type="range"[^>]*min="0"[^>]*max="3570"[^>]*aria-label="시작 위치 끌기"[^>]*value="600"/)
     expect(html).toContain('value="10:00"')
-  })
-
-  it('라이브 초안도 같은 슬라이더(0 ~ 90)를 둔다', () => {
-    const html = render({ ...base, status: 'READY', videoUrl: '/v' })
-    expect(html).toMatch(/type="range"[^>]*max="90"[^>]*aria-label="시작 위치 끌기"[^>]*value="90"/)
+    expect(html).toContain('value="10:30"')
   })
 })
 
