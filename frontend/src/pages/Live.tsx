@@ -219,7 +219,8 @@ function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
       {/* 클립(CLIP-2): 플레이어의 가위 버튼 → 만들기 창 · 오류 · 한 줄 알림(만드는 중 → 클립 보기) */}
       {clipElement}
       <LiveClipNotice clipId={clipId} onDismiss={onClipDismiss} />
-      <div className="pt-3"><ClipStrip channelId={broadcast.channel.id} /></div>
+      {/* 모바일(lg 미만)은 방송 정보 줄 바로 아래가 채팅이다: 클립 목록은 넓은 화면에서만 */}
+      <div className="hidden pt-3 lg:block"><ClipStrip channelId={broadcast.channel.id} /></div>
     </div>
   )
 }
