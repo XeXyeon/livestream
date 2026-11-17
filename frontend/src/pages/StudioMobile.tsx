@@ -5,14 +5,18 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Mic, MicOff, SwitchCamera, X } from 'lucide-react'
+import { MessageSquare, MessageSquareOff, Mic, MicOff, SwitchCamera, X } from 'lucide-react'
 import type { CategoryCode } from '../api/types'
 import { createMobileStream } from '../media/mixer'
 import { NO_H264_TEXT, supportsH264Encoding } from '../media/whip'
 import type { Facing, MobileStream } from '../media/mixer'
+import ChatComposer from '../components/chat/ChatComposer'
+import ChatOverlay from '../components/chat/ChatOverlay'
+import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import BroadcastInfoForm from '../components/studio/BroadcastInfoForm'
 import SessionStatus from '../components/studio/SessionStatus'
 import { useBroadcastSession } from '../components/studio/useBroadcastSession'
+import { useKeyboardInset } from '../components/studio/useKeyboardInset'
 import type { BroadcastInfo } from '../components/studio/useBroadcastSession'
 import { usePageMeta } from '../components/layout/usePageMeta'
 
@@ -43,8 +47,10 @@ function useWakeLock(enabled: boolean) {
 }
 
 // S4 모바일 송출: 전체 화면 카메라 미리보기 · 방송 정보 · 전/후면 · 마이크 음소거 · 큰 시작/종료 · 시청자 수
+// 송출 중에는 채팅 오버레이(목록) · 최하단 입력칸이 더해진다(FE-11, §6.7 S4 "모바일 스튜디오 채팅").
 export default function StudioMobile() {
   usePageMeta({ title: '모바일 송출 · 스튜디오', noindex: true })
+  const rootRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaRef = useRef<MobileStream | null>(null)
   const mountedRef = useRef(false)
@@ -55,6 +61,8 @@ export default function StudioMobile() {
   const [switching, setSwitching] = useState(false)
   const [info, setInfo] = useState<BroadcastInfo | null>(null)
   const [showInfo, setShowInfo] = useState(false)
+  const [chatVisible, setChatVisible] = useState(true)
+  const [inputFocused, setInputFocused] = useState(false)
 
   const stopMedia = useCallback(() => {
     mediaRef.current?.stop()
@@ -64,6 +72,14 @@ export default function StudioMobile() {
 
   const session = useBroadcastSession('mobile', { onServerEnded: stopMedia })
   useWakeLock(session.active)
+
+  // 채팅: 송출 중(broadcastId가 있을 때)에만 연결한다. 숨겨도 연결은 유지하고 입력칸은 남는다.
+  const chat = useBroadcastChat(session.broadcastId)
+  const chatOn = session.broadcastId !== null
+  const showComposer = chatOn && session.phase !== 'ended'
+  // 입력 포커스(키보드)가 있는 동안 조작 줄을 숨기고 화면을 보이는 영역에 맞춘다. 입력칸이 사라지면 포커스 상태도 푼다.
+  if (!showComposer && inputFocused) setInputFocused(false)
+  useKeyboardInset(rootRef, inputFocused)
 
   const openCamera = useCallback(async (nextFacing: Facing) => {
     setCameraError('')
@@ -144,13 +160,24 @@ export default function StudioMobile() {
   const round = 'flex h-12 w-12 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur disabled:opacity-40'
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black text-white">
+    <div ref={rootRef} className="fixed inset-0 z-50 overflow-hidden bg-black text-white">
       <video ref={videoRef} muted autoPlay playsInline className={`absolute inset-0 h-full w-full object-cover ${facing === 'user' ? '-scale-x-100' : ''}`} />
 
       <div className="absolute inset-x-0 top-0 space-y-2 bg-gradient-to-b from-black/80 to-transparent p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="flex items-center justify-between gap-3">
           <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
           <div className="flex items-center gap-3 text-sm">
+            {chatOn && (
+              <button
+                type="button"
+                aria-label={chatVisible ? '채팅 숨기기' : '채팅 보이기'}
+                aria-pressed={!chatVisible}
+                onClick={() => setChatVisible(!chatVisible)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur"
+              >
+                {chatVisible ? <MessageSquare aria-hidden className="h-5 w-5" /> : <MessageSquareOff aria-hidden className="h-5 w-5 text-slate-300" />}
+              </button>
+            )}
             {!session.active && <Link to="/studio/pc" className="text-slate-200 underline-offset-2 hover:underline">PC 화면으로</Link>}
             {!session.active && <Link to="/" aria-label="스튜디오 나가기" className="text-slate-200"><X aria-hidden className="h-6 w-6" /></Link>}
           </div>
@@ -168,7 +195,8 @@ export default function StudioMobile() {
         {session.channel.isError && <p role="alert" className="text-sm text-rose-300">채널 정보를 불러오지 못했습니다.</p>}
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 space-y-3 bg-gradient-to-t from-black/80 to-transparent p-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+      <div className={`absolute inset-x-0 bottom-0 space-y-3 bg-gradient-to-t from-black/80 to-transparent p-4 ${inputFocused ? 'pb-2' : 'pb-[max(1.5rem,env(safe-area-inset-bottom))]'}`}>
+        {chatOn && <ChatOverlay chat={chat} hidden={!chatVisible} />}
         {cameraError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-lg bg-rose-950/90 p-3 text-sm text-rose-100">
             <span>{cameraError}</span>
@@ -180,7 +208,7 @@ export default function StudioMobile() {
         {session.phase === 'reconnecting' && <p role="status" className="text-center text-sm text-amber-300">연결이 끊겨 다시 연결하는 중입니다…</p>}
         {session.phase === 'ended' && !session.error && <p role="status" className="text-center text-sm text-slate-200">방송을 종료했습니다.</p>}
         {session.error && <p role="alert" className="text-center text-sm text-rose-300">{session.error}</p>}
-        <div className="flex items-center justify-between">
+        <div className={`flex items-center justify-between ${inputFocused ? 'hidden' : ''}`}>
           <button type="button" aria-label={micOn ? '마이크 끄기' : '마이크 켜기'} aria-pressed={!micOn} disabled={!media} onClick={toggleMic} className={round}>
             {micOn ? <Mic aria-hidden className="h-6 w-6" /> : <MicOff aria-hidden className="h-6 w-6 text-rose-400" />}
           </button>
@@ -211,6 +239,7 @@ export default function StudioMobile() {
         {!media && session.phase === 'ended' && (
           <button type="button" onClick={() => void openCamera(facing)} className="w-full rounded-lg bg-white/15 py-2 text-sm">카메라 다시 켜기</button>
         )}
+        {showComposer && <div><ChatComposer chat={chat} tone="overlay" onFocusChange={setInputFocused} /></div>}
       </div>
     </div>
   )
