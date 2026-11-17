@@ -22,5 +22,6 @@ export function useIsFullscreen(): boolean {
       return () => document.removeEventListener('fullscreenchange', onChange)
     },
     () => document.fullscreenElement !== null,
+    () => false,
   )
 }

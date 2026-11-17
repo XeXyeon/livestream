@@ -3,6 +3,7 @@ import type { RefObject, SyntheticEvent } from 'react'
 import { ApiError } from '../../api/client'
 import type { VideoToken } from '../../api/types'
 import UnmuteButton from '../player/UnmuteButton'
+import VideoControls from '../player/VideoControls'
 import type { RecordingPlayback } from './recordingState'
 
 const MAX_TOKEN_RETRIES = 3
@@ -29,6 +30,8 @@ type Props = {
 }
 
 export type MediaEvents = {
+  /** 영상이 준비됐을 때(이어 재생 위치를 맞춘 다음에 부른다) */
+  onLoadedMetadata?: () => void
   onPause?: () => void
   onSeeked?: () => void
   onTimeUpdate?: () => void
@@ -79,11 +82,13 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
 
   function handleLoadedMetadata(event: SyntheticEvent<HTMLVideoElement>) {
     const target = resumeAt.current
-    if (!target) return
-    resumeAt.current = null
-    const video = event.currentTarget
-    video.currentTime = target.time
-    if (target.play) void video.play().catch(() => {})
+    if (target) {
+      resumeAt.current = null
+      const video = event.currentTarget
+      video.currentTime = target.time
+      if (target.play) void video.play().catch(() => {})
+    }
+    mediaEvents?.onLoadedMetadata?.()
   }
 
   function setRefs(element: HTMLVideoElement | null) {
@@ -107,7 +112,6 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
           key={mediaKey}
           ref={setRefs}
           src={src}
-          controls
           playsInline
           autoPlay={autoPlayMuted}
           muted={autoPlayMuted}
@@ -123,6 +127,7 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
           className="h-full w-full"
         />
       )}
+      {src && !error && <VideoControls key={mediaKey} videoRef={ownRef} seekable />}
       {autoPlayMuted && muted && playing && <UnmuteButton onClick={unmute} />}
       {(!src || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-white">

@@ -18,33 +18,31 @@ describe('parseClipTime', () => {
   })
 })
 
-describe('validateClipRange', () => {
-  it('범위 안이면 시작 초를 돌려준다', () => {
-    expect(validateClipRange('1:00', 30, 120)).toEqual({ ok: true, startSeconds: 60 })
-    expect(validateClipRange('1:30', 30, 120)).toEqual({ ok: true, startSeconds: 90 }) // 끝이 정확히 영상 끝
+describe('validateClipRange(시작 · 끝)', () => {
+  it('범위 안이면 시작 초와 길이(끝 − 시작)를 돌려준다', () => {
+    expect(validateClipRange('1:00', '1:30', 120)).toEqual({ ok: true, startSeconds: 60, durationSeconds: 30 })
+    expect(validateClipRange('1:30', '2:00', 120)).toEqual({ ok: true, startSeconds: 90, durationSeconds: 30 }) // 끝이 정확히 영상 끝
   })
   it('영상 끝을 넘으면 서버와 같은 문구', () => {
-    expect(validateClipRange('1:31', 30, 120)).toEqual({ ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' })
+    expect(validateClipRange('1:31', '2:01', 120)).toEqual({ ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' })
   })
-  it('길이는 5~60초', () => {
-    expect(validateClipRange('0:00', 4, 120).ok).toBe(false)
-    expect(validateClipRange('0:00', 61, 120).ok).toBe(false)
-    expect(validateClipRange('0:00', 5, 120).ok).toBe(true)
-    expect(validateClipRange('0:00', 60, 120).ok).toBe(true)
+  it('길이는 5~60초, 넘으면 최대 60초 안내', () => {
+    expect(validateClipRange('0:00', '0:04', 120).ok).toBe(false)
+    expect(validateClipRange('0:10', '0:05', 120).ok).toBe(false) // 끝이 시작보다 앞
+    expect(validateClipRange('0:00', '1:01', 120)).toEqual({ ok: false, message: '클립은 최대 60초까지입니다. 지금 61초예요.' })
+    expect(validateClipRange('0:00', '0:05', 120).ok).toBe(true)
+    expect(validateClipRange('0:00', '1:00', 120).ok).toBe(true)
   })
-  it('시작 형식이 틀리면 안내', () => {
-    expect(validateClipRange('1분', 30, 120)).toMatchObject({ ok: false })
+  it('시작 · 끝 형식이 틀리면 안내', () => {
+    expect(validateClipRange('1분', '1:30', 120)).toMatchObject({ ok: false })
+    expect(validateClipRange('1:00', '', 120)).toMatchObject({ ok: false, message: '끝 위치는 분:초(예: 1:35) 형식으로 적어 주세요.' })
   })
   it('영상 길이를 모르면 끝 검사는 서버에 맡긴다', () => {
-    expect(validateClipRange('99:00', 30, null)).toEqual({ ok: true, startSeconds: 5940 })
+    expect(validateClipRange('99:00', '99:30', null)).toEqual({ ok: true, startSeconds: 5940, durationSeconds: 30 })
   })
-})
-
-describe('validateClipRange — 라이브 초안(windowSeconds 기준)', () => {
-  it('초안 길이 안에서만 고를 수 있다', () => {
-    expect(validateClipRange('0:07', 5, 12)).toEqual({ ok: true, startSeconds: 7 })
-    expect(validateClipRange('0:08', 5, 12)).toEqual({ ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' })
-    expect(validateClipRange('0:00', 13, 12).ok).toBe(false)
+  it('라이브 초안(windowSeconds) 안에서만 고를 수 있다', () => {
+    expect(validateClipRange('0:07', '0:12', 12)).toMatchObject({ ok: true, startSeconds: 7 })
+    expect(validateClipRange('0:08', '0:13', 12)).toEqual({ ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' })
   })
 })
 
