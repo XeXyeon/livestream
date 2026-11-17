@@ -35,9 +35,6 @@ const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
 // S2 오른쪽 패널과 같은 규칙: lg 이상은 헤더(3.5rem) + 본문 위 여백(2.5rem) = 6rem 아래에 붙은 화면 높이, 미만은 고정 높이. 방송 전 빈 카드와 ChatPanel이 같은 틀을 써서 열이 뛰지 않는다.
 const CHAT_COLUMN_CLASS = 'h-[28rem] lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]'
 
-// 송출 카드 안 구역(화면 · 소리 / 방송 정보 / 송출) 제목
-const SECTION_TITLE_CLASS = 'text-sm font-semibold text-primary'
-
 const supportsDisplayMedia = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function'
 
 function useAudioInputs(refreshKey: unknown) {
@@ -87,7 +84,7 @@ function AudioColumn({ title, select, gain, gainLabel, level }: AudioColumnProps
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 왼쪽은 미리보기(상태 배지 겹침) → 송출 카드(화면 · 소리 → 방송 정보 → 송출), 오른쪽은 채팅만(FE-5). 후원 알림(FE-6)은 미리보기 위 오버레이(§6.7 "S3 배치 정리").
+// S3 PC 송출 스튜디오(Chrome 기준). 왼쪽은 미리보기(상태 배지 · 화면 공유 버튼 겹침) → 송출 카드(방송 정보 → 소리 2열 → 배너 → 송출 줄), 오른쪽은 채팅만(FE-5). 후원 알림(FE-6)은 미리보기 위 오버레이(§6.7 "S3 배치 정리").
 export default function StudioPc() {
   usePageMeta({ title: 'PC 송출 · 스튜디오', noindex: true })
   const [media, setMedia] = useState<PcStream | null>(null)
@@ -154,10 +151,7 @@ export default function StudioPc() {
       const next = await createPcStream({
         mic,
         // 사용자가 브라우저의 "공유 중지"를 누르면: 송출 중이면 종료 순서대로 끝내고, 아니면 미리보기만 지운다.
-        onEnded: () => {
-          if (activeRef.current) void end(stopMedia)
-          else stopMedia()
-        },
+        onEnded: stopSharing,
       })
       // 공유 · 마이크 권한을 고르는 중에 화면을 떠났으면 열린 캡처를 바로 끈다.
       if (!mountedRef.current) { next.stop(); return }
@@ -172,6 +166,12 @@ export default function StudioPc() {
     } finally {
       setSharing(false)
     }
+  }
+
+  // 브라우저의 "공유 중지"와 같은 동작: 송출 중이면 종료 순서대로 끝내고, 아니면 미리보기만 지운다.
+  function stopSharing() {
+    if (activeRef.current) void end(stopMedia)
+    else stopMedia()
   }
 
   async function changeMic(value: string) {
@@ -213,10 +213,18 @@ export default function StudioPc() {
 
         <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
           <video ref={previewRef} muted autoPlay playsInline className="h-full w-full object-contain" />
+          {/* 공유 전: 미리보기 가운데에 공유 시작 버튼. 공유 중: 오른쪽 위에 작은 버튼(왼쪽 위 상태 배지와 겹치지 않게) */}
           {!media && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-400">
               <MonitorUp aria-hidden className="h-10 w-10" />
-              <p>화면 공유를 시작하면 미리보기가 나옵니다.</p>
+              <Button label="화면 공유 시작" variant="primary" icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} onClick={() => void share()} />
+            </div>
+          )}
+          {media && (
+            <div className="absolute right-3 top-3 z-20 flex gap-1">
+              {/* 송출 중에는 공유 화면을 바꿀 수 없다(종료 후 다시 선택) */}
+              {!active && <Button label="화면 바꾸기" variant="secondary" size="sm" isLoading={sharing} onClick={() => void share()} />}
+              <Button label="공유 중지" variant="secondary" size="sm" isDisabled={busy} onClick={stopSharing} />
             </div>
           )}
           {/* 방송 상태(송출 전 · LIVE + 시청자 수 등)는 미리보기 왼쪽 위에 겹친다. 후원 배너가 나중에 그려져 겹치면 위에 온다 */}
@@ -227,12 +235,9 @@ export default function StudioPc() {
         </div>
 
         <section aria-label="송출" className="space-y-4 rounded-lg border border-border bg-surface p-4">
-          <div className="space-y-3">
-            <h2 className={SECTION_TITLE_CLASS}>화면 · 소리</h2>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button label={media ? '공유 화면 다시 선택' : '화면 공유 시작'} variant={media ? 'secondary' : 'primary'} icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} isDisabled={active} onClick={() => void share()} />
-              {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
-            </div>
+          {/* 송출 전에는 session.start가 입력값을 그대로 보내므로 저장 버튼이 없다. 방송 중에만 "변경 저장" */}
+          <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} saveLabel={active ? '변경 저장' : null} />
+          <div className="border-t border-border pt-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <AudioColumn
                 title="마이크"
@@ -271,11 +276,6 @@ export default function StudioPc() {
               />
             </div>
           </div>
-          <div className="space-y-3 border-t border-border pt-4">
-            <h2 className={SECTION_TITLE_CLASS}>방송 정보</h2>
-            {/* 송출 전에는 session.start가 입력값을 그대로 보내므로 저장 버튼이 없다. 방송 중에만 "변경 저장" */}
-            <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} saveLabel={active ? '변경 저장' : null} />
-          </div>
           {(warnings.length > 0 || shareError || session.error) && (
             <div className="space-y-2">
               {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
@@ -283,8 +283,7 @@ export default function StudioPc() {
               {session.error && <Banner role="alert" status="error" title={session.error} />}
             </div>
           )}
-          <div className="space-y-3 border-t border-border pt-4">
-            <h2 className={SECTION_TITLE_CLASS}>송출</h2>
+          <div className="border-t border-border pt-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 {!media && !active && <p className="text-sm text-secondary">먼저 화면 공유를 시작하세요.</p>}
