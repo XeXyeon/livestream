@@ -70,17 +70,29 @@ describe('StudioPc 배치(FE-13)', () => {
     expect(html).toContain('lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]')
   })
 
-  it('왼쪽 순서: 제목 줄 → 미리보기 → 소스 → 방송, 오른쪽 채팅이 그 뒤', () => {
+  it('왼쪽 순서: 제목 줄 → 미리보기 → 송출 카드(소리 → 구분선 → 방송 정보 → 시작 버튼), 오른쪽 채팅이 그 뒤', () => {
     session.current = sessionState(null)
     const html = render()
     const order = [
       at(html, 'PC 스튜디오'),
       at(html, '화면 공유를 시작하면 미리보기가 나옵니다.'),
-      at(html, 'aria-label="소스"'),
-      at(html, 'aria-label="방송"'),
+      at(html, 'aria-label="송출"'),
+      at(html, 'aria-label="시스템 소리 음량"'),
+      at(html, 'border-t border-border pt-4'),
+      at(html, '방송 제목'),
       at(html, '송출 시작'),
       at(html, '방송을 시작하면 채팅이 열립니다.'),
     ]
     expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('소스 · 방송이 카드 하나(송출)이고 가로 구분선은 한 번, 두 카드 제목 글자는 없다', () => {
+    session.current = sessionState(null)
+    const html = render()
+    expect(html.match(/<section/g)).toHaveLength(1)
+    expect(html.match(/aria-label="송출"/g)).toHaveLength(1)
+    expect(html).not.toContain('aria-label="소스"')
+    expect(html).not.toContain('aria-label="방송"')
+    expect(html.match(/border-t border-border pt-4/g)).toHaveLength(1)
   })
 })
