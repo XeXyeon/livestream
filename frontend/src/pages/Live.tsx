@@ -15,7 +15,6 @@ import type { BroadcastDetail, ChannelResponse } from '../api/types'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import { formatCount, formatRelative } from '../components/broadcast/format'
 import ChatPanel from '../components/chat/ChatPanel'
-import MobileComposerBar, { MOBILE_COMPOSER_SPACE } from '../components/chat/MobileComposerBar'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
 import Player from '../components/player/Player'
@@ -105,8 +104,6 @@ function LiveMain() {
   }
   // 클립(CLIP-2 · FE-12): 가위 버튼은 플레이어 컨트롤 줄에, 다이얼로그 · 오류 · 진행 알림은 방송 정보 아래에 둔다
   const [clipId, setClipId] = useState<number | null>(null)
-  // 패널 밖 입력 줄(lg 미만)에서 보내면 올려서 채팅 목록이 맨 아래로 따라가게 한다
-  const [sentTick, setSentTick] = useState(0)
   const clip = useLiveClip(broadcast.data ?? null, setClipId)
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {
@@ -122,7 +119,7 @@ function LiveMain() {
   // lg 이상: 채팅이 오른쪽 끝에 헤더 아래 전체 높이로 붙고 접을 수 있다. 그보다 좁으면 플레이어 아래 카드.
   // 영화관 모드(lg 이상): 영상 칸이 헤더 아래 높이를 다 채우고(검은 바탕), 방송 정보는 그 아래로 스크롤해 본다.
   // data-player-root: 플레이어의 전체 화면 버튼이 이 칸(후원 배너 포함)을 띄운다.
-  // 입력 줄: lg 이상은 패널 안, 그보다 좁으면 패널 밖 화면 하단 고정 줄(방송이 끝나면 없음)
+  // 입력 줄은 어느 폭에서든 채팅 카드 안. lg 미만 카드는 본문 아래 전체 폭 · 헤더 아래 화면 높이의 마지막 요소이고, 입력칸 칸이 sticky로 화면 아래에 붙는다(overflow를 주지 않는다)
   const ended = broadcast.data.status === 'ENDED'
   const donate = !ended && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
   return (
@@ -158,20 +155,12 @@ function LiveMain() {
         chat={chat}
         ended={ended}
         framed={false}
-        composer={wide ? 'inside' : 'none'}
-        stickSignal={sentTick}
         onCollapse={() => changeChatCollapsed(true)}
         onPopout={popoutChat}
         actions={donate}
-        // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 플레이어 아래 둥근 칸
-        className={`mx-4 mb-6 h-[28rem] rounded-lg bg-surface sm:mx-6 lg:sticky lg:top-14 lg:m-0 lg:h-[calc(100dvh-3.5rem)] lg:w-[340px] lg:shrink-0 lg:rounded-none lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
+        // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 본문 아래 전체 폭 · 화면 높이(위 테두리만)
+        className={`h-[calc(100dvh-3.5rem)] border-t border-border bg-surface lg:sticky lg:top-14 lg:w-[340px] lg:shrink-0 lg:border-t-0 lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
       />
-      {!wide && !ended && (
-        <>
-          <div aria-hidden className={MOBILE_COMPOSER_SPACE} />
-          <MobileComposerBar chat={chat} actions={donate} onSent={() => setSentTick((tick) => tick + 1)} />
-        </>
-      )}
     </div>
   )
 }

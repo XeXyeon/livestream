@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { MoreMenu } from '@astryxdesign/core/MoreMenu'
@@ -7,6 +7,7 @@ import ChatComposer from './ChatComposer'
 import ChatMessage from './ChatMessage'
 import { CONNECTION_TEXT, entryKey } from './chatState'
 import type { useBroadcastChat } from './useBroadcastChat'
+import { useKeyboardBottom } from './useKeyboardBottom'
 
 type Chat = ReturnType<typeof useBroadcastChat>
 
@@ -24,17 +25,16 @@ type Props = {
   onPopout?: () => void
   /** 입력 줄 왼쪽에 둘 아이콘 버튼(시청 화면: 후원하기) */
   actions?: ReactNode
-  /** 입력 줄을 패널 안에 둘지(`inside`, 기본) 뺄지(`none`: 시청 화면의 lg 미만은 화면 하단 고정 줄이 맡는다). 방송이 끝났다는 문구는 `none`에서도 패널 안에 남는다 */
-  composer?: 'inside' | 'none'
-  /** 값이 바뀌면 목록을 맨 아래로 붙여 따라가게 한다(패널 밖 입력 줄에서 보냈을 때 올린다) */
-  stickSignal?: number
 }
 
-export default function ChatPanel({ chat, ended = false, className = '', framed = true, onCollapse, onPopout, actions, composer = 'inside', stickSignal }: Props) {
+export default function ChatPanel({ chat, ended = false, className = '', framed = true, onCollapse, onPopout, actions }: Props) {
   const listRef = useRef<HTMLUListElement>(null)
   const stickRef = useRef(true)
 
-  useEffect(() => { stickRef.current = true }, [stickSignal])
+  const composerRef = useRef<HTMLDivElement>(null)
+  const [focused, setFocused] = useState(false)
+  // 입력창 포커스 중에는 키보드 바로 위로(lg 미만 sticky의 bottom). lg 이상 · 포커스 없음은 bottom 0이라 영향이 없다
+  useKeyboardBottom(composerRef, focused)
 
   useEffect(() => {
     const list = listRef.current
@@ -76,13 +76,16 @@ export default function ChatPanel({ chat, ended = false, className = '', framed 
         )}
         {chat.entries.map((entry) => <ChatMessage key={entryKey(entry)} entry={entry} />)}
       </ul>
-      {(composer === 'inside' || ended) && (
-        <div className={`p-3 ${framed ? 'border-t border-border' : ''}`}>
-          {ended
-            ? <p className="text-center text-sm text-secondary">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
-            : <ChatComposer chat={chat} actions={actions} tone="panel" onSent={() => { stickRef.current = true }} />}
-        </div>
-      )}
+      {/* 입력칸 칸: lg 미만에서는 sticky bottom-0 — 카드 끝이 화면 밖이면 화면 맨 아래에 붙고, 끝까지 내리면 카드 끝에 앉는다.
+          lg 이상은 그냥 흐름(lg:static). 입력창은 16px(iOS Safari는 더 작으면 포커스 때 화면을 확대한다) */}
+      <div
+        ref={composerRef}
+        className={`sticky bottom-0 z-10 bg-surface p-3 max-lg:[&_input]:text-base lg:static lg:bg-transparent ${focused ? '' : 'max-lg:pb-[max(0.75rem,env(safe-area-inset-bottom))]'} ${framed ? 'border-t border-border' : 'max-lg:border-t max-lg:border-border'}`}
+      >
+        {ended
+          ? <p className="text-center text-sm text-secondary">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
+          : <ChatComposer chat={chat} actions={actions} tone="panel" onFocusChange={setFocused} onSent={() => { stickRef.current = true }} />}
+      </div>
     </aside>
   )
 }
