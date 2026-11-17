@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import type { RefObject } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog'
@@ -5,8 +7,10 @@ import { IconButton } from '@astryxdesign/core/IconButton'
 import { createClipFromDraft, createRecordingClip } from '../../api/clips'
 import type { ClipDraftDetail, RecordingDetail } from '../../api/types'
 import Spinner from '../common/Spinner'
+import UnmuteButton from '../player/UnmuteButton'
 import RecordingVideo from '../recording/RecordingVideo'
 import ClipEditor from './ClipEditor'
+import type { ClipVideoEvents } from './ClipEditor'
 import { defaultLiveClipStart } from './clipState'
 import { useClipDraft } from './useClipDraft'
 
@@ -38,6 +42,7 @@ type LiveProps = Common & {
  * 여기서는 다이얼로그 틀 · 제목 줄 · 모드별 미리보기 영상과 요청만 정한다.
  * - recording(S6 "클립 만들기"): 미리보기 = 이 다시보기(RecordingVideo, 시작 = 열 때의 재생 위치). 영상이 길어 막대는 확대 창(4분)만 보인다.
  * - live(S2 "클립", CLIP-3): 초안(최근 2분)을 받는 동안 "준비하는 중", READY면 초안 영상이 미리보기, FAILED면 안내.
+ *   초안 영상에는 타임라인(controls)을 두지 않는다: 막대가 초안 전체라 막대가 곧 타임라인이다. 소리가 꺼져 있으면 "소리 켜기"만.
  *   닫아도 초안은 그대로 두고(서버가 10분 뒤 지움) 다시 누르면 새 초안을 만든다. 막대 = 초안 전체.
  * 만들면 닫고 상태 알림(ClipProgress)으로 넘긴다.
  */
@@ -147,21 +152,33 @@ function LiveDraftForm({ draft, videoUrl, defaultTitle, onClose, onCreated }: {
         initialStart={initialStart}
         zoom={false}
         defaultTitle={defaultTitle}
-        renderVideo={(ref, events) => (
-          <video
-            ref={ref}
-            src={videoUrl}
-            controls
-            playsInline
-            preload="metadata"
-            {...events}
-            className="aspect-video w-full rounded-md bg-black"
-          />
-        )}
+        renderVideo={(ref, events) => <LiveDraftVideo videoRef={ref} events={events} src={videoUrl} />}
         submit={(body) => createClipFromDraft(draft.id, body)}
         onClose={onClose}
         onCreated={onCreated}
       />
     </>
+  )
+}
+
+/**
+ * 라이브 초안 미리보기: 타임라인 없이 구간 반복만 보여 준다(옮기는 건 아래 막대로).
+ * 자동 재생이 막혀 음소거로 틀었으면 "소리 켜기"를 띄운다(다시보기 플레이어와 같은 UnmuteButton).
+ */
+function LiveDraftVideo({ videoRef, events, src }: { videoRef: RefObject<HTMLVideoElement | null>; events: ClipVideoEvents; src: string }) {
+  const [muted, setMuted] = useState(false)
+  return (
+    <div className="relative">
+      <video
+        ref={videoRef}
+        src={src}
+        playsInline
+        preload="metadata"
+        {...events}
+        onVolumeChange={(event) => setMuted(event.currentTarget.muted)}
+        className="aspect-video w-full rounded-md bg-black"
+      />
+      {muted && <UnmuteButton onClick={() => { if (videoRef.current) videoRef.current.muted = false }} />}
+    </div>
   )
 }

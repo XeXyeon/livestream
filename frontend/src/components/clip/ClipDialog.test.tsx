@@ -98,6 +98,14 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
   })
 })
 
+describe('ClipDialog 미리보기 영상 타임라인', () => {
+  it('라이브 초안은 타임라인(controls) 없이, 다시보기는 타임라인을 둔다', () => {
+    const live = render({ ...base, status: 'READY', videoUrl: '/v' })
+    expect(live).toMatch(/<video(?![^>]*controls)[^>]*src="\/v"/)
+    expect(renderRecording(600)).toMatch(/<video[^>]*controls/)
+  })
+})
+
 describe('ClipDialog 구간 입력: 시작 · 끝 위치 + 60초 안내', () => {
   it('두 모드 모두 길이 · 시작 슬라이더 없이 시작 · 끝 입력과 5~60초 안내만 둔다', () => {
     for (const html of [renderRecording(600), render({ ...base, status: 'READY', videoUrl: '/v' })]) {

@@ -121,7 +121,7 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
     }
   }
 
-  /** 영상 타임라인을 직접 옮기면 시작이 그 위치로(길이는 그대로), 반복도 그 구간으로 */
+  /** 영상 타임라인을 직접 옮기면(다시보기) 시작이 그 위치로(길이는 그대로, 영상 끝은 넘지 않게), 반복도 그 구간으로 */
   function onSeeked() {
     const video = videoRef.current
     if (!video) return
@@ -131,7 +131,9 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
       if (!video.seeking) selfSeekingRef.current = false
       return
     }
-    const next = { start: Math.floor(video.currentTime), duration: bar.duration }
+    // 영상 끝을 넘지 않게: 끝 근처로 옮기면 길이만큼 앞에서 시작한다(막대 · 입력이 영상 밖으로 나가지 않게)
+    const latest = total === null ? Infinity : Math.max(0, total - bar.duration)
+    const next = { start: Math.min(Math.floor(video.currentTime), latest), duration: bar.duration }
     applyRange(next)
     if (loopRef.current) loopRef.current = next
   }
@@ -141,7 +143,10 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
     if (!video) return
     setPlayhead(video.currentTime)
     const loop = loopRef.current
-    if (loop && !video.paused && video.currentTime >= loop.start + loop.duration) {
+    // 재생이 구간 끝을 막 지났을 때만 되감는다. 끝보다 1초 넘게 뒤면 타임라인을 직접 옮긴 것이라 두고(onSeeked가 시작을 옮긴다),
+    // 옮기는 중(seeking)에도 두지 않으면 그 이동을 되감기로 덮어 시작이 따라가지 못한다
+    const loopEnd = loop ? loop.start + loop.duration : 0
+    if (loop && !video.paused && !video.seeking && video.currentTime >= loopEnd && video.currentTime < loopEnd + 1) {
       selfSeekingRef.current = true
       video.currentTime = loop.start
     }

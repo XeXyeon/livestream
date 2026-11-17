@@ -90,12 +90,12 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
           className={`absolute inset-y-1.5 rounded-md border-x-[14px] border-y-[3px] border-accent bg-accent/15 shadow-md ${drag?.kind === 'range' ? 'cursor-grabbing' : 'cursor-grab'}`}
           style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
         />
-        {/* 재생 위치 선: 선택 틀 안쪽(양옆 손잡이 14px를 뺀 칸)에서만 움직인다. 구간 밖이면 그리지 않는다 */}
+        {/* 재생 위치 선: 선택 틀 안쪽(양옆 손잡이 14px를 뺀 칸)에서만 움직이고 높이도 틀과 같다(위아래로 튀어나오지 않게). 구간 밖이면 그리지 않는다 */}
         {currentSeconds !== null && currentSeconds >= value.start && currentSeconds <= end && (
           <div
             aria-hidden
             data-playhead
-            className="pointer-events-none absolute inset-y-0 z-10 w-1 -translate-x-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
+            className="pointer-events-none absolute inset-y-1.5 z-10 w-[3px] -translate-x-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
             style={{ left: `calc(${startPct}% + 14px + (${Math.max(0, endPct - startPct)}% - 28px) * ${playheadRatio(currentSeconds)})` }}
           />
         )}
