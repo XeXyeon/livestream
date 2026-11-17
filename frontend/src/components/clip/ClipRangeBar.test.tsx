@@ -26,8 +26,8 @@ describe('ClipRangeBar', () => {
 
   it('손잡이 위치는 창 기준 %, 막대 양 끝에 창 시각', () => {
     const html = render()
-    expect(html).toContain('left:25%') // (70 − 10) / 240
-    expect(html).toContain('left:37.5%') // (100 − 10) / 240
+    expect(html).toContain('left:calc(25% - 30px)') // 시작 (70 − 10) / 240, 블록은 구간 안쪽
+    expect(html).toContain('left:calc(37.5% - 14px)') // 끝 (100 − 10) / 240
     expect(html).toContain('0:10')
     expect(html).toContain('4:10')
   })

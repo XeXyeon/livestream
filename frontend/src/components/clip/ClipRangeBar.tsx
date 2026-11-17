@@ -21,7 +21,8 @@ const HANDLE_LABEL: Record<ClipHandle, string> = { start: '클립 시작', end: 
 /**
  * 클립 구간 막대(§6.7 "클립 구간 드래그 선택"): 시작 · 끝 손잡이와 그 사이 선택 구간.
  * 포인터 이벤트 + setPointerCapture로 마우스 · 터치 · 펜을 한 코드로 받고, 손잡이는 role="slider"로 키보드를 받는다.
- * 손잡이는 겹치지 않게 시작은 점의 왼쪽, 끝은 오른쪽으로 44px 터치 영역을 둔다(짧은 구간에서도 둘 다 잡힌다).
+ * 막대는 바깥 여백 없이 부모 폭을 다 쓴다(아래 입력 칸과 폭을 맞춘다). 그래서 손잡이 블록(14px)은 구간 안쪽 끝에 그리고,
+ * 44px 터치 영역은 나머지 30px를 구간 바깥쪽으로 둔다: 시작은 왼쪽, 끝은 오른쪽(짧은 구간에서도 둘 다 잡힌다).
  * 모양은 영상 편집기의 트리머: 어두운 띠 위에 선택 구간을 강조색 테두리(위 · 아래)로 감싸고, 양 끝은 손잡이 줄무늬가 있는 블록.
  */
 export default function ClipRangeBar({ value, total, view, currentSeconds = null, onChange }: Props) {
@@ -70,7 +71,7 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
   const showTip = (handle: ClipHandle) => drag !== null && (drag.kind === handle || drag.kind === 'range')
 
   return (
-    <div className="px-6 pt-7">
+    <div className="pt-7">
       <div ref={trackRef} className="relative h-12 touch-none select-none">
         {/* 막대 바탕: 선택 밖은 어두운 띠 */}
         <div aria-hidden className="absolute inset-x-0 inset-y-1.5 rounded-md bg-black/40 ring-1 ring-inset ring-white/5" />
@@ -107,11 +108,12 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
               onPointerCancel={finish}
               onKeyDown={(event) => onKeyDown(handle, event)}
               className={`group absolute inset-y-0 flex w-11 cursor-ew-resize items-center rounded-md focus-visible:outline-2 focus-visible:outline-accent ${
-                handle === 'start' ? '-translate-x-full justify-end' : 'justify-start'
+                handle === 'start' ? 'justify-end' : 'justify-start'
               }`}
-              style={{ left: `${handle === 'start' ? startPct : endPct}%` }}
+              // 시작: [점 − 30px, 점 + 14px]에서 블록은 [점, 점 + 14px]. 끝: [점 − 14px, 점 + 30px]에서 블록은 [점 − 14px, 점]
+              style={{ left: handle === 'start' ? `calc(${startPct}% - 30px)` : `calc(${endPct}% - 14px)` }}
             >
-              {/* 손잡이 모양: 선택 테두리에 붙은 블록 + 가운데 줄무늬(잡는 곳) */}
+              {/* 손잡이 모양: 선택 테두리 안쪽 끝의 블록 + 가운데 줄무늬(잡는 곳) */}
               <span
                 aria-hidden
                 className={`flex h-9 w-3.5 items-center justify-center bg-accent shadow-md transition-colors duration-150 motion-reduce:transition-none group-hover:brightness-110 group-active:brightness-125 ${
@@ -124,7 +126,8 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
                 <span
                   aria-hidden
                   className={`pointer-events-none absolute -top-7 whitespace-nowrap rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium tabular-nums text-primary shadow-sm ${
-                    handle === 'start' ? 'right-0 translate-x-1/2' : 'left-0 -translate-x-1/2'
+                    // 말풍선 가운데를 손잡이 점(시각)에 맞춘다
+                    handle === 'start' ? 'right-3.5 translate-x-1/2' : 'left-3.5 -translate-x-1/2'
                   }`}
                 >
                   {formatDuration(seconds)}
