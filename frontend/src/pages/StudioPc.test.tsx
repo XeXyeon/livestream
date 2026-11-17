@@ -70,19 +70,16 @@ describe('StudioPc 배치(FE-13 · FE-15)', () => {
     expect(html).toContain('lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]')
   })
 
-  it('왼쪽 순서: 제목 줄 → 미리보기(상태 배지 겹침) → 송출 카드(화면 · 소리 → 방송 정보 → 송출), 오른쪽 채팅이 그 뒤', () => {
+  it('왼쪽 순서: 제목 줄 → 미리보기(상태 배지 · 화면 공유 시작 버튼) → 송출 카드(방송 정보 → 소리 2열 → 송출 줄), 오른쪽 채팅이 그 뒤', () => {
     session.current = sessionState(null)
     const html = render()
     const order = [
       at(html, 'PC 스튜디오'),
-      at(html, '화면 공유를 시작하면 미리보기가 나옵니다.'),
+      at(html, '화면 공유 시작'),
       at(html, '송출 전'),
       at(html, 'aria-label="송출"'),
-      at(html, '>화면 · 소리</h2>'),
-      at(html, 'aria-label="시스템 소리 음량"'),
-      at(html, '>방송 정보</h2>'),
       at(html, '방송 제목'),
-      at(html, '>송출</h2>'),
+      at(html, 'aria-label="시스템 소리 음량"'),
       at(html, '먼저 화면 공유를 시작하세요.'),
       at(html, '송출 시작'),
       at(html, '방송을 시작하면 채팅이 열립니다.'),
@@ -90,12 +87,20 @@ describe('StudioPc 배치(FE-13 · FE-15)', () => {
     expect(order).toEqual([...order].sort((a, b) => a - b))
   })
 
-  it('송출 카드는 하나(송출)이고 세 구역 사이 가로 구분선은 두 번이다', () => {
+  it('송출 카드는 하나(송출)이고 구역 제목 없이 가로 구분선만 두 번이다', () => {
     session.current = sessionState(null)
     const html = render()
     expect(html.match(/<section/g)).toHaveLength(1)
     expect(html.match(/aria-label="송출"/g)).toHaveLength(1)
+    expect(html).not.toContain('<h2')
     expect(html.match(/border-t border-border pt-4/g)).toHaveLength(2)
+  })
+
+  it('화면 공유 시작 버튼은 카드가 아니라 미리보기 안에 있다', () => {
+    session.current = sessionState(null)
+    const html = render()
+    expect(html.match(/화면 공유 시작/g)).toHaveLength(1)
+    expect(at(html, '화면 공유 시작')).toBeLessThan(at(html, 'aria-label="송출"'))
   })
 
   it('상태 배지는 송출 카드가 아니라 미리보기 위에 있다', () => {
