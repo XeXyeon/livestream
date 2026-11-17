@@ -26,13 +26,13 @@ describe('ClipDialog 라이브 모드(LiveDraftStage)', () => {
     expect(html).toContain('value="1:30"') // 120초 초안의 마지막 30초: 시작
     expect(html).toContain('value="2:00"') // 끝
     expect(html).toContain('value="오늘의 방송"')
-    expect(html).toContain('1:30 ~ 2:00 · 30초')
+    expect(html).not.toContain('1:30 ~ 2:00') // 구간 요약 문구는 두지 않는다
   })
 
   it('짧은 초안이면 길이 기본값도 초안 길이로 줄인다', () => {
     const html = render({ ...base, status: 'READY', windowSeconds: 12, videoUrl: '/v' })
     expect(html).toContain('value="0:00"')
-    expect(html).toContain('0:00 ~ 0:12 · 12초')
+    expect(html).toContain('value="0:12"')
   })
 
   it('FAILED · 조회 실패면 안내와 닫기만 그린다', () => {
@@ -51,7 +51,7 @@ describe('ClipDialog 구간 막대(CLIP-4)', () => {
     expect(html).toMatch(/role="slider"[^>]*aria-label="클립 끝"[^>]*aria-valuenow="120"/)
     expect(html).toContain('value="1:30"')
     expect(html).toContain('value="2:00"')
-    expect(html).toContain('구간 재생')
+    expect(html).not.toContain('구간 재생') // 버튼 대신 놓으면 자동 반복 재생
   })
 
   it('5초보다 짧은 초안이면 막대 없이 입력만', () => {
@@ -79,11 +79,11 @@ const renderRecording = (initialStart: number) => renderToString(
 )
 
 describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)', () => {
-  it('미리보기 영상 · 구간 막대 · 구간 재생 · 입력을 라이브 모드와 같이 그린다', () => {
+  it('미리보기 영상 · 구간 막대 · 입력을 라이브 모드와 같이 그린다', () => {
     const live = render({ ...base, status: 'READY', videoUrl: '/v' })
     const html = renderRecording(600)
     expect(html).toContain('src="/vod/a.mp4"')
-    for (const part of ['role="slider"', '구간 재생', '시작 위치', '끝 위치', '최대 60초까지', '클립 공개', 'aria-label="닫기"']) {
+    for (const part of ['role="slider"', '놓으면 고른 구간이 반복 재생됩니다', '시작 위치', '끝 위치', '최대 60초까지', '클립 공개', 'aria-label="닫기"']) {
       expect(html).toContain(part)
       expect(live).toContain(part)
     }

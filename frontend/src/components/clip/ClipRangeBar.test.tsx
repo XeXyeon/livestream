@@ -34,6 +34,6 @@ describe('ClipRangeBar', () => {
 
   it('재생 위치 표시선은 창 안일 때만', () => {
     expect(render({ currentSeconds: 130 })).toContain('left:50%')
-    expect(render({ currentSeconds: 400 })).not.toContain('bg-primary')
+    expect(render({ currentSeconds: 400 })).not.toContain('data-playhead')
   })
 })

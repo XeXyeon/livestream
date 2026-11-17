@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode, RefObject } from 'react'
-import { Play } from 'lucide-react'
 import { Button } from '@astryxdesign/core/Button'
 import { Switch } from '@astryxdesign/core/Switch'
 import { ApiError } from '../../api/client'
@@ -13,7 +12,7 @@ import { handleSeconds, keepWindow, zoomWindow } from './clipRange'
 import type { ClipHandle, ClipRangeValue, ClipView } from './clipRange'
 
 /** 미리보기 영상에 붙일 이벤트(막대 ↔ 영상 연동 · 구간 재생) */
-export type ClipVideoEvents = { onPause: () => void; onSeeked: () => void; onTimeUpdate: () => void }
+export type ClipVideoEvents = { onLoadedMetadata: () => void; onPause: () => void; onSeeked: () => void; onTimeUpdate: () => void }
 
 export type ClipEditorProps = {
   /** 막대 끝(다시보기 길이 또는 라이브 초안 windowSeconds). null이면 막대를 숨기고 끝 검사는 서버에 맡긴다 */
@@ -32,9 +31,10 @@ export type ClipEditorProps = {
 
 /**
  * 클립 만들기 화면(§6.7). 라이브 · 다시보기 어디서 열든 이 컴포넌트 하나로 같은 UI를 쓴다:
- *   미리보기 영상 → 구간 막대(ClipRangeBar 시작 · 끝 손잡이) + "구간 재생" → 시작 · 끝 위치(m:ss) → 길이 안내(5~60초) → 제목 · 공개 → 취소 · 만들기.
+ *   미리보기 영상 → 구간 막대(ClipRangeBar 시작 · 끝 손잡이) → 시작 · 끝 위치(m:ss) → 길이 안내(5~60초) → 제목 · 공개 → 취소 · 만들기.
  * 구간 상태는 하나(start, duration)이고 막대 · 두 입력이 같은 상태를 바꾼다. 서버에는 startSeconds · durationSeconds(= 끝 − 시작)로 보낸다.
- * 막대를 끌면 영상이 손잡이 위치로 따라가고(일시정지), 영상을 멈추거나 옮기면 시작이 그 위치를 따른다(길이는 그대로).
+ * 재생: 영상이 준비되면 고른 구간을 반복 재생한다. 손잡이를 끄는 동안은 멈춘 채 그 손잡이 위치(시작 · 끝 화면)를 보여 주고,
+ *   놓으면 다시 구간을 반복 재생한다(입력을 다 고쳤을 때도). 영상 타임라인을 직접 옮기면 시작이 그 위치로 간다(길이는 그대로).
  * 다이얼로그 안에서 본문만 세로 스크롤되고 취소 · 만들기 줄은 아래에 남는다(CLIP-4#2).
  */
 export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTitle, renderVideo, submit, onClose, onCreated }: ClipEditorProps) {
@@ -52,10 +52,12 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
   const [playhead, setPlayhead] = useState<number | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  // 막대 · 입력 · "구간 재생"이 영상을 옮긴 것이면 시작을 따라가지 않는다(끝 손잡이를 끌 때 시작이 끝으로 튀지 않게)
+  // 이 컴포넌트가 영상을 옮긴 것(막대 · 입력 · 반복 되감기)이면 시작을 따라가지 않는다(끝 손잡이를 끌 때 시작이 끝으로 튀지 않게)
   const selfSeekingRef = useRef(false)
-  // "구간 재생" 중이면 멈출 위치(초)
-  const rangeEndRef = useRef<number | null>(null)
+  // 구간 반복 재생 중이면 그 구간(끝에 닿으면 시작으로 되감는다)
+  const loopRef = useRef<ClipRangeValue | null>(null)
+
+  const range = validateClipRange(startText, endText, totalSeconds)
 
   // 입력으로 확대 창 밖 구간을 넣으면 창을 다시 잡는다(렌더 중 상태 맞추기)
   if (zoom && view !== null && total !== null) {
@@ -80,23 +82,47 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
     if (duration >= CLIP_MIN_SECONDS && duration <= CLIP_MAX_SECONDS) setBar({ start, duration })
   }
 
-  function seekVideo(seconds: number) {
+  /** 멈춘 채 이 위치를 보여 준다(손잡이를 끄는 동안) */
+  function showFrame(seconds: number) {
     const video = videoRef.current
     if (!video) return
+    loopRef.current = null
     selfSeekingRef.current = true
-    rangeEndRef.current = null
     video.pause()
     video.currentTime = seconds
   }
 
-  /** 막대로 옮기는 동안: 영상을 끄는 손잡이 위치로. 놓으면(handle null) 그 자리에 둔다 */
-  function changeFromBar(value: ClipRangeValue, handle: ClipHandle | null) {
-    applyRange(value)
-    if (handle !== null) seekVideo(handleSeconds(value, handle))
+  /** 구간 시작부터 재생하고 끝에 닿으면 시작으로 되감는다. 소리 때문에 자동 재생이 막히면 음소거로 다시 시도한다 */
+  function loopRange(value: ClipRangeValue) {
+    const video = videoRef.current
+    if (!video) return
+    loopRef.current = value
+    selfSeekingRef.current = true
+    video.currentTime = value.start
+    video.play().catch(() => {
+      video.muted = true
+      video.play().catch(() => { loopRef.current = null })
+    })
   }
 
-  /** 영상을 멈추거나 옮기면 시작이 그 위치로(길이는 그대로) */
-  function followVideo() {
+  /** 끄는 동안: 시작 손잡이면 시작 화면, 끝 손잡이면 끝 화면(구간 통째로면 시작). 놓으면(handle null) 구간 반복 재생 */
+  function changeFromBar(value: ClipRangeValue, handle: ClipHandle | null) {
+    applyRange(value)
+    if (handle !== null) showFrame(handleSeconds(value, handle))
+    else loopRange(value)
+  }
+
+  /** 입력을 다 고쳤을 때: 구간이 올바르면 반복 재생, 아니면 적은 위치를 보여 준다 */
+  function commitText(text: string) {
+    if (range.ok) loopRange({ start: range.startSeconds, duration: range.durationSeconds })
+    else {
+      const seconds = parseClipTime(text)
+      if (seconds !== null) showFrame(seconds)
+    }
+  }
+
+  /** 영상 타임라인을 직접 옮기면 시작이 그 위치로(길이는 그대로), 반복도 그 구간으로 */
+  function onSeeked() {
     const video = videoRef.current
     if (!video) return
     setPlayhead(video.currentTime)
@@ -105,32 +131,29 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
       if (!video.seeking) selfSeekingRef.current = false
       return
     }
-    rangeEndRef.current = null
-    applyRange({ start: Math.floor(video.currentTime), duration: bar.duration })
+    const next = { start: Math.floor(video.currentTime), duration: bar.duration }
+    applyRange(next)
+    if (loopRef.current) loopRef.current = next
   }
 
-  /** 시작부터 재생해 끝에서 멈춘다(timeupdate) */
-  function playRange() {
-    const video = videoRef.current
-    if (!video) return
-    selfSeekingRef.current = true
-    rangeEndRef.current = bar.start + bar.duration
-    video.currentTime = bar.start
-    void video.play().catch(() => { rangeEndRef.current = null })
-  }
-
-  function stopAtRangeEnd() {
+  function onTimeUpdate() {
     const video = videoRef.current
     if (!video) return
     setPlayhead(video.currentTime)
-    if (rangeEndRef.current !== null && video.currentTime >= rangeEndRef.current) {
-      rangeEndRef.current = null
+    const loop = loopRef.current
+    if (loop && !video.paused && video.currentTime >= loop.start + loop.duration) {
       selfSeekingRef.current = true
-      video.pause()
+      video.currentTime = loop.start
     }
   }
 
-  const range = validateClipRange(startText, endText, totalSeconds)
+  const videoEvents: ClipVideoEvents = {
+    // 영상이 준비되면 고른 구간부터 반복 재생
+    onLoadedMetadata: () => loopRange(bar),
+    onPause: () => { if (videoRef.current) setPlayhead(videoRef.current.currentTime) },
+    onSeeked,
+    onTimeUpdate,
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -160,7 +183,7 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
         value={value}
         onChange={(event) => onChange(event.target.value)}
         // 다 고치면 미리보기를 그 위치로
-        onBlur={() => { const seconds = parseClipTime(value); if (seconds !== null) seekVideo(seconds) }}
+        onBlur={() => commitText(value)}
         inputMode="numeric"
         placeholder="0:00"
         aria-invalid={!range.ok}
@@ -175,28 +198,19 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
     // 가로는 숨긴다: 시작 손잡이의 터치 영역(44px)이 막대 왼쪽 밖으로 나가 가로 스크롤이 생기지 않게
     <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col" noValidate>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2">
-        {renderVideo(videoRef, { onPause: followVideo, onSeeked: followVideo, onTimeUpdate: stopAtRangeEnd })}
-        <p className="text-sm text-secondary">막대의 손잡이를 끌거나 영상을 멈춰 구간을 고르세요. 시작 · 끝 위치를 직접 적어도 됩니다.</p>
+        {renderVideo(videoRef, videoEvents)}
+        <p className="text-sm text-secondary">막대 양 끝을 끌어 구간을 고르세요. 놓으면 고른 구간이 반복 재생됩니다.</p>
         {/* 길이를 모르는 다시보기 · 5초보다 짧은 영상은 막대 없이 입력만 */}
         {view !== null && total !== null && total >= CLIP_MIN_SECONDS && (
-          <div>
-            <ClipRangeBar value={bar} total={total} view={view} currentSeconds={playhead} onChange={changeFromBar} />
-            <div className="mt-2 flex justify-end">
-              <Button label="구간 재생" icon={<Play aria-hidden className="h-4 w-4" />} variant="secondary" size="sm" onClick={playRange} />
-            </div>
-          </div>
+          <ClipRangeBar value={bar} total={total} view={view} currentSeconds={playhead} onChange={changeFromBar} />
         )}
         <div>
           <div className="grid grid-cols-2 gap-4">
             {timeInput('시작 위치', startText, (text) => changeText(text, endText))}
             {timeInput('끝 위치', endText, (text) => changeText(startText, text))}
           </div>
-          <p id="clip-range-hint" className="mt-2 text-sm" role={range.ok ? undefined : 'alert'}>
-            {range.ok
-              ? <span className="text-secondary">{`${startText.trim()} ~ ${endText.trim()} · ${range.durationSeconds}초`}</span>
-              : <span className="text-error">{range.message}</span>}
-            <span className="block text-xs text-secondary">{CLIP_LENGTH_NOTICE}</span>
-          </p>
+          <p id="clip-range-hint" className="mt-2 text-xs text-secondary">{CLIP_LENGTH_NOTICE}</p>
+          {!range.ok && <p role="alert" className="mt-1 text-sm text-error">{range.message}</p>}
         </div>
         <label className="block text-sm font-medium text-primary">
           제목

@@ -123,7 +123,7 @@ export function RecordingClipForm({ recording, initialStart, onClose, onCreated 
         initialStart={initialStart}
         zoom
         defaultTitle={recording.title}
-        renderVideo={(ref, events) => <RecordingVideo recording={recording} startAt={initialStart} videoRef={ref} mediaEvents={events} />}
+        renderVideo={(ref, events) => <RecordingVideo recording={recording} videoRef={ref} mediaEvents={events} />}
         submit={(body) => createRecordingClip(recording.id, body)}
         onClose={onClose}
         onCreated={onCreated}
@@ -154,8 +154,6 @@ function LiveDraftForm({ draft, videoUrl, defaultTitle, onClose, onCreated }: {
             controls
             playsInline
             preload="metadata"
-            // 다시보기 모드처럼 처음 화면을 클립 시작 위치로
-            onLoadedMetadata={(event) => { event.currentTarget.currentTime = initialStart }}
             {...events}
             className="aspect-video w-full rounded-md bg-black"
           />
