@@ -35,6 +35,9 @@ const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
 // S2 오른쪽 패널과 같은 규칙: lg 이상은 헤더(3.5rem) + 본문 위 여백(2.5rem) = 6rem 아래에 붙은 화면 높이, 미만은 고정 높이. 방송 전 빈 카드와 ChatPanel이 같은 틀을 써서 열이 뛰지 않는다.
 const CHAT_COLUMN_CLASS = 'h-[28rem] lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]'
 
+// 송출 카드 안 구역(화면 · 소리 / 방송 정보 / 송출) 제목
+const SECTION_TITLE_CLASS = 'text-sm font-semibold text-primary'
+
 const supportsDisplayMedia = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function'
 
 function useAudioInputs(refreshKey: unknown) {
@@ -84,7 +87,7 @@ function AudioColumn({ title, select, gain, gainLabel, level }: AudioColumnProps
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 왼쪽은 송출 준비 순서(미리보기 → 소스 → 방송), 오른쪽은 채팅만(FE-5). 후원 알림(FE-6)은 미리보기 위 오버레이(§6.7 "S3 배치 정리").
+// S3 PC 송출 스튜디오(Chrome 기준). 왼쪽은 미리보기(상태 배지 겹침) → 송출 카드(화면 · 소리 → 방송 정보 → 송출), 오른쪽은 채팅만(FE-5). 후원 알림(FE-6)은 미리보기 위 오버레이(§6.7 "S3 배치 정리").
 export default function StudioPc() {
   usePageMeta({ title: 'PC 송출 · 스튜디오', noindex: true })
   const [media, setMedia] = useState<PcStream | null>(null)
@@ -216,72 +219,91 @@ export default function StudioPc() {
               <p>화면 공유를 시작하면 미리보기가 나옵니다.</p>
             </div>
           )}
+          {/* 방송 상태(송출 전 · LIVE + 시청자 수 등)는 미리보기 왼쪽 위에 겹친다. 후원 배너가 나중에 그려져 겹치면 위에 온다 */}
+          <div className="absolute left-3 top-3 z-10"><SessionStatus phase={session.phase} viewerCount={session.viewerCount} overlay /></div>
           <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex justify-center">
             <div className="w-full max-w-md"><DonationBanner donation={banner.current} overlay /></div>
           </div>
         </div>
 
         <section aria-label="송출" className="space-y-4 rounded-lg border border-border bg-surface p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button label={media ? '공유 화면 다시 선택' : '화면 공유 시작'} variant={media ? 'secondary' : 'primary'} icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} isDisabled={active} onClick={() => void share()} />
-            {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
+          <div className="space-y-3">
+            <h2 className={SECTION_TITLE_CLASS}>화면 · 소리</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button label={media ? '공유 화면 다시 선택' : '화면 공유 시작'} variant={media ? 'secondary' : 'primary'} icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} isDisabled={active} onClick={() => void share()} />
+              {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AudioColumn
+                title="마이크"
+                gainLabel="마이크"
+                level={levels.mic}
+                select={{
+                  value: mic ?? 'none',
+                  onChange: (value) => void changeMic(value),
+                  options: (
+                    <>
+                      <option value="">기본 마이크</option>
+                      {devices.filter((device) => device.deviceId && device.deviceId !== 'default').map((device, index) => (
+                        <option key={device.deviceId} value={device.deviceId}>{device.label || `마이크 ${index + 1}`}</option>
+                      ))}
+                      <option value="none">마이크 사용 안 함</option>
+                    </>
+                  ),
+                }}
+                gain={{ value: micGain, onChange: setMicGain, disabled: mic === null }}
+              />
+              <AudioColumn
+                title="시스템 소리"
+                gainLabel="시스템 소리"
+                level={includeSystem ? levels.system : 0}
+                select={{
+                  value: includeSystem ? 'include' : 'exclude',
+                  onChange: (value) => setIncludeSystem(value === 'include'),
+                  options: (
+                    <>
+                      <option value="include">탭/시스템 소리 포함</option>
+                      <option value="exclude">포함 안 함</option>
+                    </>
+                  ),
+                }}
+                gain={{ value: systemGain, onChange: setSystemGain, disabled: !includeSystem }}
+              />
+            </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <AudioColumn
-              title="마이크"
-              gainLabel="마이크"
-              level={levels.mic}
-              select={{
-                value: mic ?? 'none',
-                onChange: (value) => void changeMic(value),
-                options: (
-                  <>
-                    <option value="">기본 마이크</option>
-                    {devices.filter((device) => device.deviceId && device.deviceId !== 'default').map((device, index) => (
-                      <option key={device.deviceId} value={device.deviceId}>{device.label || `마이크 ${index + 1}`}</option>
-                    ))}
-                    <option value="none">마이크 사용 안 함</option>
-                  </>
-                ),
-              }}
-              gain={{ value: micGain, onChange: setMicGain, disabled: mic === null }}
-            />
-            <AudioColumn
-              title="시스템 소리"
-              gainLabel="시스템 소리"
-              level={includeSystem ? levels.system : 0}
-              select={{
-                value: includeSystem ? 'include' : 'exclude',
-                onChange: (value) => setIncludeSystem(value === 'include'),
-                options: (
-                  <>
-                    <option value="include">탭/시스템 소리 포함</option>
-                    <option value="exclude">포함 안 함</option>
-                  </>
-                ),
-              }}
-              gain={{ value: systemGain, onChange: setSystemGain, disabled: !includeSystem }}
-            />
+          <div className="space-y-3 border-t border-border pt-4">
+            <h2 className={SECTION_TITLE_CLASS}>방송 정보</h2>
+            {/* 송출 전에는 session.start가 입력값을 그대로 보내므로 저장 버튼이 없다. 방송 중에만 "변경 저장" */}
+            <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} saveLabel={active ? '변경 저장' : null} />
           </div>
-          {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
-          {shareError && <Banner role="alert" status="error" title={shareError} />}
-          <div className="space-y-4 border-t border-border pt-4">
-            <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
-            <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
-            {active || session.phase === 'ending'
-              ? (
-                <Button label={session.phase === 'ending' ? '종료하는 중…' : '방송 종료'} variant="destructive" size="lg" width="100%" isLoading={session.phase === 'ending'} onClick={() => void end(stopMedia)} />
-              )
-              : (
-                <Button label="송출 시작" variant="primary" size="lg" width="100%" isDisabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} />
-              )}
-            {!media && !active && <p className="text-xs text-secondary">먼저 화면 공유를 시작하세요.</p>}
-            {session.phase === 'reconnecting' && <p role="status" className="text-sm text-warning">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
-            {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-secondary">방송을 종료했습니다.</p>}
-            {session.error && <Banner role="alert" status="error" title={session.error} />}
-            {session.broadcastId !== null && (
-              <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
-            )}
+          {(warnings.length > 0 || shareError || session.error) && (
+            <div className="space-y-2">
+              {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
+              {shareError && <Banner role="alert" status="error" title={shareError} />}
+              {session.error && <Banner role="alert" status="error" title={session.error} />}
+            </div>
+          )}
+          <div className="space-y-3 border-t border-border pt-4">
+            <h2 className={SECTION_TITLE_CLASS}>송출</h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                {!media && !active && <p className="text-sm text-secondary">먼저 화면 공유를 시작하세요.</p>}
+                {session.phase === 'reconnecting' && <p role="status" className="text-sm text-warning">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
+                {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-secondary">방송을 종료했습니다.</p>}
+                {session.broadcastId !== null && (
+                  <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
+                )}
+              </div>
+              <div className="shrink-0">
+                {active || session.phase === 'ending'
+                  ? (
+                    <Button label={session.phase === 'ending' ? '종료하는 중…' : '방송 종료'} variant="destructive" size="lg" isLoading={session.phase === 'ending'} onClick={() => void end(stopMedia)} />
+                  )
+                  : (
+                    <Button label="송출 시작" variant="primary" size="lg" isDisabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} />
+                  )}
+              </div>
+            </div>
           </div>
         </section>
       </div>

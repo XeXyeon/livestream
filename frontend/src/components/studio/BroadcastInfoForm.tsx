@@ -13,10 +13,12 @@ type Props = {
   onChange: (info: BroadcastInfo) => void
   onSave: (info: BroadcastInfo) => Promise<void>
   compact?: boolean
+  /** 저장 버튼 문구. null이면 버튼을 숨기고 Enter 제출도 무시한다(송출 전 PC 스튜디오: 시작할 때 입력값을 그대로 보낸다). */
+  saveLabel?: string | null
 }
 
 // 방송 정보(제목 · 카테고리). 송출 전에는 시작할 때 함께 저장되고, 송출 중에도 "저장"으로 바꿀 수 있다.
-export default function BroadcastInfoForm({ initial, onChange, onSave, compact = false }: Props) {
+export default function BroadcastInfoForm({ initial, onChange, onSave, compact = false, saveLabel = '정보 저장' }: Props) {
   const [info, setInfo] = useState(initial)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -29,6 +31,7 @@ export default function BroadcastInfoForm({ initial, onChange, onSave, compact =
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (saveLabel === null) return
     setSaving(true)
     try {
       await onSave({ ...info, title: info.title.trim() })
@@ -51,7 +54,7 @@ export default function BroadcastInfoForm({ initial, onChange, onSave, compact =
           {CATEGORIES.map((category) => <option key={category.code} value={category.code}>{category.label}</option>)}
         </select>
       </label>
-      <Button type="submit" label={saving ? '저장 중…' : '정보 저장'} variant="secondary" isLoading={saving} isDisabled={!info.title.trim()} />
+      {saveLabel !== null && <Button type="submit" label={saving ? '저장 중…' : saveLabel} variant="secondary" isLoading={saving} isDisabled={!info.title.trim()} />}
       {message && <div className="w-full"><Banner role={message.ok ? 'status' : 'alert'} status={message.ok ? 'success' : 'error'} title={message.text} /></div>}
     </form>
   )
