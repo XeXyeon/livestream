@@ -99,10 +99,13 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
 })
 
 describe('ClipDialog 미리보기 영상 타임라인', () => {
-  it('라이브 초안은 타임라인(controls) 없이, 다시보기는 타임라인을 둔다', () => {
+  it('라이브 초안은 타임라인 없이, 다시보기는 플레이어 탐색 막대를 둔다', () => {
     const live = render({ ...base, status: 'READY', videoUrl: '/v' })
     expect(live).toMatch(/<video(?![^>]*controls)[^>]*src="\/v"/)
-    expect(renderRecording(600)).toMatch(/<video[^>]*controls/)
+    expect(live).not.toContain('aria-label="재생 위치"')
+    const recording = renderRecording(600)
+    expect(recording).toMatch(/<video(?![^>]*controls)/)
+    expect(recording).toContain('aria-label="재생 위치"')
   })
 })
 

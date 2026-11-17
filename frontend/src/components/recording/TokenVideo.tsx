@@ -3,6 +3,7 @@ import type { RefObject, SyntheticEvent } from 'react'
 import { ApiError } from '../../api/client'
 import type { VideoToken } from '../../api/types'
 import UnmuteButton from '../player/UnmuteButton'
+import VideoControls from '../player/VideoControls'
 import type { RecordingPlayback } from './recordingState'
 
 const MAX_TOKEN_RETRIES = 3
@@ -111,7 +112,6 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
           key={mediaKey}
           ref={setRefs}
           src={src}
-          controls
           playsInline
           autoPlay={autoPlayMuted}
           muted={autoPlayMuted}
@@ -127,6 +127,7 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
           className="h-full w-full"
         />
       )}
+      {src && !error && <VideoControls key={mediaKey} videoRef={ownRef} seekable />}
       {autoPlayMuted && muted && playing && <UnmuteButton onClick={unmute} />}
       {(!src || error) && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-white">
