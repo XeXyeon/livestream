@@ -35,9 +35,13 @@ export function useVideoSurface(videoRef: RefObject<HTMLVideoElement | null>, fi
   // group: 컨트롤(VideoControls)이 마우스를 올렸을 때 보이도록
   const containerClass = fill
     ? 'group relative h-full w-full overflow-hidden bg-black'
-    : `group relative mx-auto w-full overflow-hidden bg-black ${portrait ? 'max-h-[80vh]' : 'aspect-video'}`
+    // 세로 영상: lg 미만(휴대폰)은 화면 높이의 38%만 쓰는 검은 칸에 레터박스로 넣어 아래 채팅이 화면의 1/3쯤 보이게 하고,
+    // lg 이상은 영상 비율대로(높이 80vh까지)
+    : `group relative mx-auto w-full overflow-hidden bg-black ${portrait
+      ? 'h-[38dvh] lg:h-auto lg:max-h-[80vh] lg:max-w-[calc(80vh*var(--pr))] lg:aspect-[var(--pa)]'
+      : 'aspect-video'}`
   const containerStyle: CSSProperties | undefined = portrait && !fill
-    ? { aspectRatio: `${portrait.w} / ${portrait.h}`, maxWidth: `calc(80vh * ${portrait.w / portrait.h})` }
+    ? ({ '--pa': `${portrait.w} / ${portrait.h}`, '--pr': portrait.w / portrait.h } as CSSProperties)
     : undefined
 
   return {
