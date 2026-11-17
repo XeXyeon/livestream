@@ -29,6 +29,8 @@ type Props = {
 }
 
 export type MediaEvents = {
+  /** 영상이 준비됐을 때(이어 재생 위치를 맞춘 다음에 부른다) */
+  onLoadedMetadata?: () => void
   onPause?: () => void
   onSeeked?: () => void
   onTimeUpdate?: () => void
@@ -79,11 +81,13 @@ export default function TokenVideo({ mediaKey, playback, videoUrl, poster, fetch
 
   function handleLoadedMetadata(event: SyntheticEvent<HTMLVideoElement>) {
     const target = resumeAt.current
-    if (!target) return
-    resumeAt.current = null
-    const video = event.currentTarget
-    video.currentTime = target.time
-    if (target.play) void video.play().catch(() => {})
+    if (target) {
+      resumeAt.current = null
+      const video = event.currentTarget
+      video.currentTime = target.time
+      if (target.play) void video.play().catch(() => {})
+    }
+    mediaEvents?.onLoadedMetadata?.()
   }
 
   function setRefs(element: HTMLVideoElement | null) {

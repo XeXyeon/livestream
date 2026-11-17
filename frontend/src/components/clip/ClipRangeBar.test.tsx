@@ -24,16 +24,19 @@ describe('ClipRangeBar', () => {
     expect(end).toContain('aria-valuemax="130"')
   })
 
-  it('손잡이 위치는 창 기준 %, 막대 양 끝에 창 시각', () => {
+  it('손잡이 위치는 창 기준 %, 막대 아래 시각 표시는 없다', () => {
     const html = render()
-    expect(html).toContain('left:25%') // (70 − 10) / 240
-    expect(html).toContain('left:37.5%') // (100 − 10) / 240
-    expect(html).toContain('0:10')
-    expect(html).toContain('4:10')
+    expect(html).toContain('left:calc(25% - 30px)') // 시작 (70 − 10) / 240, 블록은 구간 안쪽
+    expect(html).toContain('left:calc(37.5% - 14px)') // 끝 (100 − 10) / 240
+    expect(html).not.toContain('0:10')
+    expect(html).not.toContain('4:10')
   })
 
-  it('재생 위치 표시선은 창 안일 때만', () => {
-    expect(render({ currentSeconds: 130 })).toContain('left:50%')
-    expect(render({ currentSeconds: 400 })).not.toContain('bg-primary')
+  it('재생 위치 선은 선택 틀 안쪽에서만 움직이고 구간 밖이면 없다', () => {
+    expect(render({ currentSeconds: 70 })).toContain('left:calc(25% + 14px + (12.5% - 28px) * 0)') // 시작 = 틀 안쪽 왼끝
+    expect(render({ currentSeconds: 85 })).toContain('* 0.5)')
+    expect(render({ currentSeconds: 100 })).toContain('* 1)') // 끝 = 틀 안쪽 오른끝
+    expect(render({ currentSeconds: 130 })).not.toContain('data-playhead')
+    expect(render({ currentSeconds: 60 })).not.toContain('data-playhead')
   })
 })
