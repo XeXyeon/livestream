@@ -91,9 +91,9 @@ describe('ClipDialog 다시보기 모드(CLIP-4#1: 라이브와 같은 구조)',
     expect(html).toContain('value="지난 방송"')
   })
 
-  it('긴 영상은 막대가 확대 창(4분)만 보인다', () => {
+  it('긴 영상은 막대가 확대 창(4분)만 보이고, 막대 아래 시각 표시는 없다', () => {
     const html = renderRecording(600)
-    expect(html).toContain('<span>9:00</span><span>13:00</span>')
+    expect(html).not.toContain('<span>9:00</span>')
     expect(html).toMatch(/aria-label="클립 시작"[^>]*aria-valuenow="600"/)
   })
 })

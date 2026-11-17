@@ -198,12 +198,18 @@ export default function ClipEditor({ totalSeconds, initialStart, zoom, defaultTi
     // 가로는 숨긴다: 시작 손잡이의 터치 영역(44px)이 막대 왼쪽 밖으로 나가 가로 스크롤이 생기지 않게
     <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col" noValidate>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2">
-        {renderVideo(videoRef, videoEvents)}
-        <p className="text-sm text-secondary">막대 양 끝을 끌어 구간을 고르세요. 놓으면 고른 구간이 반복 재생됩니다.</p>
-        {/* 길이를 모르는 다시보기 · 5초보다 짧은 영상은 막대 없이 입력만 */}
-        {view !== null && total !== null && total >= CLIP_MIN_SECONDS && (
-          <ClipRangeBar value={bar} total={total} view={view} currentSeconds={playhead} onChange={changeFromBar} />
-        )}
+        {/* 영상 바로 아래 막대, 그 아래 안내. 길이를 모르는 다시보기 · 5초보다 짧은 영상은 막대 없이 입력만 */}
+        <div>
+          {renderVideo(videoRef, videoEvents)}
+          {view !== null && total !== null && total >= CLIP_MIN_SECONDS && (
+            <>
+              <div className="mt-3">
+                <ClipRangeBar value={bar} total={total} view={view} currentSeconds={playhead} onChange={changeFromBar} />
+              </div>
+              <p className="mt-1 text-xs text-secondary">막대 양 끝을 끌어 구간을 고르세요. 놓으면 고른 구간이 반복 재생됩니다.</p>
+            </>
+          )}
+        </div>
         <div>
           <div className="grid grid-cols-2 gap-4">
             {timeInput('시작 위치', startText, (text) => changeText(text, endText))}
