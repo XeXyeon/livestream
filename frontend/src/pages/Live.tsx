@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { HandCoins, MessageSquare, Users } from 'lucide-react'
+import { HandCoins, Users } from 'lucide-react'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -18,6 +18,7 @@ import { formatCount, formatRelative } from '../components/broadcast/format'
 import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
+import CollapsedChatActions from '../components/player/CollapsedChatActions'
 import Player from '../components/player/Player'
 import DonateDialog from '../components/donation/DonateDialog'
 import DonationBanner from '../components/donation/DonationBanner'
@@ -123,7 +124,8 @@ function LiveMain() {
   // 입력 줄은 어느 폭에서든 채팅 카드 안. lg 미만은 본문이 헤더 아래 화면 높이의 세로 flex(플레이어 · 방송 정보는 제 크기, 채팅 카드가 남는 공간)이고
   // 카드는 전체 폭 · 마지막 요소다. 공간이 모자라면(가로로 누운 휴대폰) 카드 min-h 때문에 페이지가 스크롤되고 입력칸 칸의 sticky가 화면 아래에 붙인다(카드에 overflow를 주지 않는다)
   const ended = broadcast.data.status === 'ENDED'
-  const donate = !ended && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
+  const canDonate = !ended && !broadcast.data.isOwner
+  const donate = canDonate ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
   return (
     <div className="flex max-lg:h-[calc(100dvh-3.5rem)] max-lg:flex-col lg:items-start">
       <div className="min-w-0 flex-1 max-lg:flex-none">
@@ -143,7 +145,7 @@ function LiveMain() {
             </div>
             {chatCollapsed && !fullscreen && (
               <div className="absolute right-3 top-3 z-20 hidden lg:block">
-                <IconButton label="채팅 펼치기" icon={<MessageSquare aria-hidden className="h-4 w-4" />} variant="secondary" size="sm" onClick={() => changeChatCollapsed(false)} />
+                <CollapsedChatActions onExpandChat={() => changeChatCollapsed(false)} onDonate={canDonate ? () => setDonating(true) : undefined} />
               </div>
             )}
           </div>
