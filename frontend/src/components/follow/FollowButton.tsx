@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useAuthDialog } from '../../store/authDialog'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button } from '@astryxdesign/core/Button'
 import { followChannel, unfollowChannel } from '../../api/follows'
 import { ApiError } from '../../api/client'
 import type { BroadcastDetail, ChannelResponse, FollowStatus } from '../../api/types'
 import { useAuth } from '../../store/auth'
+import FollowHeart from './FollowHeart'
 import { followView } from './followView'
 import { MY_FOLLOWS_KEY, useMyFollows } from './useMyFollows'
 
@@ -19,7 +19,7 @@ type Props = {
 }
 
 /**
- * 팔로우 버튼(S2 채널 링크 옆 · S9 헤더). "팔로우"/"팔로잉" + 팔로워 수. 자기 채널이면 수만 보인다.
+ * 팔로우 버튼(S2 채널 링크 옆 · S9 헤더). 하트 아이콘 + 팔로워 수 하나(FollowHeart: 팔로잉이면 채운 하트). 자기 채널이면 누를 수 없는 같은 모양.
  * 비로그인은 로그인 화면으로 보낸 뒤 이 화면으로 돌아온다. 응답을 받으면 상세 캐시를 고치고 사이드바 목록을 다시 부른다.
  * 채널이 바뀌면 상태가 넘어가지 않게 부르는 쪽에서 key={channelId}를 준다.
  */
@@ -59,32 +59,21 @@ export default function FollowButton({ channelId, followerCount, isOwner }: Prop
       : { status: follows.isError ? 'error' : 'pending' },
     latest,
   })
-  const countText = <span className="text-sm text-secondary">팔로워 {followerCount.toLocaleString('ko-KR')}</span>
 
-  if (view.kind === 'count') return countText
-
-  let button
-  if (view.kind === 'login') {
-    button = <Button label="팔로우" variant="primary" size="sm" onClick={() => openLogin()} />
+  let heart
+  if (view.kind === 'count') {
+    heart = <FollowHeart count={followerCount} />
+  } else if (view.kind === 'login') {
+    heart = <FollowHeart count={followerCount} onClick={() => openLogin()} />
   } else if (view.kind === 'loading') {
-    button = <Button label="팔로우" variant="primary" size="sm" isLoading />
+    heart = <FollowHeart count={followerCount} disabled onClick={() => undefined} />
   } else {
-    // 문구가 상태를 말하므로 aria-pressed는 두지 않는다
-    button = (
-      <Button
-        label={view.following ? '팔로잉' : '팔로우'}
-        variant={view.following ? 'secondary' : 'primary'}
-        size="sm"
-        isLoading={mutation.isPending}
-        onClick={() => mutation.mutate(!view.following)}
-      />
-    )
+    heart = <FollowHeart count={followerCount} following={view.following} disabled={mutation.isPending} onClick={() => mutation.mutate(!view.following)} />
   }
 
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      {button}
-      {countText}
+      {heart}
       {mutation.isError && (
         <span role="alert" className="text-xs text-error">
           {mutation.error instanceof ApiError ? mutation.error.message : '요청을 처리하지 못했습니다.'}

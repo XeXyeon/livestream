@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import { Send } from 'lucide-react'
 import { useAuth } from '../../store/auth'
 import { useAuthDialog } from '../../store/authDialog'
@@ -12,9 +11,9 @@ type Chat = ReturnType<typeof useBroadcastChat>
 
 type Props = {
   chat: Chat
-  /** panel 모양에서 입력창 아래 줄 왼쪽에 둘 버튼(시청 화면: 후원하기). overlay에서는 쓰지 않는다 */
+  /** panel 모양에서 입력창 왼쪽에 둘 아이콘 버튼(시청 화면: 후원하기). overlay에서는 쓰지 않는다 */
   actions?: ReactNode
-  /** panel: 카드 안 2줄(입력창 · 아래 줄 actions + 보내기). overlay: 어두운 화면 위 한 줄 알약 + 보내기 아이콘 */
+  /** panel: 한 줄(왼쪽 actions · 입력창 · 입력창 안 오른쪽 끝 보내기 아이콘). overlay: 어두운 화면 위 한 줄 알약 + 보내기 아이콘 */
   tone: 'panel' | 'overlay'
   /** 입력창 포커스가 들어오고 빠질 때(모바일 스튜디오가 키보드 동안 조작 줄을 숨긴다) */
   onFocusChange?: (focused: boolean) => void
@@ -76,7 +75,7 @@ export default function ChatComposer({ chat, actions, tone, onFocusChange, onSen
       // overlay는 16px(text-base): iOS Safari는 그보다 작은 입력창에 포커스하면 화면을 확대한다
       className={overlay
         ? 'min-w-0 flex-1 rounded-full bg-white/15 px-4 py-2.5 text-base text-white placeholder:text-slate-300 focus:outline-2 focus:outline-white/70'
-        : `${inputClassName.replace('py-2.5', 'py-2')} text-sm`}
+        : `${inputClassName.replace('py-2.5', 'py-2')} pr-10 text-sm`}
     />
   )
 
@@ -100,14 +99,23 @@ export default function ChatComposer({ chat, actions, tone, onFocusChange, onSen
     )
   }
 
-  // 1줄: 입력창(전체 폭) · 2줄: 왼쪽 actions(시청 화면의 후원하기 등) · 오른쪽 보내기
+  // 한 줄: 왼쪽 actions(시청 화면의 후원 아이콘 등) · 입력창 · 입력창 안 오른쪽 끝 보내기 아이콘
   return (
     <>
-      <form onSubmit={submit} className="space-y-2">
-        {input}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">{actions}</div>
-          <Button type="submit" label="보내기" variant="primary" size="sm" />
+      <form onSubmit={submit} className="flex items-center gap-2">
+        {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
+        <div className="relative min-w-0 flex-1">
+          {input}
+          {/* mousedown을 막아 버튼을 눌러도 입력창 포커스(= 모바일 키보드)가 빠지지 않게 한다 */}
+          <button
+            type="submit"
+            aria-label="보내기"
+            title="보내기"
+            onMouseDown={(event) => event.preventDefault()}
+            className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-accent hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <Send aria-hidden className="h-4 w-4" />
+          </button>
         </div>
       </form>
       {noticeEl}

@@ -22,13 +22,19 @@ type Props = {
   onCollapse?: () => void
   /** 있으면 더보기 메뉴에 "새 창으로 채팅 열기" */
   onPopout?: () => void
-  /** 입력창 아래 줄 왼쪽에 둘 버튼(시청 화면: 후원하기) */
+  /** 입력 줄 왼쪽에 둘 아이콘 버튼(시청 화면: 후원하기) */
   actions?: ReactNode
+  /** 입력 줄을 패널 안에 둘지(`inside`, 기본) 뺄지(`none`: 시청 화면의 lg 미만은 화면 하단 고정 줄이 맡는다). 방송이 끝났다는 문구는 `none`에서도 패널 안에 남는다 */
+  composer?: 'inside' | 'none'
+  /** 값이 바뀌면 목록을 맨 아래로 붙여 따라가게 한다(패널 밖 입력 줄에서 보냈을 때 올린다) */
+  stickSignal?: number
 }
 
-export default function ChatPanel({ chat, ended = false, className = '', framed = true, onCollapse, onPopout, actions }: Props) {
+export default function ChatPanel({ chat, ended = false, className = '', framed = true, onCollapse, onPopout, actions, composer = 'inside', stickSignal }: Props) {
   const listRef = useRef<HTMLUListElement>(null)
   const stickRef = useRef(true)
+
+  useEffect(() => { stickRef.current = true }, [stickSignal])
 
   useEffect(() => {
     const list = listRef.current
@@ -70,11 +76,13 @@ export default function ChatPanel({ chat, ended = false, className = '', framed 
         )}
         {chat.entries.map((entry) => <ChatMessage key={entryKey(entry)} entry={entry} />)}
       </ul>
-      <div className={`p-3 ${framed ? 'border-t border-border' : ''}`}>
-        {ended
-          ? <p className="text-center text-sm text-secondary">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
-          : <ChatComposer chat={chat} actions={actions} tone="panel" onSent={() => { stickRef.current = true }} />}
-      </div>
+      {(composer === 'inside' || ended) && (
+        <div className={`p-3 ${framed ? 'border-t border-border' : ''}`}>
+          {ended
+            ? <p className="text-center text-sm text-secondary">방송이 종료되어 채팅을 보낼 수 없습니다.</p>
+            : <ChatComposer chat={chat} actions={actions} tone="panel" onSent={() => { stickRef.current = true }} />}
+        </div>
+      )}
     </aside>
   )
 }
