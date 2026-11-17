@@ -33,7 +33,7 @@ describe('CollapsedChatActions', () => {
 
   it('채팅 · 후원 아이콘이 짧은 명사 툴팁과 함께 그려진다', () => {
     const html = renderToString(<CollapsedChatActions onExpandChat={() => {}} onDonate={() => {}} />)
-    expect(html).toMatch(/data-tip="채팅"[^>]*><button[^>]*aria-label="채팅"/)
+    expect(html).toMatch(/data-tip="채팅"[^>]*><button[^>]*aria-label="채팅 펼치기"/)
     expect(html).toMatch(/data-tip="후원"[^>]*><button[^>]*aria-label="후원"/)
   })
 
@@ -41,7 +41,7 @@ describe('CollapsedChatActions', () => {
     const expand = vi.fn()
     const donate = vi.fn()
     const element = tree({ onExpandChat: expand, onDonate: donate })
-    findButton(element, '채팅')!.props.onClick()
+    findButton(element, '채팅 펼치기')!.props.onClick()
     expect(expand).toHaveBeenCalledTimes(1)
     findButton(element, '후원')!.props.onClick()
     expect(donate).toHaveBeenCalledTimes(1)
@@ -61,6 +61,6 @@ describe('CollapsedChatActions', () => {
     state.ready = false
     const html = renderToString(<CollapsedChatActions onExpandChat={() => {}} onDonate={() => {}} />)
     expect(html).not.toContain('후원')
-    expect(html).toContain('aria-label="채팅"')
+    expect(html).toContain('aria-label="채팅 펼치기"')
   })
 })

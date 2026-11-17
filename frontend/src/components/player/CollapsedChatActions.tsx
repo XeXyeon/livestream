@@ -16,7 +16,7 @@ export default function CollapsedChatActions({ onExpandChat, onDonate }: { onExp
   return (
     <div className="flex items-center gap-2">
       <Tooltip content="채팅" placement="below">
-        <button type="button" aria-label="채팅" onClick={onExpandChat} className={buttonClass}>
+        <button type="button" aria-label="채팅 펼치기" onClick={onExpandChat} className={buttonClass}>
           <MessageSquare aria-hidden className="h-5 w-5" />
         </button>
       </Tooltip>
