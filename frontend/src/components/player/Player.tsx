@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
+import { LayoutGrid } from 'lucide-react'
 import type { BroadcastDetail, BroadcastStatus, PlayerMode } from '../../api/types'
 import type { GridStats } from '../../media/gridStats'
 import { useIsFullscreen } from '../common/useMediaQuery'
 import EndedView from './EndedView'
 import GridView from './GridView'
-import ModeToggle from './ModeToggle'
 import PlayerStats from './PlayerStats'
 import WhepView from './WhepView'
+import type { PlayerAction } from './VideoControls'
 
 type Props = {
   broadcast: BroadcastDetail
@@ -17,15 +18,25 @@ type Props = {
   onTheaterChange?: (theater: boolean) => void
   /** 영상 바로 아래 한 줄(시청 화면의 방송 제목). 재생 모드 · 통계 줄은 그 아래 */
   title?: ReactNode
+  /** 컨트롤 줄에 더할 버튼(시청 화면의 클립). 재생 모드(그리드) 버튼은 Player가 앞에 붙인다 */
+  actions?: PlayerAction[]
 }
 
-// §6.5 Player. 처음 모드는 서버의 recommendedMode(시청자 수가 임계값 이상이면 grid), 이후는 토글로 바꾼다
+// §6.5 Player. 처음 모드는 서버의 recommendedMode(시청자 수가 임계값 이상이면 grid), 이후는 컨트롤 줄의 그리드 버튼으로 바꾼다
 // (바꿀 때 이전 플레이어는 언마운트되며 close). 상태별: DISCONNECTED → 재연결 대기 오버레이, ENDED → 종료 화면.
-export default function Player({ broadcast, initialMode, theater = false, onTheaterChange, title }: Props) {
+export default function Player({ broadcast, initialMode, theater = false, onTheaterChange, title, actions }: Props) {
   const fullscreen = useIsFullscreen()
   const fill = theater || fullscreen
-  const chrome = { fill, theater, onTheaterChange }
   const [mode, setMode] = useState<PlayerMode>(initialMode ?? broadcast.recommendedMode)
+  // 그리드(P2P) 모드 켜기 · 끄기. 바꿀 때 이전 플레이어는 언마운트되며 close된다
+  const gridAction: PlayerAction = {
+    id: 'grid',
+    label: '그리드 모드(P2P)',
+    icon: <LayoutGrid aria-hidden className="h-5 w-5" />,
+    onClick: () => setMode(mode === 'grid' ? 'whep' : 'grid'),
+    pressed: mode === 'grid',
+  }
+  const chrome = { fill, theater, onTheaterChange, actions: [gridAction, ...(actions ?? [])] }
   const [stats, setStats] = useState<GridStats | null>(null)
   const [p2p, setP2p] = useState(true)
   // 그리드는 방송인이 다시 붙으면 재생목록이 새로 시작되므로 플레이어를 새로 만든다(WHEP은 reconnect로 충분).
@@ -53,10 +64,11 @@ export default function Player({ broadcast, initialMode, theater = false, onThea
       </div>
       {/* 제목은 모드 줄과 나눠 혼자 한 줄을 쓴다: 같은 줄에 두면 휴대폰 폭에서 제목 칸이 거의 0이 되어 글자가 한 자씩 꺾였다 */}
       {title && <div className={`min-w-0 ${fullscreen ? 'hidden' : fill ? 'px-4 pt-2' : 'pt-1'}`}>{title}</div>}
-      <div className={`flex flex-wrap items-center justify-end gap-2 ${fullscreen ? 'hidden' : fill ? 'px-4 pb-2' : ''}`}>
-        {mode === 'grid' && <PlayerStats stats={stats} p2p={p2p} />}
-        <ModeToggle mode={mode} onChange={setMode} />
-      </div>
+      {mode === 'grid' && (
+        <div className={`flex flex-wrap items-center justify-end gap-2 ${fullscreen ? 'hidden' : fill ? 'px-4 pb-2' : ''}`}>
+          <PlayerStats stats={stats} p2p={p2p} />
+        </div>
+      )}
     </div>
   )
 }

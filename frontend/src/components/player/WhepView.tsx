@@ -55,7 +55,7 @@ export default function WhepView({ url, status, onState, chrome }: Props) {
         </div>
       )}
       {surface.muted && state === 'playing' && <UnmuteButton onClick={surface.unmute} />}
-      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} />
+      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} actions={chrome?.actions} />
     </div>
   )
 }

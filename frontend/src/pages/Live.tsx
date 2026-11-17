@@ -24,7 +24,7 @@ import { useDonationBanner } from '../components/donation/useDonationBanner'
 import { useDonationReturn } from '../components/donation/useDonationReturn'
 import type { DonationReturnState } from '../components/donation/useDonationReturn'
 import ClipStrip from '../components/clip/ClipStrip'
-import { LiveClipButton, LiveClipNotice } from '../components/clip/LiveClipButton'
+import { LiveClipNotice, useLiveClip } from '../components/clip/LiveClipButton'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
 import { useAuthDialog } from '../store/authDialog'
@@ -102,6 +102,9 @@ function LiveMain() {
     setChatCollapsed(next)
     writeChatCollapsed(next)
   }
+  // 클립(CLIP-2 · FE-12): 가위 버튼은 플레이어 컨트롤 줄에, 다이얼로그 · 오류 · 진행 알림은 방송 정보 아래에 둔다
+  const [clipId, setClipId] = useState<number | null>(null)
+  const clip = useLiveClip(broadcast.data ?? null, setClipId)
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {
     return <Padded><p className="py-20 text-center text-secondary">채널을 찾을 수 없습니다.</p></Padded>
@@ -127,6 +130,7 @@ function LiveMain() {
               initialMode={broadcast.data.recommendedMode}
               theater={theaterOn}
               onTheaterChange={setTheater}
+              actions={clip.action ? [clip.action] : undefined}
               // 길면 한 줄에서 말줄임(…), 잘리면 툴팁으로 전체 제목
               title={<Heading level={1} maxLines={1}>{broadcast.data.title}</Heading>}
             />
@@ -141,7 +145,7 @@ function LiveMain() {
           </div>
         </div>
         <div className="space-y-4 px-4 pb-4 pt-2 sm:px-6">
-          <BroadcastInfo broadcast={broadcast.data} />
+          <BroadcastInfo broadcast={broadcast.data} clipId={clipId} onClipDismiss={() => setClipId(null)} clipElement={clip.element} />
           <DonateDialog broadcastId={broadcast.data.id} channelId={channelId} isOpen={donating} onOpenChange={setDonating} />
         </div>
       </div>
@@ -172,9 +176,12 @@ function writeChatCollapsed(collapsed: boolean) {
   try { localStorage.setItem(CHAT_COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* 기억하지 못해도 화면은 동작 */ }
 }
 
-function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
-  // 클립(CLIP-2): 정보 줄 끝의 "클립" 버튼 → 아래 한 줄 알림(만드는 중 → 클립 보기)
-  const [clipId, setClipId] = useState<number | null>(null)
+function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
+  broadcast: BroadcastDetail
+  clipId: number | null
+  onClipDismiss: () => void
+  clipElement: ReactNode
+}) {
   return (
     <div className="space-y-3">
       {/* 방송 중에는 제목이 플레이어 바로 아래 줄에 있다. 종료 화면에는 그 줄이 없어 여기서 보인다 */}
@@ -187,9 +194,10 @@ function BroadcastInfo({ broadcast }: { broadcast: BroadcastDetail }) {
         )}
         <Badge variant="neutral" label={broadcast.category.label} />
         <span>{formatRelative(broadcast.startedAt)} 시작</span>
-        <span className="ml-auto"><LiveClipButton broadcast={broadcast} onCreated={setClipId} /></span>
       </div>
-      <LiveClipNotice clipId={clipId} onDismiss={() => setClipId(null)} />
+      {/* 클립(CLIP-2): 플레이어의 가위 버튼 → 만들기 창 · 오류 · 한 줄 알림(만드는 중 → 클립 보기) */}
+      {clipElement}
+      <LiveClipNotice clipId={clipId} onDismiss={onClipDismiss} />
       <div className="pt-3"><ClipStrip channelId={broadcast.channel.id} /></div>
     </div>
   )

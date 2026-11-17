@@ -60,7 +60,7 @@ export default function GridView({ hlsUrl, onStats, onP2pUnavailable, chrome }: 
       )}
       {error && <div role="alert" className="absolute inset-0 flex items-center justify-center bg-black/80 px-6 text-center text-sm text-rose-200">{error}</div>}
       {surface.muted && playing && <UnmuteButton onClick={surface.unmute} />}
-      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} />
+      <VideoControls videoRef={videoRef} theater={chrome?.theater} onTheaterChange={chrome?.onTheaterChange} actions={chrome?.actions} />
     </div>
   )
 }
