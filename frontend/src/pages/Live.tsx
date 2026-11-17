@@ -13,6 +13,7 @@ import { getChannel, listChannelRecordings } from '../api/channels'
 import { ApiError } from '../api/client'
 import type { BroadcastDetail, ChannelResponse } from '../api/types'
 import RecordingCard from '../components/broadcast/RecordingCard'
+import RecordingStrip from '../components/broadcast/RecordingStrip'
 import { formatCount, formatRelative } from '../components/broadcast/format'
 import ChatPanel from '../components/chat/ChatPanel'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
@@ -209,8 +210,11 @@ function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
       {/* 클립(CLIP-2): 플레이어의 가위 버튼 → 만들기 창 · 오류 · 한 줄 알림(만드는 중 → 클립 보기) */}
       {clipElement}
       <LiveClipNotice clipId={clipId} onDismiss={onClipDismiss} />
-      {/* 모바일(lg 미만)은 방송 정보 줄 바로 아래가 채팅이다: 클립 목록은 넓은 화면에서만 */}
-      <div className="hidden pt-3 lg:block"><ClipStrip channelId={broadcast.channel.id} /></div>
+      {/* 모바일(lg 미만)은 방송 정보 줄 바로 아래가 채팅이다: 클립 · 지난 동영상 줄은 넓은 화면에서만 */}
+      <div className="hidden space-y-8 pt-3 lg:block">
+        <ClipStrip channelId={broadcast.channel.id} />
+        <RecordingStrip channelId={broadcast.channel.id} currentBroadcastId={broadcast.id} />
+      </div>
     </div>
   )
 }
