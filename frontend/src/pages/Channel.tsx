@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Users } from 'lucide-react'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -7,11 +8,14 @@ import { EmptyState } from '@astryxdesign/core/EmptyState'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Tab, TabList } from '@astryxdesign/core/TabList'
 import { ApiError } from '../api/client'
+import { getBroadcast } from '../api/broadcasts'
 import { getChannel } from '../api/channels'
 import type { ChannelResponse } from '../api/types'
 import ChannelPosts from '../components/channel/ChannelPosts'
 import ChannelRecordings from '../components/channel/ChannelRecordings'
 import ClipList from '../components/clip/ClipList'
+import { formatCount, formatRelative } from '../components/broadcast/format'
+import Thumbnail from '../components/common/Thumbnail'
 import Spinner from '../components/common/Spinner'
 import FollowButton from '../components/follow/FollowButton'
 import { useAuth } from '../store/auth'
@@ -75,15 +79,46 @@ export default function Channel() {
   )
 }
 
+function ChannelLiveCard({ channelId, broadcastId }: { channelId: number; broadcastId: number }) {
+  const broadcast = useQuery({ queryKey: ['broadcast', broadcastId], queryFn: () => getBroadcast(broadcastId), refetchInterval: 30_000 })
+  const data = broadcast.data
+  const linkClass = 'group block rounded-lg border border-border bg-surface p-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:flex sm:items-center sm:gap-4'
+  if (!data) {
+    // 상세를 받기 전 · 실패해도 방송 중이라는 사실과 링크는 유지한다.
+    return (
+      <Link to={`/live/${channelId}`} className={linkClass}>
+        <p className="font-semibold text-primary group-hover:text-accent">지금 방송 중입니다</p>
+      </Link>
+    )
+  }
+  return (
+    <Link to={`/live/${channelId}`} className={linkClass}>
+      <div className="sm:w-64 sm:shrink-0">
+        <Thumbnail src={data.thumbnailUrl} alt={data.title}>
+          <span className="absolute left-2 top-2 rounded bg-rose-600 px-1.5 py-0.5 text-xs font-bold text-white">
+            {data.status === 'DISCONNECTED' ? '재연결 중' : 'LIVE'}
+          </span>
+        </Thumbnail>
+      </div>
+      <div className="mt-3 min-w-0 sm:mt-0">
+        <p className="truncate text-lg font-semibold text-primary group-hover:text-accent">{data.title}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-secondary">
+          <span className="flex items-center gap-1">
+            <Users aria-hidden className="h-4 w-4" />
+            <span className="sr-only">시청자</span>{formatCount(data.viewerCount)}
+          </span>
+          <Badge label={data.category.label} />
+          <span>{formatRelative(data.startedAt)} 시작</span>
+        </div>
+      </div>
+    </Link>
+  )
+}
+
 function ChannelHome({ channel }: { channel: ChannelResponse }) {
   return (
     <div className="space-y-6">
-      {channel.liveBroadcastId != null && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4">
-          <p className="font-semibold text-primary">지금 방송 중입니다</p>
-          <Button href={`/live/${channel.id}`} label="방송 보러 가기" variant="primary" />
-        </div>
-      )}
+      {channel.liveBroadcastId != null && <ChannelLiveCard channelId={channel.id} broadcastId={channel.liveBroadcastId} />}
       <section aria-labelledby="channel-about" className="rounded-lg border border-border bg-surface p-5">
         <Heading level={2} id="channel-about">소개</Heading>
         <p className="mt-2 whitespace-pre-line break-words text-secondary">{channel.description || '아직 채널 소개가 없습니다.'}</p>
