@@ -69,6 +69,9 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
     onChange(next, handle)
   }
 
+  /** 구간 안 재생 위치 비율(0 = 시작, 1 = 끝) */
+  const playheadRatio = (seconds: number) => (value.duration > 0 ? Math.round(((seconds - value.start) / value.duration) * 1000) / 1000 : 0)
+
   const showTip = (handle: ClipHandle) => drag !== null && (drag.kind === handle || drag.kind === 'range')
 
   return (
@@ -87,8 +90,14 @@ export default function ClipRangeBar({ value, total, view, currentSeconds = null
           className={`absolute inset-y-1.5 rounded-md border-x-[14px] border-y-[3px] border-accent bg-accent/15 shadow-md ${drag?.kind === 'range' ? 'cursor-grabbing' : 'cursor-grab'}`}
           style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
         />
-        {currentSeconds !== null && currentSeconds >= view.start && currentSeconds <= view.end && (
-          <div aria-hidden data-playhead className="pointer-events-none absolute inset-y-0 z-10 w-1 -translate-x-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.4)]" style={{ left: `${percentAt(currentSeconds, view)}%` }} />
+        {/* 재생 위치 선: 선택 틀 안쪽(양옆 손잡이 14px를 뺀 칸)에서만 움직인다. 구간 밖이면 그리지 않는다 */}
+        {currentSeconds !== null && currentSeconds >= value.start && currentSeconds <= end && (
+          <div
+            aria-hidden
+            data-playhead
+            className="pointer-events-none absolute inset-y-0 z-10 w-1 -translate-x-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
+            style={{ left: `calc(${startPct}% + 14px + (${Math.max(0, endPct - startPct)}% - 28px) * ${playheadRatio(currentSeconds)})` }}
+          />
         )}
         {(['start', 'end'] as const).map((handle) => {
           const seconds = handle === 'start' ? value.start : end
