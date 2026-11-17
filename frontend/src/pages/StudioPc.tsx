@@ -3,7 +3,8 @@
  * PC 화면 캡처(`getDisplayMedia`)로 화면을 실시간 송출하고, 탭 · 시스템 소리와 마이크 음성을 Web Audio로 믹싱해(`createPcStream`, media/mixer.ts)
  * 함께 보낸다. 송출은 `useBroadcastSession`이 WHIP(`WhipClient`, media/whip.ts)로 하며, 종료는 whip.close() → 스트림 정지 → POST /api/broadcasts/{id}/end 순서다.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { MonitorUp } from 'lucide-react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -31,6 +32,9 @@ const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
   NO_H264: NO_H264_TEXT,
 }
 
+// S2 오른쪽 패널과 같은 규칙: lg 이상은 헤더(3.5rem) + 본문 위 여백(2.5rem) = 6rem 아래에 붙은 화면 높이, 미만은 고정 높이. 방송 전 빈 카드와 ChatPanel이 같은 틀을 써서 열이 뛰지 않는다.
+const CHAT_COLUMN_CLASS = 'h-[28rem] lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]'
+
 const supportsDisplayMedia = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function'
 
 function useAudioInputs(refreshKey: unknown) {
@@ -55,7 +59,32 @@ function LevelMeter({ value, label }: { value: number; label: string }) {
   )
 }
 
-// S3 PC 송출 스튜디오(Chrome 기준). 오른쪽 칸에 후원 알림(FE-6)과 채팅(FE-5).
+// 소리 한 열: 제목 → 같은 높이의 select → 볼륨 슬라이더 → 레벨 막대. 마이크 · 시스템 소리 두 열이 같은 구조라 높이가 맞는다.
+type AudioColumnProps = {
+  title: string
+  select: { value: string; onChange: (value: string) => void; options: ReactNode }
+  gain: { value: number; onChange: (value: number) => void; disabled: boolean }
+  gainLabel: string
+  level: number
+}
+
+function AudioColumn({ title, select, gain, gainLabel, level }: AudioColumnProps) {
+  const selectId = useId()
+  return (
+    <div className="space-y-2">
+      <label htmlFor={selectId} className="block text-sm font-medium text-primary">{title}</label>
+      <select id={selectId} value={select.value} onChange={(event) => select.onChange(event.target.value)} className={inputClassName.replace('py-2.5', 'py-2')}>
+        {select.options}
+      </select>
+      <label className="block text-xs text-secondary">{gainLabel} 볼륨 {Math.round(gain.value * 100)}%
+        <input type="range" min={0} max={2} step={0.05} value={gain.value} disabled={gain.disabled} onChange={(event) => gain.onChange(Number(event.target.value))} className="w-full accent-accent-bg" />
+      </label>
+      <LevelMeter value={level} label={gainLabel} />
+    </div>
+  )
+}
+
+// S3 PC 송출 스튜디오(Chrome 기준). 왼쪽은 송출 준비 순서(미리보기 → 소스 → 방송), 오른쪽은 채팅만(FE-5). 후원 알림(FE-6)은 미리보기 위 오버레이(§6.7 "S3 배치 정리").
 export default function StudioPc() {
   usePageMeta({ title: 'PC 송출 · 스튜디오', noindex: true })
   const [media, setMedia] = useState<PcStream | null>(null)
@@ -169,7 +198,7 @@ export default function StudioPc() {
   ]
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       <div className="min-w-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Heading level={1}>PC 스튜디오</Heading>
@@ -187,6 +216,9 @@ export default function StudioPc() {
               <p>화면 공유를 시작하면 미리보기가 나옵니다.</p>
             </div>
           )}
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex justify-center">
+            <div className="w-full max-w-md"><DonationBanner donation={banner.current} overlay /></div>
+          </div>
         </div>
 
         <section aria-label="소스" className="space-y-4 rounded-lg border border-border bg-surface p-4">
@@ -195,39 +227,47 @@ export default function StudioPc() {
             {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-primary">마이크
-                <select value={mic ?? 'none'} onChange={(event) => void changeMic(event.target.value)} className={`mt-1 ${inputClassName.replace('py-2.5', 'py-2')}`}>
-                  <option value="">기본 마이크</option>
-                  {devices.filter((device) => device.deviceId && device.deviceId !== 'default').map((device, index) => (
-                    <option key={device.deviceId} value={device.deviceId}>{device.label || `마이크 ${index + 1}`}</option>
-                  ))}
-                  <option value="none">마이크 사용 안 함</option>
-                </select>
-              </label>
-              <label className="block text-xs text-secondary">마이크 볼륨 {Math.round(micGain * 100)}%
-                <input type="range" min={0} max={2} step={0.05} value={micGain} disabled={mic === null} onChange={(event) => setMicGain(Number(event.target.value))} className="w-full accent-accent-bg" />
-              </label>
-              <LevelMeter value={levels.mic} label="마이크" />
-            </div>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm font-medium text-primary">
-                <input type="checkbox" checked={includeSystem} onChange={(event) => setIncludeSystem(event.target.checked)} className="h-4 w-4 accent-accent-bg" />
-                탭/시스템 소리 포함
-              </label>
-              <label className="block text-xs text-secondary">시스템 소리 볼륨 {Math.round(systemGain * 100)}%
-                <input type="range" min={0} max={2} step={0.05} value={systemGain} disabled={!includeSystem} onChange={(event) => setSystemGain(Number(event.target.value))} className="w-full accent-accent-bg" />
-              </label>
-              <LevelMeter value={includeSystem ? levels.system : 0} label="시스템 소리" />
-            </div>
+            <AudioColumn
+              title="마이크"
+              gainLabel="마이크"
+              level={levels.mic}
+              select={{
+                value: mic ?? 'none',
+                onChange: (value) => void changeMic(value),
+                options: (
+                  <>
+                    <option value="">기본 마이크</option>
+                    {devices.filter((device) => device.deviceId && device.deviceId !== 'default').map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>{device.label || `마이크 ${index + 1}`}</option>
+                    ))}
+                    <option value="none">마이크 사용 안 함</option>
+                  </>
+                ),
+              }}
+              gain={{ value: micGain, onChange: setMicGain, disabled: mic === null }}
+            />
+            <AudioColumn
+              title="시스템 소리"
+              gainLabel="시스템 소리"
+              level={includeSystem ? levels.system : 0}
+              select={{
+                value: includeSystem ? 'include' : 'exclude',
+                onChange: (value) => setIncludeSystem(value === 'include'),
+                options: (
+                  <>
+                    <option value="include">탭/시스템 소리 포함</option>
+                    <option value="exclude">포함 안 함</option>
+                  </>
+                ),
+              }}
+              gain={{ value: systemGain, onChange: setSystemGain, disabled: !includeSystem }}
+            />
           </div>
           {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
           {shareError && <Banner role="alert" status="error" title={shareError} />}
         </section>
-      </div>
 
-      <div className="space-y-4">
-        <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
+        <section aria-label="방송" className="space-y-4 rounded-lg border border-border bg-surface p-4">
           <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
           <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
           {active || session.phase === 'ending'
@@ -245,11 +285,11 @@ export default function StudioPc() {
             <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
           )}
         </section>
-        <DonationBanner donation={banner.current} />
-        {session.broadcastId !== null
-          ? <ChatPanel chat={chat} className="h-[28rem]" />
-          : <aside aria-label="채팅" className="rounded-lg border border-border bg-surface p-4 text-sm text-secondary">방송을 시작하면 채팅이 열립니다.</aside>}
       </div>
+
+      {session.broadcastId !== null
+        ? <ChatPanel chat={chat} className={CHAT_COLUMN_CLASS} />
+        : <aside aria-label="채팅" className={`flex items-center justify-center rounded-lg border border-border bg-surface p-4 text-sm text-secondary ${CHAT_COLUMN_CLASS}`}>방송을 시작하면 채팅이 열립니다.</aside>}
     </div>
   )
 }
