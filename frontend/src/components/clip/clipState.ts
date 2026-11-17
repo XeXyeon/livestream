@@ -18,22 +18,26 @@ export function parseClipTime(text: string): number | null {
   return Number(hours ?? 0) * 3600 + Number(minutes) * 60 + Number(seconds)
 }
 
-export type ClipRangeResult = { ok: true; startSeconds: number } | { ok: false; message: string }
+export type ClipRangeResult = { ok: true; startSeconds: number; durationSeconds: number } | { ok: false; message: string }
+
+/** 클립 길이 안내(입력 아래 늘 보인다) */
+export const CLIP_LENGTH_NOTICE = `클립은 최소 ${CLIP_MIN_SECONDS}초, 최대 ${CLIP_MAX_SECONDS}초까지 만들 수 있습니다.`
 
 /**
- * 클립 구간 검사(서버 POST /recordings/{id}/clips · POST /clip-drafts/{id}/clips 와 같은 규칙). totalSeconds는 다시보기 길이
- * 또는 라이브 초안의 windowSeconds(초안 기준 시작). null이면(길이를 모르는 다시보기) 끝 검사는 서버에 맡긴다.
+ * 클립 구간 검사: 시작 · 끝 위치(m:ss) → 서버 요청 값(startSeconds · durationSeconds = 끝 − 시작).
+ * 규칙은 서버 POST /recordings/{id}/clips · POST /clip-drafts/{id}/clips 와 같다. totalSeconds는 다시보기 길이
+ * 또는 라이브 초안의 windowSeconds(초안 기준). null이면(길이를 모르는 다시보기) 끝 검사는 서버에 맡긴다.
  */
-export function validateClipRange(startText: string, durationSeconds: number, totalSeconds: number | null): ClipRangeResult {
+export function validateClipRange(startText: string, endText: string, totalSeconds: number | null): ClipRangeResult {
   const startSeconds = parseClipTime(startText)
   if (startSeconds === null) return { ok: false, message: '시작 위치는 분:초(예: 1:05) 형식으로 적어 주세요.' }
-  if (!Number.isInteger(durationSeconds) || durationSeconds < CLIP_MIN_SECONDS || durationSeconds > CLIP_MAX_SECONDS) {
-    return { ok: false, message: `길이는 ${CLIP_MIN_SECONDS}~${CLIP_MAX_SECONDS}초입니다.` }
-  }
-  if (totalSeconds !== null && startSeconds + durationSeconds > totalSeconds) {
-    return { ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' }
-  }
-  return { ok: true, startSeconds }
+  const endSeconds = parseClipTime(endText)
+  if (endSeconds === null) return { ok: false, message: '끝 위치는 분:초(예: 1:35) 형식으로 적어 주세요.' }
+  const durationSeconds = endSeconds - startSeconds
+  if (durationSeconds < CLIP_MIN_SECONDS) return { ok: false, message: `끝 위치는 시작 위치보다 ${CLIP_MIN_SECONDS}초 이상 뒤여야 합니다.` }
+  if (durationSeconds > CLIP_MAX_SECONDS) return { ok: false, message: `클립은 최대 ${CLIP_MAX_SECONDS}초까지입니다. 지금 ${durationSeconds}초예요.` }
+  if (totalSeconds !== null && endSeconds > totalSeconds) return { ok: false, message: '클립 구간이 영상 범위를 벗어났습니다.' }
+  return { ok: true, startSeconds, durationSeconds }
 }
 
 /** 지금 재생 위치를 클립 시작 기본값으로: 남은 길이가 기본 길이보다 짧으면 끝에서 기본 길이만큼 앞으로 당긴다 */
