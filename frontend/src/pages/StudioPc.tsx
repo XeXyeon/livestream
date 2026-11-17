@@ -32,8 +32,8 @@ const WARNING_TEXT: Record<MixerWarning | 'NO_H264', string> = {
   NO_H264: NO_H264_TEXT,
 }
 
-// S2 오른쪽 패널과 같은 규칙: lg 이상은 헤더 아래에 붙은 화면 높이, 미만은 고정 높이. 방송 전 빈 카드와 ChatPanel이 같은 틀을 써서 열이 뛰지 않는다.
-const CHAT_COLUMN_CLASS = 'h-[28rem] lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)]'
+// S2 오른쪽 패널과 같은 규칙: lg 이상은 헤더(3.5rem) + 본문 위 여백(2.5rem) = 6rem 아래에 붙은 화면 높이, 미만은 고정 높이. 방송 전 빈 카드와 ChatPanel이 같은 틀을 써서 열이 뛰지 않는다.
+const CHAT_COLUMN_CLASS = 'h-[28rem] lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]'
 
 const supportsDisplayMedia = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function'
 

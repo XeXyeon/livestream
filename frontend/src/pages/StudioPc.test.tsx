@@ -59,7 +59,7 @@ describe('StudioPc 배치(FE-13)', () => {
     session.current = sessionState(null)
     const html = render()
     expect(html).toContain('방송을 시작하면 채팅이 열립니다.')
-    expect(html.match(/<aside aria-label="채팅" class="([^"]*)"/)?.[1]).toContain('lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)]')
+    expect(html.match(/<aside aria-label="채팅" class="([^"]*)"/)?.[1]).toContain('lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]')
   })
 
   it('송출 중에는 ChatPanel이 같은 높이 규칙으로 들어가고 빈 카드 문구는 없다', () => {
@@ -67,7 +67,7 @@ describe('StudioPc 배치(FE-13)', () => {
     const html = render()
     expect(html).not.toContain('방송을 시작하면 채팅이 열립니다.')
     expect(html).toContain('채팅 메시지')
-    expect(html).toContain('lg:sticky lg:top-14 lg:h-[calc(100dvh-3.5rem)]')
+    expect(html).toContain('lg:sticky lg:top-24 lg:h-[calc(100dvh-6rem)]')
   })
 
   it('왼쪽 순서: 제목 줄 → 미리보기 → 소스 → 방송, 오른쪽 채팅이 그 뒤', () => {
