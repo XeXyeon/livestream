@@ -221,7 +221,7 @@ export default function StudioPc() {
           </div>
         </div>
 
-        <section aria-label="소스" className="space-y-4 rounded-lg border border-border bg-surface p-4">
+        <section aria-label="송출" className="space-y-4 rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center gap-3">
             <Button label={media ? '공유 화면 다시 선택' : '화면 공유 시작'} variant={media ? 'secondary' : 'primary'} icon={<MonitorUp aria-hidden className="h-4 w-4" />} isLoading={sharing} isDisabled={active} onClick={() => void share()} />
             {active && <span className="text-xs text-secondary">송출 중에는 공유 화면을 바꿀 수 없습니다. 종료 후 다시 선택하세요.</span>}
@@ -265,25 +265,24 @@ export default function StudioPc() {
           </div>
           {warnings.map((warning) => <Banner key={warning} role="alert" status="warning" title={WARNING_TEXT[warning]} />)}
           {shareError && <Banner role="alert" status="error" title={shareError} />}
-        </section>
-
-        <section aria-label="방송" className="space-y-4 rounded-lg border border-border bg-surface p-4">
-          <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
-          <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
-          {active || session.phase === 'ending'
-            ? (
-              <Button label={session.phase === 'ending' ? '종료하는 중…' : '방송 종료'} variant="destructive" size="lg" width="100%" isLoading={session.phase === 'ending'} onClick={() => void end(stopMedia)} />
-            )
-            : (
-              <Button label="송출 시작" variant="primary" size="lg" width="100%" isDisabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} />
+          <div className="space-y-4 border-t border-border pt-4">
+            <SessionStatus phase={session.phase} viewerCount={session.viewerCount} />
+            <BroadcastInfoForm initial={currentInfo} onChange={setInfo} onSave={session.saveInfo} />
+            {active || session.phase === 'ending'
+              ? (
+                <Button label={session.phase === 'ending' ? '종료하는 중…' : '방송 종료'} variant="destructive" size="lg" width="100%" isLoading={session.phase === 'ending'} onClick={() => void end(stopMedia)} />
+              )
+              : (
+                <Button label="송출 시작" variant="primary" size="lg" width="100%" isDisabled={!media || busy || !currentInfo.title.trim()} onClick={() => media && void session.start(media.stream, { ...currentInfo, title: currentInfo.title.trim() })} />
+              )}
+            {!media && !active && <p className="text-xs text-secondary">먼저 화면 공유를 시작하세요.</p>}
+            {session.phase === 'reconnecting' && <p role="status" className="text-sm text-warning">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
+            {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-secondary">방송을 종료했습니다.</p>}
+            {session.error && <Banner role="alert" status="error" title={session.error} />}
+            {session.broadcastId !== null && (
+              <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
             )}
-          {!media && !active && <p className="text-xs text-secondary">먼저 화면 공유를 시작하세요.</p>}
-          {session.phase === 'reconnecting' && <p role="status" className="text-sm text-warning">연결이 끊겨 다시 연결하는 중입니다. 60초 안에 연결되면 방송이 이어집니다.</p>}
-          {session.phase === 'ended' && !session.error && <p role="status" className="text-sm text-secondary">방송을 종료했습니다.</p>}
-          {session.error && <Banner role="alert" status="error" title={session.error} />}
-          {session.broadcastId !== null && (
-            <a href={`/live/${channel.id}`} target="_blank" rel="noreferrer" className="block text-sm text-accent hover:underline">시청 화면 새 탭에서 열기</a>
-          )}
+          </div>
         </section>
       </div>
 
