@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { MessageSquare, Users } from 'lucide-react'
+import { HandCoins, MessageSquare, Users } from 'lucide-react'
 import { Badge } from '@astryxdesign/core/Badge'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
@@ -15,6 +15,7 @@ import type { BroadcastDetail, ChannelResponse } from '../api/types'
 import RecordingCard from '../components/broadcast/RecordingCard'
 import { formatCount, formatRelative } from '../components/broadcast/format'
 import ChatPanel from '../components/chat/ChatPanel'
+import MobileComposerBar, { MOBILE_COMPOSER_SPACE } from '../components/chat/MobileComposerBar'
 import { useBroadcastChat } from '../components/chat/useBroadcastChat'
 import Spinner from '../components/common/Spinner'
 import Player from '../components/player/Player'
@@ -104,6 +105,8 @@ function LiveMain() {
   }
   // 클립(CLIP-2 · FE-12): 가위 버튼은 플레이어 컨트롤 줄에, 다이얼로그 · 오류 · 진행 알림은 방송 정보 아래에 둔다
   const [clipId, setClipId] = useState<number | null>(null)
+  // 패널 밖 입력 줄(lg 미만)에서 보내면 올려서 채팅 목록이 맨 아래로 따라가게 한다
+  const [sentTick, setSentTick] = useState(0)
   const clip = useLiveClip(broadcast.data ?? null, setClipId)
 
   if (!validId || (channel.error instanceof ApiError && channel.error.status === 404)) {
@@ -119,6 +122,9 @@ function LiveMain() {
   // lg 이상: 채팅이 오른쪽 끝에 헤더 아래 전체 높이로 붙고 접을 수 있다. 그보다 좁으면 플레이어 아래 카드.
   // 영화관 모드(lg 이상): 영상 칸이 헤더 아래 높이를 다 채우고(검은 바탕), 방송 정보는 그 아래로 스크롤해 본다.
   // data-player-root: 플레이어의 전체 화면 버튼이 이 칸(후원 배너 포함)을 띄운다.
+  // 입력 줄: lg 이상은 패널 안, 그보다 좁으면 패널 밖 화면 하단 고정 줄(방송이 끝나면 없음)
+  const ended = broadcast.data.status === 'ENDED'
+  const donate = !ended && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined
   return (
     <div className="lg:flex lg:items-start">
       <div className="min-w-0 flex-1">
@@ -151,14 +157,22 @@ function LiveMain() {
       </div>
       <ChatPanel
         chat={chat}
-        ended={broadcast.data.status === 'ENDED'}
+        ended={ended}
         framed={false}
+        composer={wide ? 'inside' : 'none'}
+        stickSignal={sentTick}
         onCollapse={() => changeChatCollapsed(true)}
         onPopout={popoutChat}
-        actions={broadcast.data.status !== 'ENDED' && !broadcast.data.isOwner ? <DonateButton onDonate={() => setDonating(true)} /> : undefined}
+        actions={donate}
         // 사이드바와 같은 결: 넓은 화면에서는 선 없이 본문 바탕에 붙는다. 좁은 화면은 플레이어 아래 둥근 칸
         className={`mx-4 mb-6 h-[28rem] rounded-lg bg-surface sm:mx-6 lg:sticky lg:top-14 lg:m-0 lg:h-[calc(100dvh-3.5rem)] lg:w-[340px] lg:shrink-0 lg:rounded-none lg:bg-body ${chatCollapsed ? 'lg:hidden' : ''}`}
       />
+      {!wide && !ended && (
+        <>
+          <div aria-hidden className={MOBILE_COMPOSER_SPACE} />
+          <MobileComposerBar chat={chat} actions={donate} onSent={() => setSentTick((tick) => tick + 1)} />
+        </>
+      )}
     </div>
   )
 }
@@ -203,13 +217,22 @@ function BroadcastInfo({ broadcast, clipId, onClipDismiss, clipElement }: {
   )
 }
 
-// 채팅 입력창 아래 왼쪽. 채팅 보내기와 같이 모양은 하나이고, 비로그인이 누르면 로그인 모달을 띄운다
+// 채팅 입력 줄 왼쪽의 후원 아이콘. 채팅 보내기와 같이 모양은 하나이고, 비로그인이 누르면 로그인 모달을 띄운다
 function DonateButton({ onDonate }: { onDonate: () => void }) {
   const loggedIn = useAuth((state) => state.member !== null)
   const authReady = useAuth((state) => state.ready)
   const openLogin = useAuthDialog((state) => state.open)
   if (!authReady) return null
-  return <Button label="후원하기" variant="secondary" size="sm" onClick={() => (loggedIn ? onDonate() : openLogin())} />
+  return (
+    <IconButton
+      label="후원하기"
+      tooltip="후원하기"
+      icon={<HandCoins aria-hidden className="h-5 w-5" />}
+      variant="ghost"
+      size="sm"
+      onClick={() => (loggedIn ? onDonate() : openLogin())}
+    />
+  )
 }
 
 // 결제에서 돌아온 결과. 확인 중에는 닫을 수 없다(useDonationReturn)
