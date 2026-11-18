@@ -9,7 +9,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -191,6 +193,33 @@ public class MediaMtxClient {
 		return info != null && info.source() != null;
 	}
 
+	/**
+	 * 지금 송출 중(ready)인 경로 이름 전체: {@code GET /v3/paths/list} 를 끝 쪽 페이지까지 읽는다.
+	 * 방송 상태 대조(서버 재시작 · MediaMTX 재시작 뒤 LIVE 로 남은 방송 정리)에 쓴다.
+	 *
+	 * @throws RestClientException 연결 실패 · 타임아웃 · HTTP 오류. 호출 쪽은 실패를 "송출 없음"으로 읽으면 안 된다
+	 */
+	public Set<String> listReadyPaths() {
+		Set<String> ready = new HashSet<>();
+		int page = 0;
+		int pageCount = 1;
+		while (page < pageCount) {
+			PathList list = restClient.get().uri("/v3/paths/list?itemsPerPage=1000&page=" + page).retrieve()
+					.body(PathList.class);
+			if (list == null || list.items() == null) {
+				throw new RestClientException("경로 목록 응답이 비어 있음");
+			}
+			for (PathList.Item item : list.items()) {
+				if (item != null && item.name() != null && Boolean.TRUE.equals(item.ready())) {
+					ready.add(item.name());
+				}
+			}
+			pageCount = list.pageCount() == null ? 1 : list.pageCount();
+			page++;
+		}
+		return ready;
+	}
+
 	/** 경로 정보. 경로가 없으면(송출자 없음) null. */
 	private PathInfo getPath(String path) {
 		try {
@@ -205,6 +234,14 @@ public class MediaMtxClient {
 		JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
 		factory.setReadTimeout(readTimeout);
 		return factory;
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	record PathList(Integer pageCount, List<Item> items) {
+
+		@JsonIgnoreProperties(ignoreUnknown = true)
+		record Item(String name, Boolean ready) {
+		}
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

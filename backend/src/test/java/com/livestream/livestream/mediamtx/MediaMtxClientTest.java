@@ -89,4 +89,23 @@ class MediaMtxClientTest {
 		server.expect(requestTo("http://mediamtx:9997/v3/paths/get/live/3")).andExpect(method(HttpMethod.GET))
 				.andRespond(withSuccess(json, MediaType.APPLICATION_JSON));
 	}
+
+	@Test
+	void 경로_목록에서_ready인_경로만_모두_읽는다() {
+		server.expect(requestTo("http://mediamtx:9997/v3/paths/list?itemsPerPage=1000&page=0")).andRespond(withSuccess(
+				"{\"pageCount\":2,\"itemCount\":3,\"items\":[{\"name\":\"live/1\",\"ready\":true},{\"name\":\"live/2\",\"ready\":false}]}",
+				MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://mediamtx:9997/v3/paths/list?itemsPerPage=1000&page=1")).andRespond(withSuccess(
+				"{\"pageCount\":2,\"itemCount\":3,\"items\":[{\"name\":\"live/3\",\"ready\":true}]}",
+				MediaType.APPLICATION_JSON));
+
+		assertThat(client.listReadyPaths()).containsExactlyInAnyOrder("live/1", "live/3");
+		server.verify();
+	}
+
+	@Test
+	void 경로_목록_조회가_실패하면_예외를_던진다() {
+		server.expect(requestTo("http://mediamtx:9997/v3/paths/list?itemsPerPage=1000&page=0")).andRespond(withServerError());
+		assertThatThrownBy(() -> client.listReadyPaths()).isInstanceOf(RestClientException.class);
+	}
 }
