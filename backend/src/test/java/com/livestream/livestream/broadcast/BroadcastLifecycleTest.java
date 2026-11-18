@@ -55,6 +55,8 @@ class BroadcastLifecycleTest {
 	@Autowired BroadcastRepository broadcastRepository;
 	@Autowired RecordingRepository recordingRepository;
 	@Autowired DisconnectGraceScheduler graceScheduler;
+	@Autowired LiveBroadcastReconciler reconciler;
+	@Autowired BroadcastLifecycleService lifecycle;
 	@Autowired PublishBlockRegistry publishBlockRegistry;
 	@Autowired EntityManager em;
 	@Autowired TransactionTemplate tx;
@@ -194,6 +196,122 @@ class BroadcastLifecycleTest {
 
 		notReady(a).andExpect(status().isNoContent());
 		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+	}
+
+	// ---------- LIVE 방송 대조 (BC-1#1) ----------
+
+	@Test
+	void 대조에서_송출이_없는_LIVE_방송은_DISCONNECTED가_되고_유예_뒤_ENDED가_된다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of());
+		when(mediaMtxClient.hasPublisher("live/" + a.channelId())).thenReturn(false);
+
+		reconciler.reconcile();
+		Broadcast b = ongoing(a);
+		assertThat(b.getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+		assertThat(b.getDisconnectedAt()).isNotNull();
+
+		reconciler.reconcile(); // 멱등
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+
+		backdateDisconnect(b.getId(), props.broadcast().disconnectGraceSeconds() + 5);
+		graceScheduler.endExpired();
+		assertThat(find(b.getId()).getStatus()).isEqualTo(BroadcastStatus.ENDED);
+	}
+
+	@Test
+	void 대조에서_송출이_있는_LIVE_방송은_그대로다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of("live/" + a.channelId()));
+
+		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+	}
+
+	@Test
+	void 대조에서_목록에_없어도_개별_확인에서_송출자가_있으면_그대로다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of());
+		when(mediaMtxClient.hasPublisher("live/" + a.channelId())).thenReturn(true);
+
+		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+	}
+
+	@Test
+	void 대조에서_MediaMTX_호출이_실패하면_아무_방송도_바꾸지_않는다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenThrow(new ResourceAccessException("connection refused"));
+
+		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+	}
+
+	@Test
+	void 대조에서_한_방송의_개별_확인이_실패해도_나머지는_계속_처리한다() throws Exception {
+		Account a = newAccount();
+		Account b = newAccount();
+		ready(a, "rtmpConn", "");
+		ready(b, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of());
+		when(mediaMtxClient.hasPublisher("live/" + a.channelId())).thenThrow(new ResourceAccessException("down"));
+		when(mediaMtxClient.hasPublisher("live/" + b.channelId())).thenReturn(false);
+
+		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+		assertThat(ongoing(b).getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+	}
+
+	@Test
+	void 대조가_보던_방송이_끝나고_새_방송이_시작됐으면_새_방송은_끊지_않는다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		Long oldId = ongoing(a).getId();
+		tx.executeWithoutResult(s -> em.createQuery("update Broadcast b set b.status = :st where b.id = :id")
+				.setParameter("st", BroadcastStatus.ENDED).setParameter("id", oldId).executeUpdate());
+		ready(a, "rtmpConn", ""); // 새 방송
+		Long newId = ongoing(a).getId();
+		assertThat(newId).isNotEqualTo(oldId);
+
+		lifecycle.onStaleLive(a.channelId(), oldId);
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+	}
+
+	@Test
+	void 대조와_not_ready_훅이_동시에_돌아도_전이는_한_번이고_예외가_없다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of());
+		when(mediaMtxClient.hasPublisher("live/" + a.channelId())).thenReturn(false);
+
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+		try {
+			CountDownLatch go = new CountDownLatch(1);
+			Callable<Void> reconcile = () -> {
+				go.await();
+				reconciler.reconcile();
+				return null;
+			};
+			Callable<Void> hook = () -> {
+				go.await();
+				notReady(a).andExpect(status().isNoContent());
+				return null;
+			};
+			Future<Void> f1 = pool.submit(reconcile);
+			Future<Void> f2 = pool.submit(hook);
+			go.countDown();
+			f1.get();
+			f2.get();
+		} finally {
+			pool.shutdown();
+		}
+		Broadcast b = ongoing(a);
+		assertThat(b.getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+		assertThat(countBroadcasts(a)).isEqualTo(1);
 	}
 
 	@Test
