@@ -23,6 +23,63 @@
 | 운영 | 정적 파일 압축(zstd · gzip, JS 번들 845kB → 287kB) · 빌드 파일 1개월 캐시, 송출이 끊긴 채 남은 라이브 방송을 30초마다 미디어 서버와 대조해 재연결 대기 → 종료로 자동 정리 |
 | 품질 | 백엔드 테스트 295개 · 프론트 테스트 243개(39개 파일) 모두 통과, 운영 서버 리허설 통과(송출 · 시청 · 채팅 · 종료 · 다시보기 · 클립, 2026-11-18 기준) |
 
+## 송출 요구사항 구현 위치 (프론트엔드)
+
+화면 캡처 · 소리 믹싱 · 카메라 송출은 **브라우저에서 동작하는 프론트엔드 코드(`frontend/src/media/`)** 가 처리합니다. 백엔드(Spring Boot)는 송출 인증 · 방송 상태만 맡고, 미디어 서버(MediaMTX)가 WHIP로 받은 영상을 시청자에게 전달합니다. 요구사항별 전체 표는 [`docs/code-map.md`](docs/code-map.md)에 있습니다.
+
+| 요구사항 | 구현 위치 | 사용한 브라우저 API |
+|---|---|---|
+| PC 화면을 캡처해 실시간 송출 | [`frontend/src/media/mixer.ts`](frontend/src/media/mixer.ts) `createPcStream`(47행) → [`frontend/src/media/whip.ts`](frontend/src/media/whip.ts) `WhipClient.publish`(86행) | `getDisplayMedia({ video, audio: true })`, `RTCPeerConnection` + WHIP(HTTP POST) |
+| 탭 · 시스템 소리 + 마이크 음성 함께 송출 | [`frontend/src/media/mixer.ts`](frontend/src/media/mixer.ts) `createPcStream`(53~97행) | `AudioContext`: 두 소리를 각각 `GainNode`(볼륨)에 연결해 `MediaStreamDestination` 하나로 섞음, 마이크는 `getUserMedia({ audio })` |
+| 휴대폰 카메라 영상 + 마이크 음성 실시간 송출 | [`frontend/src/media/mixer.ts`](frontend/src/media/mixer.ts) `createMobileStream`(130행) · [`frontend/src/pages/StudioMobile.tsx`](frontend/src/pages/StudioMobile.tsx) | `getUserMedia({ video: { facingMode }, audio: true })` (전면 · 후면 카메라 전환) |
+| 방송 시작 · 종료 때 송출 연결 생성 · 종료 | [`frontend/src/components/studio/useBroadcastSession.ts`](frontend/src/components/studio/useBroadcastSession.ts) `start`(59행) · `end`(95행), [`frontend/src/media/whip.ts`](frontend/src/media/whip.ts) `close`(107행) | 시작: WHIP POST로 송출 세션 생성 / 종료: WHIP 세션 `DELETE` + `RTCPeerConnection.close()` → `POST /api/broadcasts/{id}/end` |
+
+화면: PC 스튜디오 [`frontend/src/pages/StudioPc.tsx`](frontend/src/pages/StudioPc.tsx)(`/studio/pc`), 모바일 스튜디오 [`frontend/src/pages/StudioMobile.tsx`](frontend/src/pages/StudioMobile.tsx)(`/studio/mobile`). 실제 동작은 [`docs/demo.md`](docs/demo.md)의 F2(PC 송출) · F9(휴대폰 송출) GIF에서 볼 수 있습니다.
+
+핵심 코드 발췌(`frontend/src/media/mixer.ts` · `whip.ts` · `components/studio/useBroadcastSession.ts`):
+
+```ts
+// [PC] 화면 + 탭/시스템 소리 캡처 — mixer.ts createPcStream
+const display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true })
+const systemTrack = display.getAudioTracks()[0] ?? null
+
+// [PC] 탭/시스템 소리와 마이크를 AudioContext로 섞는다
+const context = new AudioContext()
+const destination = context.createMediaStreamDestination()
+const systemGain = context.createGain()
+const micGain = context.createGain()
+systemGain.connect(destination)
+micGain.connect(destination)
+if (systemTrack) context.createMediaStreamSource(new MediaStream([systemTrack])).connect(systemGain)
+micStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(deviceId) })
+context.createMediaStreamSource(micStream).connect(micGain)
+
+// [PC] 송출할 스트림 = 화면 영상 + 섞은 소리
+stream: new MediaStream([videoTrack, ...destination.stream.getAudioTracks()])
+
+// [모바일] 카메라 영상 + 마이크 — mixer.ts createMobileStream
+const stream = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(facing), audio: true })
+
+// [시작] 송출 연결 생성 — whip.ts WhipClient.publish
+const pc = new RTCPeerConnection({ iceServers: [] })
+for (const track of stream.getTracks()) pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] })
+await pc.setLocalDescription(await pc.createOffer())
+response = await fetch(this.url, {   // WHIP: SDP offer를 미디어 서버로 POST
+  method: 'POST',
+  headers: { 'Content-Type': 'application/sdp', Authorization: `Bearer ${this.bearer}` },
+  body: pc.localDescription?.sdp ?? '',
+})
+
+// [종료] 송출 연결 종료 — whip.ts close → teardown
+void fetch(sessionUrl, { method: 'DELETE', headers: { Authorization: `Bearer ${this.bearer}` } })
+this.pc?.close()
+
+// [종료] 순서 — useBroadcastSession.ts end: 송출을 먼저 끊고 서버에 알린다
+whipRef.current?.close()
+stopMedia()
+await endBroadcast(id)   // POST /api/broadcasts/{id}/end
+```
+
 ## 구성
 
 ```
