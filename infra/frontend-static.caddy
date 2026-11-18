@@ -1,4 +1,17 @@
 # 운영: 빌드 결과(frontend/dist)를 정적으로 서빙. SPA 라우팅.
+# 이 파일은 Caddyfile의 정적 파일 handle 블록 안에서만 import된다(/api · /ws · SSE에는 적용되지 않음).
 root * /srv/frontend
+
+# 압축: JS · CSS · HTML 등 텍스트 응답만 (이미 압축된 이미지는 Caddy 기본 설정이 건너뜀)
+encode zstd gzip
+
+# /assets/* 는 Vite가 파일명에 해시를 붙이므로 내용이 바뀌면 이름도 바뀐다 → 1달 캐시 + immutable
+@assets path /assets/*
+header @assets Cache-Control "public, max-age=2592000, immutable"
+
+# 그 밖(index.html · SPA fallback 경로 포함)은 매번 재검증해서 배포 직후 새 해시 파일을 바로 받게 한다
+@notassets not path /assets/*
+header @notassets Cache-Control "no-cache"
+
 try_files {path} /index.html
 file_server
