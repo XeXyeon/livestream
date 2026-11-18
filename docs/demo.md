@@ -81,6 +81,6 @@ OBS · Larix 같은 외부 프로그램은 스트림 키로 송출합니다(키�
 ![F10 채널 · 커뮤니티 · 팔로우](demo/f10-channel-community.gif)
 
 ## 테스트 결과
-백엔드 `./gradlew test` 결과입니다. 285개 테스트가 모두 통과했습니다(후원 중복 승인 `DonationConfirmIdempotencyTest` · 소유자 검증 · 인증 등).
+백엔드 `./gradlew test` 결과입니다. 캡처 당시 285개, 제출 시점(2026-11-18) 295개 테스트가 모두 통과했습니다(후원 중복 승인 `DonationConfirmIdempotencyTest` · 소유자 검증 · 인증 등).
 
 ![백엔드 테스트 결과](demo/test-result.png)
