@@ -104,6 +104,14 @@ class MediaMtxClientTest {
 	}
 
 	@Test
+	void 경로가_하나도_없으면_빈_집합() {
+		server.expect(requestTo("http://mediamtx:9997/v3/paths/list?itemsPerPage=1000&page=0"))
+				.andRespond(withSuccess("{\"itemCount\":0,\"pageCount\":0,\"items\":[]}", MediaType.APPLICATION_JSON));
+		assertThat(client.listReadyPaths()).isEmpty();
+		server.verify();
+	}
+
+	@Test
 	void 경로_목록_조회가_실패하면_예외를_던진다() {
 		server.expect(requestTo("http://mediamtx:9997/v3/paths/list?itemsPerPage=1000&page=0")).andRespond(withServerError());
 		assertThatThrownBy(() -> client.listReadyPaths()).isInstanceOf(RestClientException.class);

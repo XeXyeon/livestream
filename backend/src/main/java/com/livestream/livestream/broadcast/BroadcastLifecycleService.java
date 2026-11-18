@@ -127,6 +127,25 @@ public class BroadcastLifecycleService {
 				});
 	}
 
+	/**
+	 * 대조 전이(LiveBroadcastReconciler): 송출이 없는 LIVE 방송을 not-ready 훅과 같이 DISCONNECTED 로.
+	 * 채널 잠금 뒤 진행 중 방송이 대조 대상 방송 그대로일 때만 끊는다(그 사이 끝나고 새 방송이 시작됐으면 건드리지 않는다).
+	 */
+	@Transactional
+	public void onStaleLive(Long channelId, Long broadcastId) {
+		if (channelRepository.findByIdForUpdate(channelId).isEmpty()) {
+			return;
+		}
+		broadcastRepository.findOngoing(channelId)
+				.filter(b -> b.getId().equals(broadcastId) && b.getStatus() == BroadcastStatus.LIVE)
+				.ifPresent(b -> {
+					Instant now = Instant.now();
+					b.disconnect(now);
+					log.info("송출 없는 LIVE 방송을 끊김으로 전환: broadcast={} channel={}", b.getId(), channelId);
+					publishStatusAfterCommit(b.getId(), BroadcastStatus.DISCONNECTED, now);
+				});
+	}
+
 	// ---------- 종료 ----------
 
 	/**

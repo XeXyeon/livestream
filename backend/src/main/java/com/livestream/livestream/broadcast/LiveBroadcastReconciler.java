@@ -4,13 +4,14 @@ import com.livestream.livestream.mediamtx.MediaMtxClient;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
  * LIVE 방송을 MediaMTX 의 실제 송출(ready 경로)과 대조한다 (DESIGN §4.6, BC-1#1).
  * MediaMTX · 백엔드가 송출 중에 꺼지면 not-ready 훅이 오지 않아 방송이 LIVE 로 남는다.
- * 송출이 없는 LIVE 방송은 not-ready 훅과 같은 경로({@link BroadcastLifecycleService#onNotReady})로 DISCONNECTED 로 보내
+ * 송출이 없는 LIVE 방송은 not-ready 훅과 같은 경로({@link BroadcastLifecycleService#onStaleLive}, not-ready 훅과 같은 전이)로 DISCONNECTED 로 보내
  * 기존 유예(60초) → ENDED({@link DisconnectGraceScheduler}) 를 그대로 탄다. 유예 타이머는 DB 의 disconnected_at 기준이라 재시작에도 유지된다.
  * <p>
  * MediaMTX 호출이 실패하면 아무것도 바꾸지 않고 다음 주기를 기다린다(실패 ≠ 송출 없음).
@@ -25,7 +26,17 @@ public class LiveBroadcastReconciler {
 	private final BroadcastLifecycleService lifecycle;
 	private final MediaMtxClient mediaMtxClient;
 
+	/** 테스트에서는 {@code app.broadcast.reconcile-enabled=false} 로 스케줄 실행을 끈다(테스트는 reconcile() 을 직접 부른다). */
+	@Value("${app.broadcast.reconcile-enabled:true}")
+	private boolean enabled;
+
 	@Scheduled(fixedDelay = 30_000, initialDelay = 10_000)
+	void scheduledReconcile() {
+		if (enabled) {
+			reconcile();
+		}
+	}
+
 	public void reconcile() {
 		var liveRefs = broadcastRepository.findLiveRefs();
 		if (liveRefs.isEmpty()) {
@@ -49,7 +60,7 @@ public class LiveBroadcastReconciler {
 					continue;
 				}
 				log.info("송출 없는 LIVE 방송 발견: broadcast={} channel={}", ref.broadcastId(), ref.channelId());
-				lifecycle.onNotReady(ref.channelId());
+				lifecycle.onStaleLive(ref.channelId(), ref.broadcastId());
 			} catch (RuntimeException e) {
 				log.warn("방송 대조 실패: broadcast={} channel={} ({})", ref.broadcastId(), ref.channelId(), e.toString());
 			}

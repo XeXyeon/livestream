@@ -12,6 +12,8 @@ spring:
 # 통합 테스트는 같은 IP(127.0.0.1)로 가입을 많이 하므로 시도 횟수 제한은 사실상 끈다.
 # 제한 자체를 검증하는 테스트(AuthRateLimitTest)만 @TestPropertySource 로 작은 값을 준다.
 app:
+  broadcast:
+    reconcile-enabled: false # LIVE 방송 대조 스케줄은 끈다(mock MediaMTX 기본값이 방송을 끊지 않게). 테스트는 reconcile() 을 직접 부른다
   auth:
     login-max-failures: 100000
     signup-max-attempts: 100000

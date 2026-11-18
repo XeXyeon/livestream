@@ -56,6 +56,7 @@ class BroadcastLifecycleTest {
 	@Autowired RecordingRepository recordingRepository;
 	@Autowired DisconnectGraceScheduler graceScheduler;
 	@Autowired LiveBroadcastReconciler reconciler;
+	@Autowired BroadcastLifecycleService lifecycle;
 	@Autowired PublishBlockRegistry publishBlockRegistry;
 	@Autowired EntityManager em;
 	@Autowired TransactionTemplate tx;
@@ -247,6 +248,36 @@ class BroadcastLifecycleTest {
 		when(mediaMtxClient.listReadyPaths()).thenThrow(new ResourceAccessException("connection refused"));
 
 		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+	}
+
+	@Test
+	void 대조에서_한_방송의_개별_확인이_실패해도_나머지는_계속_처리한다() throws Exception {
+		Account a = newAccount();
+		Account b = newAccount();
+		ready(a, "rtmpConn", "");
+		ready(b, "rtmpConn", "");
+		when(mediaMtxClient.listReadyPaths()).thenReturn(java.util.Set.of());
+		when(mediaMtxClient.hasPublisher("live/" + a.channelId())).thenThrow(new ResourceAccessException("down"));
+		when(mediaMtxClient.hasPublisher("live/" + b.channelId())).thenReturn(false);
+
+		reconciler.reconcile();
+		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
+		assertThat(ongoing(b).getStatus()).isEqualTo(BroadcastStatus.DISCONNECTED);
+	}
+
+	@Test
+	void 대조가_보던_방송이_끝나고_새_방송이_시작됐으면_새_방송은_끊지_않는다() throws Exception {
+		Account a = newAccount();
+		ready(a, "rtmpConn", "");
+		Long oldId = ongoing(a).getId();
+		tx.executeWithoutResult(s -> em.createQuery("update Broadcast b set b.status = :st where b.id = :id")
+				.setParameter("st", BroadcastStatus.ENDED).setParameter("id", oldId).executeUpdate());
+		ready(a, "rtmpConn", ""); // 새 방송
+		Long newId = ongoing(a).getId();
+		assertThat(newId).isNotEqualTo(oldId);
+
+		lifecycle.onStaleLive(a.channelId(), oldId);
 		assertThat(ongoing(a).getStatus()).isEqualTo(BroadcastStatus.LIVE);
 	}
 
